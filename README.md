@@ -58,11 +58,11 @@ Songs aus Spotify, Apple Music oder YouTube lassen sich nicht übernehmen: Sie s
 
 | Stufe | Auflösung | Datenrate (30 fps, 9:16) | Wofür |
 | --- | --- | --- | --- |
-| Instagram | 1080 × 1920 | ca. 14 Mbit/s | Stories, Reels |
-| Maximal | 1080 × 1920 | ca. 26 Mbit/s | beste Details nach Instagrams Neukomprimierung |
+| Instagram | 1080 × 1920 | ca. 14 Mbit/s | kleinere Datei |
+| Maximal (Standard) | 1080 × 1920 | ca. 26 Mbit/s | beste Details, auch nach Instagrams Neukomprimierung |
 | 4K-Archiv | 2160 × 3840 | ca. 30 Mbit/s | Archiv, große Bildschirme (nur wenn das Gerät es kodieren kann) |
 
-Jedes Bild wird einzeln berechnet (ruckelfrei, auch bei 60 fps), mit leichter Nachschärfung, Lichterabrollung und Filmkorn.
+Jedes Bild wird einzeln berechnet (ruckelfrei, auch bei 60 fps). Fotos werden so hoch aufgelöst geladen, dass auch der Ausschnitt (z. B. Querfoto in der Story) nie hochskaliert wird; dazu eine leichte Nachschärfung. Die Vorschau rendert in der Pixeldichte des Displays.
 
 ## Aufbau
 
@@ -83,7 +83,8 @@ node test/e2e.mjs       # Ort und Gesamtfilm von Anfang bis Export
 node test/beats.mjs     # Beat-Genauigkeit
 node test/structure.mjs 124
 node test/trip.mjs      # Reise-Import mit GPS, Koordinaten/km, Stil-Vorlage, keine gespeicherten Medien
-node test/mic.mjs       # Mithören (Fake-Mikrofon), Instagram-Startzeit, Export-Stufen
+node test/mic.mjs       # Mithören (Fake-Mikrofon), verweigerter Zugriff, Instagram-Startzeit, Export-Stufen
+node test/quality.mjs   # Bildschärfe im Export gegenüber idealer Verkleinerung (Ziel > 90 %)
 node test/flight.mjs    # Flug anlegen, Fluganimation
 node test/pipeline.mjs '{"intro":"grid","many":1}'   # 9er-Raster
 node test/pipeline.mjs '{"voice":1}'                  # Originalton im Export

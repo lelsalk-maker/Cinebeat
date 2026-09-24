@@ -40,12 +40,22 @@ async function decodeImage(item, maxDim) {
   const w = img.naturalWidth, h = img.naturalHeight;
   const sc = Math.min(1, maxDim / Math.max(w, h));
   const cw = Math.max(1, Math.round(w * sc)), ch = Math.max(1, Math.round(h * sc));
+  // Starke Verkleinerung in Halbierungsschritten: sauberer als ein einzelner großer Sprung
+  let src = img, sw = w, sh = h;
+  while (sw / 2 >= cw * 1.05 && sh / 2 >= ch * 1.05) {
+    const t = document.createElement('canvas');
+    t.width = Math.round(sw / 2); t.height = Math.round(sh / 2);
+    const tx = t.getContext('2d');
+    tx.imageSmoothingQuality = 'high';
+    tx.drawImage(src, 0, 0, t.width, t.height);
+    src = t; sw = t.width; sh = t.height;
+  }
   const c = document.createElement('canvas');
   c.width = cw; c.height = ch;
   const ctx = c.getContext('2d');
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(img, 0, 0, cw, ch);
+  ctx.drawImage(src, 0, 0, cw, ch);
   return c;
 }
 

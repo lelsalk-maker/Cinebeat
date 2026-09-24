@@ -41,10 +41,10 @@ const BAND_ASPECT = 16 / 9; // Kinoband im Hochformat
 
 const PACES = { ruhig: 1.45, mittel: 1, schnell: 0.7 };
 
-function outputSize(format, quality) {
+function outputSize(format, quality, previewShort = 540) {
   const [w, h] = (FORMATS[format] || FORMATS['9:16']).px;
   if (quality === 'preview') {
-    const s = 540 / Math.min(w, h);
+    const s = Math.max(540, Math.min(Math.min(w, h), previewShort)) / Math.min(w, h);
     return { w: Math.round((w * s) / 2) * 2, h: Math.round((h * s) / 2) * 2 };
   }
   if (quality === '4k') return { w: w * 2, h: h * 2 };

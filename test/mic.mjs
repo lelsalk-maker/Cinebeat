@@ -42,3 +42,15 @@ console.log('max:', await page.textContent('#expInfo'));
 await page.screenshot({ path: `${OUT}/export_sheet.png` });
 console.log('Fehler:', errs.join('\n') || 'keine');
 await b.close();
+
+// Zugriff verweigert: klare Meldung statt Stille
+{
+  const b2 = await chromium.launch({ args: ['--use-fake-device-for-media-stream', '--deny-permission-prompts', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+  const p2 = await (await b2.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  await p2.goto(APP); await p2.waitForSelector('.place'); await p2.click('.place');
+  await p2.waitForFunction(() => CineBeat.S.plan && document.getElementById('busy').hidden, null, { timeout: 90000 });
+  await p2.click('#tabbtn-music'); await p2.click('#micSong'); await p2.click('#micGo');
+  await p2.waitForSelector('#micDenied:not([hidden])', { timeout: 20000 });
+  console.log('Verweigert:', (await p2.textContent('#micDenied')).slice(0, 90), '| Knopf wieder aktiv:', await p2.evaluate(() => !document.getElementById('micGo').disabled));
+  await b2.close();
+}

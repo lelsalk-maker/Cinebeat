@@ -79,9 +79,10 @@ vec3 sampleSrc(sampler2D tex, vec4 xf, vec3 box, vec4 geo, vec2 uv) {
   vec2 p = uv - 0.5;
   if (geo.x != 0.0) p = rot2(p * vec2(asp, 1.0), -geo.x) / vec2(asp, 1.0);
   vec2 s = xf.zw + p * xf.xy;
-  vec3 c = texture2D(tex, s, geo.y).rgb;
+  // leichte negative Mipmap-Verschiebung: volle Auflösung statt Mischung mit der halben Stufe
+  vec3 c = texture2D(tex, s, geo.y - 0.75).rgb;
   if (uSharp > 0.0 && geo.y < 0.5) {
-    vec3 soft = texture2D(tex, s, geo.y + 1.4).rgb;
+    vec3 soft = texture2D(tex, s, geo.y + 0.9).rgb;
     c = clamp(c + (c - soft) * uSharp, 0.0, 1.0);
   }
   if (uGlow > 0.0) {
@@ -332,7 +333,7 @@ class Renderer {
     gl.uniform1f(u.uDesat, f.desat || 0);
     gl.uniform1f(u.uHasOvTop, f.ovTop ? 1 : 0);
     gl.uniform1f(u.uLod, this.isGL2 ? 5.0 : 0.0);
-    gl.uniform1f(u.uSharp, this.isGL2 ? 0.28 : 0.0);
+    gl.uniform1f(u.uSharp, this.isGL2 ? 0.4 : 0.0);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 }

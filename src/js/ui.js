@@ -278,8 +278,20 @@ function parseClock(v) {
   return m[2] === undefined ? +m[1] : +m[1] * 60 + +m[2];
 }
 
+const inFrame = (() => { try { return window.self !== window.top; } catch (e) { return true; } })();
+const APP_URL = 'lelsalk-maker.github.io/Cinebeat';
+
+function micErrorText(e) {
+  const n = e && e.name;
+  if (inFrame) return `Im Claude-Link ist das Mikrofon grundsätzlich gesperrt. Öffne CineBeat über ${APP_URL} (am besten vom Home-Bildschirm), dort funktioniert Mithören.`;
+  if (n === 'NotAllowedError' || n === 'SecurityError') return 'Das Mikrofon ist für CineBeat gesperrt. iPhone: in Safari auf „aA“ bzw. das Menü links in der Adresszeile → Website-Einstellungen → Mikrofon → „Fragen“. Oder Einstellungen → Apps → Safari → Mikrofon → „Fragen“. Danach CineBeat neu öffnen.';
+  if (n === 'NotFoundError') return 'Kein Mikrofon gefunden.';
+  if (n === 'NotReadableError' || n === 'AbortError') return 'Das Mikrofon wird gerade von einer anderen App benutzt (z. B. Telefonat oder Sprachmemo). Beende sie und versuch es noch einmal.';
+  return `Mikrofon konnte nicht gestartet werden (${n || 'unbekannt'}). Öffne CineBeat neu und versuch es noch einmal.`;
+}
+
 function openMicSheet() {
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { toast('Mithören braucht die Web-App über https (z. B. GitHub Pages).', true); return; }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { toast(inFrame ? micErrorText(null) : `Mithören braucht die Web-App über https: ${APP_URL}`, true); return; }
   engine.pause();
   let rec = null;
   const stop = () => { if (rec) { rec.stop(); rec = null; } };
@@ -289,13 +301,23 @@ function openMicSheet() {
     <label class="field"><span class="field-label">Songname für Instagram</span><input class="text-in" id="micName" maxlength="60" placeholder="z. B. Titel – Interpret" autocomplete="off"></label>
     <label class="field"><span class="field-label">Der Song läuft ab</span><input class="text-in" id="micOffset" inputmode="numeric" value="0:00" maxlength="5" aria-describedby="micOffHint"></label>
     <p class="hint small" id="micOffHint">Starte am besten am Songanfang. Wenn du später einsteigst, trag die Stelle ein, damit die Startzeit für Instagram stimmt.</p>
+    ${inFrame ? `<p class="note">Im Claude-Link sperrt die Umgebung das Mikrofon. Öffne CineBeat über <b>${APP_URL}</b>, dort fragt das iPhone nach dem Zugriff.</p>` : ''}
+    <p class="note" id="micDenied" hidden></p>
     <div class="mic-meter" aria-hidden="true"><span id="micLevel"></span></div>
     <p class="hint small" id="micTime">bereit</p>
     <button class="btn primary big" id="micGo" type="button">Aufnahme starten</button>
     <p class="hint small">Nur zur Analyse und Vorschau: Die Aufnahme bleibt im Zwischenspeicher auf deinem Gerät und wird nie mit exportiert.</p>`, stop);
   const go = body.querySelector('#micGo');
+  // bereits abgelehnt? Dann gleich sagen, wie man es wieder erlaubt
+  try {
+    if (navigator.permissions && navigator.permissions.query) {
+      navigator.permissions.query({ name: 'microphone' }).then((st) => { if (st.state === 'denied') { const d = body.querySelector('#micDenied'); if (d) { d.textContent = micErrorText({ name: 'NotAllowedError' }); d.hidden = false; } } }, () => {});
+    }
+  } catch (e) { /* nicht unterstützt */ }
   go.addEventListener('click', async () => {
     if (rec) { if (rec.secs() >= 12) finish(); return; }
+    go.disabled = true;
+    body.querySelector('#micTime').textContent = 'Mikrofon wird gestartet …';
     try {
       rec = await startMicCapture((lvl, secs) => {
         body.querySelector('#micLevel').style.transform = `scaleX(${Math.min(1, lvl * 4).toFixed(3)})`;
@@ -307,7 +329,10 @@ function openMicSheet() {
       go.disabled = true;
     } catch (e) {
       rec = null;
-      toast(e && e.name === 'NotAllowedError' ? 'Kein Mikrofonzugriff. Erlaube ihn in den Safari-Einstellungen für diese Seite.' : 'Mikrofon nicht verfügbar.', true);
+      go.disabled = false;
+      body.querySelector('#micTime').textContent = 'bereit';
+      const d = body.querySelector('#micDenied');
+      if (d) { d.textContent = micErrorText(e); d.hidden = false; }
     }
   });
   async function finish() {
@@ -333,11 +358,29 @@ function openMicSheet() {
 }
 
 /** Nimmt Mono-PCM direkt im Arbeitsspeicher auf; stop() liefert einen AudioBuffer und gibt das Mikrofon sofort frei. */
-async function startMicCapture(onTick) {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } });
+const setAudioSession = (type) => { try { if (navigator.audioSession) navigator.audioSession.type = type; } catch (e) { /* ältere Systeme */ } };
+
+/**
+ * Startet die Aufnahme direkt in der Nutzeraktion (iOS): Audio-Sitzung auf „abspielen und aufnehmen“,
+ * AudioContext sofort anlegen, dann Mikrofon anfragen. Gibt eine Steuerung zurück.
+ */
+function startMicCapture(onTick) {
+  setAudioSession('play-and-record');
   const AC = window.AudioContext || window.webkitAudioContext;
   const ctx = new AC();
-  if (ctx.state === 'suspended') await ctx.resume();
+  const resumed = ctx.resume().catch(() => {});
+  const md = navigator.mediaDevices;
+  const plain = () => md.getUserMedia({ audio: true });
+  return md.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
+    .catch((e) => (e && (e.name === 'OverconstrainedError' || e.name === 'TypeError') ? plain() : Promise.reject(e)))
+    .then(async (stream) => {
+      await Promise.race([resumed, new Promise((r) => setTimeout(r, 1500))]);
+      return micRecorder(ctx, stream, onTick);
+    })
+    .catch((e) => { ctx.close().catch(() => {}); setAudioSession('playback'); throw e; });
+}
+
+function micRecorder(ctx, stream, onTick) {
   const src = ctx.createMediaStreamSource(stream);
   const proc = ctx.createScriptProcessor(4096, 1, 1);
   const mute = ctx.createGain();
@@ -360,6 +403,7 @@ async function startMicCapture(onTick) {
       proc.onaudioprocess = null;
       try { src.disconnect(); proc.disconnect(); } catch (e) { /* ignore */ }
       for (const t of stream.getTracks()) t.stop();
+      setAudioSession('playback');
       const sr = ctx.sampleRate;
       ctx.close().catch(() => {});
       const all = new Float32Array(n);
@@ -1038,7 +1082,10 @@ async function rebuild(opts = {}) {
   mon.style.setProperty('--arw', f.w);
   mon.style.setProperty('--arh', f.h);
   mon.dataset.fmt = s.format;
-  const size = outputSize(s.format, 'preview');
+  // Vorschau in der Pixeldichte des Displays (Retina), damit sie nicht hochskaliert und weich wirkt
+  const r = mon.getBoundingClientRect();
+  const shortCss = Math.min(r.width || 0, r.height || 0);
+  const size = outputSize(s.format, 'preview', shortCss ? Math.round(shortCss * Math.min(3, window.devicePixelRatio || 1)) : 540);
   const wasPlaying = engine.setProject({ plan, media, audioBuffer: ctx.song.buffer, size });
   engine.selectedOverlay = S.selOverlay;
   updatePlanInfo();
@@ -1908,7 +1955,7 @@ function openExportSheet() {
   const micSong = !!S.ctx.song.mic;
   let fps = prefs.fps === 60 ? 60 : 30;
   let audio = prefs.audio === 'with' && !micSong ? 'with' : 'without';
-  let quality = QUALITY[prefs.quality] && prefs.quality !== '4k' ? prefs.quality : 'ig';
+  let quality = QUALITY[prefs.quality] && prefs.quality !== '4k' ? prefs.quality : 'max';
   const sizeOf = () => outputSize(st.format, QUALITY[quality].size);
   const body = openSheet(`
     <h3 id="sheetTitle">Film exportieren</h3>

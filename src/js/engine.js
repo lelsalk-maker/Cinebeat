@@ -86,8 +86,21 @@ class Engine {
   }
 
   /* ---------- Ressourcen ---------- */
+  /**
+   * Nötige Auflösung eines Fotos: Der Bildausschnitt (Cover-Zuschnitt) muss mindestens so groß sein
+   * wie das Ausgabebild, plus Reserve für Kamerafahrten und Zooms. Sonst würde hochskaliert.
+   */
+  imageDim(m) {
+    const bp = this.bandPx;
+    const sw = m.w || 0, sh = m.h || 0;
+    const cap = 4096; // Grenze für Canvas- und Texturgröße auf iPhones
+    if (!sw || !sh) return Math.min(cap, Math.round(Math.max(bp.w, bp.h) * 1.6));
+    const cover = Math.max(bp.w / sw, bp.h / sh);
+    return Math.min(cap, Math.max(sw, sh), Math.round(Math.max(sw, sh) * cover * 1.35));
+  }
+
   async getImage(m, maxDimOverride) {
-    const maxDim = maxDimOverride || Math.min(this.size.w * this.size.h > 2200000 ? 4096 : 2560, Math.round(Math.max(this.size.w, this.size.h) * 1.25));
+    const maxDim = maxDimOverride || this.imageDim(m);
     const key = m.id + '@' + maxDim;
     if (this.imgCache.has(key)) {
       const v = this.imgCache.get(key);
@@ -100,7 +113,14 @@ class Engine {
     try {
       const c = await p;
       if (this.imgCache.get(key) === p) this.imgCache.set(key, c);
-      while (this.imgCache.size > (maxDim > 2600 ? 4 : 10)) this.imgCache.delete(this.imgCache.keys().next().value);
+      // Zwischenspeicher nach Speicherbedarf begrenzen (etwa 160 MB dekodierte Bilder)
+      let px = 0;
+      for (const v of this.imgCache.values()) if (v && v.width) px += v.width * v.height;
+      while (px > 40e6 && this.imgCache.size > 2) {
+        const k0 = this.imgCache.keys().next().value, v0 = this.imgCache.get(k0);
+        if (v0 && v0.width) px -= v0.width * v0.height;
+        this.imgCache.delete(k0);
+      }
       return c;
     } catch (e) {
       this.imgCache.delete(key);
