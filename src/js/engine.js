@@ -169,6 +169,14 @@ class Engine {
     for (const k of Array.from(this.slots.keys())) this.releaseSlot(k);
   }
 
+  /** Im Hintergrund Speicher abgeben (Texturen, Videos, Bildcache), damit iOS die App nicht verwirft. */
+  trim() {
+    this.pause();
+    this.releaseAll();
+    for (const v of this.imgCache.values()) if (v && v.close) { try { v.close(); } catch (e) { /* ignore */ } }
+    this.imgCache.clear();
+  }
+
   prepareSlot(clip, t) {
     let s = this.slots.get(clip.i);
     if (s) return s;
@@ -659,8 +667,8 @@ class Engine {
       const rate = c.rp ? Math.round(rampRate(c.rp, t) * 20) / 20 : c.rate;
       this._driveVideo(v, active, frozen, playing, rate, srcTimeOf(c, t), srcTimeOf(c, c.freezeAt || 0), s);
       if (active && v.readyState >= 2 && (v.currentTime !== s.lastUpload || !playing)) {
-        // beim Abspielen ohne Mipmaps: spart pro Bild GPU-Arbeit, das Standbild bekommt sie wieder
-        if (this.r.upload(s.tex, v, !playing)) s.lastUpload = v.currentTime;
+        // beim Abspielen verkleinert und ohne Mipmaps: spart pro Bild GPU-Arbeit, das Standbild ist wieder voll
+        if (this.r.upload(s.tex, playing ? this._previewFrame(s, v) : v, !playing)) s.lastUpload = v.currentTime;
       }
     }
   }
@@ -777,6 +785,7 @@ class Engine {
     ]);
     if (token !== this._token) return;
     if (this.ac.state !== 'running') { try { await this.ac.resume(); } catch (e) { /* ignore */ } }
+    if (!this.exporting && this.scale > this.playMax) this._setScale(this.playMax);
     this._startAudio(t0, this.master);
     this._t0 = t0;
     this.playing = true;
@@ -880,6 +889,22 @@ class Engine {
     return t;
   }
 
+  /** Videobild für die laufende Vorschau: auf die Größe verkleinert, die der Ausschnitt gerade braucht. */
+  _previewFrame(s, v) {
+    const vw = v.videoWidth, vh = v.videoHeight, bp = this.bandPx;
+    if (!vw || !vh) return v;
+    const k = Math.min(1, Math.max((bp.w * this.scale) / vw, (bp.h * this.scale) / vh) * 1.2);
+    if (k > 0.75) return v;
+    const w = Math.max(2, Math.round(vw * k)), h = Math.max(2, Math.round(vh * k));
+    if (!s.pv) s.pv = document.createElement('canvas');
+    if (s.pv.width !== w || s.pv.height !== h) { s.pv.width = w; s.pv.height = h; }
+    s.pv.getContext('2d').drawImage(v, 0, 0, w, h);
+    return s.pv;
+  }
+
+  /** Höchste Vorschau-Auflösung beim Abspielen: etwa 1100 px auf der langen Seite reichen für ein flüssiges Bild. */
+  get playMax() { return Math.min(1, 1100 / Math.max(this.size.w, this.size.h)); }
+
   /** Vorschau-Auflösung (Anteil der vollen Größe); Export und Standbild immer voll. */
   _setScale(sc) {
     if (sc === this.scale) return;
@@ -908,8 +933,9 @@ class Engine {
     const base = Math.min(34, Math.max(7, Math.min(...d)));
     const avg = sum / d.length;
     this._dts = [];
-    if (avg > base * 1.45 && this.scale > 0.5) { this._setScale(Math.max(0.5, +(this.scale * 0.8).toFixed(2))); this._calm = 0; }
-    else if (avg < base * 1.12 && this.scale < 1 && ++this._calm >= 3) { this._setScale(Math.min(1, +(this.scale * 1.15).toFixed(2))); this._calm = 0; }
+    const floor = this.playMax * 0.6;
+    if (avg > base * 1.45 && this.scale > floor) { this._setScale(Math.max(floor, +(this.scale * 0.8).toFixed(2))); this._calm = 0; }
+    else if (avg < base * 1.12 && this.scale < this.playMax && ++this._calm >= 3) { this._setScale(Math.min(this.playMax, +(this.scale * 1.15).toFixed(2))); this._calm = 0; }
   }
 
   _loop() {
@@ -1113,7 +1139,9 @@ class Engine {
       for (let n = 0; n < N; n++) {
         if (failed) throw failed;
         if (isCancelled && isCancelled()) { cancelled = true; break; }
-        const t = n / fps;
+        // Bildmitte: Bild n ist von n/fps bis (n+1)/fps zu sehen; es zeigt den Moment in der Mitte.
+        // So liegt jeder Schnitt höchstens ein halbes Bild neben dem Beat (statt bis zu einem ganzen zu spät).
+        const t = Math.min(D - 1e-3, (n + 0.5) / fps);
         await this._prepareExact(t, fps);
         this.drawAt(t, 'offline');
         const frame = new VideoFrame(this.canvas, { timestamp: Math.round(n * frameUs), duration: Math.round(frameUs) });

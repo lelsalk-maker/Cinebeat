@@ -33,7 +33,7 @@ const res = await p.evaluate(async (b64) => {
 }, wav);
 console.log(JSON.stringify(res));
 const fails = [];
-if (!(res.during.scale < 1 && res.during.w < res.full)) fails.push('Auflösung nicht gesenkt');
+if (!(res.during.scale < 0.29 && res.during.w < res.full)) fails.push('Auflösung nicht gesenkt');
 if (res.after.scale !== 1 || res.after.w !== res.full) fails.push('Standbild nicht voll');
 console.log('Fehler:', fails.length ? fails.join(', ') : 'keine');
 await b.close();

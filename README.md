@@ -6,6 +6,7 @@ Reisefilme im Kino-Look, geschnitten nach dem Aufbau deines Songs: für Instagra
 
 - **Keine Verbindung ins Netz.** Eine Content-Security-Policy verbietet dem Browser jede Anfrage nach außen: kein Upload, keine fremden Schriften oder Skripte, kein Tracking. Die Web-App lädt nur ihre eigenen Dateien.
 - **Übergangsspeicher statt Datenreste.** Angefangene Projekte bleiben erhalten: Die gewählten Aufnahmen und Songs liegen als Zwischenspeicher nur auf diesem Gerät (IndexedDB) und werden 30 Tage nach der letzten Bearbeitung automatisch gelöscht. Pro Ort: Menü (⋯) → „Fertig: Aufnahmen aus dem Zwischenspeicher löschen“. In der Reiseansicht: „Zwischenspeicher leeren“ oder „Alles löschen“.
+- **Weiterarbeiten nach einem Neustart.** Verwirft iOS die App im Hintergrund, öffnet sie beim nächsten Start wieder den Ort, den Tab und die Stelle, an der du warst. Gemerkt wird dafür nur die Position, nichts von den Aufnahmen.
 - **Die Originale bleiben unberührt.** Die App sieht nur, was du in der Galerie-Auswahl markierst.
 - **Mikrofon nur auf Knopfdruck** („Mithören“). Die Aufnahme dient nur Analyse und Vorschau, liegt höchstens im Zwischenspeicher und wird nie exportiert; das Mikrofon wird danach sofort freigegeben.
 
@@ -32,6 +33,8 @@ Reisefilme im Kino-Look, geschnitten nach dem Aufbau deines Songs: für Instagra
 
 ## Kreative Werkzeuge
 
+- **Aufblende** (Standard-Einstieg): zwei Takte ruhiger Aufbau aus Details deiner Bilder, gedämpft, die Schärfe zieht an, dazu ein schlichter, gesperrter Titel. Genau auf dem Drop öffnet sich das stärkste Bild. Der Songausschnitt wird so gewählt, dass der Höhepunkt direkt nach dem Aufbau kommt.
+- **Videos anders als Fotos**: Videos bekommen eigene, längere Plätze in ruhigen Songteilen, zeitlich dort, wo sie in der Reise liegen, und werden weich ausgeblendet statt abgeschnitten. Fotos werden in ihrer Reihenfolge verteilt, jeweils mit der Energie, die zum Songteil passt. Übergänge wechseln innerhalb ihrer Familie, nie zweimal derselbe Effekt hintereinander.
 - **9er-Raster** (Einstieg): neun Bilder in Schwarzweiß, Beat für Beat werden sie farbig, dann zoomt der Film ins mittlere Bild. Die App wählt den Songausschnitt so, dass der Zoom genau auf dem Drop landet.
 - **Originalton pro Video**: Standard ist stumm. Pro Video *Stumm / Leise / Normal*; die Musik wird dort automatisch abgesenkt. Beim Export „Ohne Song“ bleibt der Originalton im Film.
 - **Flüge**: In der Reiseansicht „Flug“ antippen, Von und Nach eintragen, dann die Videos vom Flug wie gewohnt aus der Galerie wählen. Die App ordnet sie nach Aufnahmezeit (erste = Abflug, letzte = Landung, dazwischen Aufnahmen an Bord); im Menü einer Aufnahme lässt sich das ändern. Dazwischen zeichnet sich die Flugroute als Großkreis über einem Globus oder einer flachen Karte, mit Uhrzeiten, Flugdauer und Kilometern.
@@ -71,6 +74,8 @@ Songs aus Spotify, Apple Music oder YouTube lassen sich nicht übernehmen: Sie s
 | 4K-Archiv | 2160 × 3840 | ca. 30 Mbit/s | Archiv, große Bildschirme (nur wenn das Gerät es kodieren kann) |
 
 Jedes Bild wird einzeln berechnet (ruckelfrei, auch bei 60 fps). Videos (MP4/MOV, auch HEVC vom iPhone) werden dafür direkt aus der Datei dekodiert (WebCodecs) statt im Videoelement zu springen: gleiches Bild, Bild für Bild geprüft, etwa 9× schneller im Videoteil. Wo ein Format nicht passt, nimmt die App automatisch den bisherigen Weg. Auch das Einlesen liest Videos so und bewertet Fotos aus einer einzigen verkleinerten Kopie.
+
+**Takt-Genauigkeit**: Jeder Beat wird auf den tatsächlichen Anschlag im Signal gezogen (zwischen den Analyse-Frames genau), Taktanfänge werden über den ganzen Song verfolgt (auch nach Breaks oder Tempowechseln), Schnitte liegen ausschließlich auf Beats. Getestet mit 3-Minuten-Songs mit krummem Tempo und Tempodrift: Schlagzeug-Beats auf ±3 ms genau, im fertigen Video liegt jeder Schnitt höchstens ein halbes Bild neben dem Beat.
 
 Die Vorschau passt sich an: Ruckelt das Gerät, sinkt beim Abspielen die Auflösung stufenweise, angehalten ist sie wieder voll scharf. Der Export ist davon nie betroffen. Fotos werden so hoch aufgelöst geladen, dass auch der Ausschnitt (z. B. Querfoto in der Story) nie hochskaliert wird; dazu eine leichte Nachschärfung. Die Vorschau rendert in der Pixeldichte des Displays.
 

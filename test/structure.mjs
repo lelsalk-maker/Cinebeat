@@ -13,7 +13,7 @@ const r = await p.evaluate(async (b64) => {
   const bin = atob(b64); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
   const buf = await new OfflineAudioContext(1, 1, 44100).decodeAudioData(u.buffer);
   const an = await analyzeAudio(buf);
-  return { bpm: an.bpm.toFixed(1), sections: an.sections.map((s) => `${s.start.toFixed(2)}-${s.end.toFixed(2)} ${s.label} e=${s.energy.toFixed(2)} sl=${s.slope}`), hook: an.hook.toFixed(2), stops: an.stops.map((s) => s.t.toFixed(2) + '..' + s.end.toFixed(2)).join(' '), accents: an.accents.length };
+  return { bpm: an.bpm.toFixed(1), sections: an.sections.map((s) => `${s.start.toFixed(2)}-${s.end.toFixed(2)} ${s.label} e=${s.energy.toFixed(2)} sl=${s.slope}`), hook: an.hook.toFixed(2), stops: an.stops.map((s) => s.t.toFixed(2) + '..' + s.end.toFixed(2)).join(' ') };
 }, wav);
 console.log('Wahrheit:', truth.bounds.map((x) => `${x.t.toFixed(2)} ${x.name}`).join(' | '), 'Stopp', truth.stopAt.toFixed(2));
 console.log(r);

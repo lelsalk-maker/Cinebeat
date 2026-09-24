@@ -69,8 +69,10 @@ const res = await p.evaluate(async ({ b64, W, H }) => {
     eng.drawAt = (t, mode) => {
       orig(t, mode);
       for (const sl of eng.slots.values()) if (sl.fr) fast++;
-      const inV = vclips.some((c) => t >= c.visStart && t < c.visEnd);
-      const n = Math.round(t * fps);
+      // letztes Videobild ausgenommen: dort bleibt das Videoelement beim Springen ans Dateiende ein Bild früher stehen
+      // Rand-Bilder ausgenommen: am Clipanfang und am Dateiende springt das Videoelement gelegentlich ein Bild daneben
+      const inV = vclips.some((c) => t >= c.visStart + 1.5 / fps && t < c.visEnd && srcTimeOf(c, t) < vitem.duration - 2 / fpsSrc);
+      const n = Math.floor(t * fps);
       if (inV && n % 4 === 0) { x2.drawImage(eng.canvas, 0, 0); shots.set(n, x2.getImageData(0, 0, W, H).data); }
     };
     const t0 = performance.now();
@@ -92,7 +94,8 @@ const res = await p.evaluate(async ({ b64, W, H }) => {
   }
   if (!n) fails.push('keine Vergleichsbilder');
   if (minP < 38) fails.push(`Abweichung PSNR ${minP.toFixed(1)} dB bei Bild ${worst}`);
-  return { cs, compared: n, minPsnr: +minP.toFixed(1), worst, slowSecs: +slow.secs.toFixed(2), fastSecs: +fast.secs.toFixed(2), fails, clips: vclips.map((c) => [c.visStart.toFixed(2), c.visEnd.toFixed(2), c.rate]) };
+  const vinfo = vclips.map((c) => ({ vs: +c.visStart.toFixed(3), ve: +c.visEnd.toFixed(3), off: +c.srcOffset.toFixed(3), rate: c.rate, rp: c.rp, tout: c.tout, src775: +srcTimeOf(c, 7.75).toFixed(3), dur: vitem.duration }));
+  return { vinfo, cs, compared: n, minPsnr: +minP.toFixed(1), worst, slowSecs: +slow.secs.toFixed(2), fastSecs: +fast.secs.toFixed(2), fails, clips: vclips.map((c) => [c.visStart.toFixed(2), c.visEnd.toFixed(2), c.rate]) };
 }, { b64: wav, W, H });
 console.log(JSON.stringify(res, null, 1));
 await b.close();

@@ -61,6 +61,17 @@ function bandRect(format, frame) {
   return [(1 - hgt) / 2 - 0.02, hgt];
 }
 
+/** Länge des Aufblende-Einstiegs in Beats: zwei Takte, bei sehr langsamen Songs einer (Aufbau 3–5 s). */
+function revealBeats(an) {
+  return an.beatPeriod * 8 <= 5.6 ? 8 : 4;
+}
+
+/** Ist Beat i eine Eins (Taktanfang)? Folgt der erkannten Taktzählung, auch wenn sie im Song springt. */
+function downSet(an) {
+  if (!an._downSet) Object.defineProperty(an, '_downSet', { value: new Set(an.downIdx || Array.from(an.beats, (_, i) => i).filter((i) => i % 4 === an.downPhase)), enumerable: false });
+  return an._downSet;
+}
+
 function sectionAt(an, absT) {
   const secs = an.sections || [];
   for (const s of secs) if (absT >= s.start && absT < s.end) return s;
@@ -70,7 +81,7 @@ function sectionAt(an, absT) {
 /** Songausschnitt nach Wunschlänge und fester Startwahl. */
 function pickWindow(an, { length, songStart }) {
   const first = Math.max(0, an.firstSound), last = Math.min(an.duration, an.lastSound + 0.2);
-  const bars = an.barStart && an.barStart.length ? an.barStart : Array.from(an.beats).filter((_, i) => i % 4 === an.downPhase);
+  const bars = an.barStart && an.barStart.length ? an.barStart : Array.from(an.beats).filter((_, i) => downSet(an).has(i));
   const barDur = an.beatPeriod * 4;
   let target = length === 'full' ? last - first : +length;
   target = Math.min(target, last - first);
@@ -127,9 +138,10 @@ function planCuts(an, win, pace, lengthScale, shotBase) {
     const k = Math.round(b * 1000);
     add(b, phraseSet.has(k) ? 5 : barSet.has(k) ? 3 : 1);
   }
-  for (const a of an.accents || []) if (a.off && a.s > 0) add(a.t, 2.2);
-  for (const s of secStarts) add(s, 12, true);
-  for (const s of stops) add(s.end, 10, true);
+  // Schnitte nur auf Beats: Abschnitte und Stopps rasten auf den nächsten Beat ein
+  const snap = (t) => { let m = t, d = Infinity; for (const b of an.beats) { const x = Math.abs(b - t); if (x < d) { d = x; m = b; } else if (b > t) break; } return d < beatDur * 0.35 ? m : t; };
+  for (const s of secStarts) add(snap(s), 12, true);
+  for (const s of stops) add(snap(s.end), 10, true);
   const pts = [{ t: 0, w: 0, forced: true }, ...Array.from(cands.values()).sort((a, b) => a.t - b.t), { t: D, w: 0, forced: true }];
 
   const minLen = Math.max(0.34, beatDur * 0.98);
@@ -138,13 +150,15 @@ function planCuts(an, win, pace, lengthScale, shotBase) {
   const tgt = (t) => {
     const abs = win.start + t;
     const sec = sectionAt(an, abs);
-    const base = { intro: 2.5, verse: 2.0, build: 1.6, chorus: 1.15, drop: 0.95, break: 3.2, outro: 2.6 }[sec.label] || 1.9;
+    // ruhig genug, dass jedes Bild wirkt; auch im Drop nicht hektisch
+    const base = { intro: 2.6, verse: 2.1, build: 1.7, chorus: 1.35, drop: 1.2, break: 3.3, outro: 2.7 }[sec.label] || 2;
     let v = base * pf;
     if (sec.label === 'build') {
       const prog = Math.max(0, Math.min(1, (abs - sec.start) / Math.max(0.1, sec.end - sec.start)));
       v *= 1.4 - prog * 0.9;
     }
-    if (sec.label === 'drop' && abs - sec.start < beatDur * 4.1) v = beatDur * (pace === 'ruhig' ? 2 : 1);
+    // Einsatz des Drops: zwei Schnitte genau auf den ersten Beats, danach wieder ruhiger
+    if (sec.label === 'drop' && abs - sec.start < beatDur * 2.1) v = beatDur * (pace === 'ruhig' ? 2 : 1);
     return Math.max(minLen, Math.min(maxLen, v));
   };
   const n = pts.length;
@@ -252,6 +266,104 @@ function rampRate(pts, t) {
   if (t <= pts[0][0]) return pts[0][1];
   for (let i = 0; i < pts.length - 1; i++) if (t < pts[i + 1][0]) { const [t0, r0] = pts[i], [t1, r1] = pts[i + 1]; return r0 + (r1 - r0) * (t - t0) / Math.max(1e-6, t1 - t0); }
   return pts[pts.length - 1][1];
+}
+
+/** Energie einer Aufnahme (0 … 1): kräftige Farben, Schärfe und bei Videos Bewegung. */
+function mediaEnergy(m) {
+  const hl = m.kind === 'video' && m.highlights && m.highlights[0] ? 0.2 : 0;
+  return Math.max(0, Math.min(1, 0.5 * (m.color || 0.4) + 0.35 * (m.sharp || 0.5) + hl));
+}
+const isCalmLabel = (l) => l !== 'drop' && l !== 'chorus';
+
+/**
+ * Eigene Plätze für Videos: in ruhigen Songteilen, lang genug, dass sie nicht mitten in der Bewegung abreißen,
+ * und zeitlich dort, wo sie in der Reise liegen. Benachbarte Schnitte werden dafür zusammengelegt (bleiben auf Beats).
+ */
+function videoSlots(segs, an, win, vids, all, barDur, startAt, endAt) {
+  const special = (g) => g.burst || g.leader || g.knock || g.gridSeg || g.pre || g.reveal || g.vslot;
+  const labelAt = (t) => sectionAt(an, win.start + t + 0.01).label;
+  const span = Math.max(1, endAt - startAt);
+  let budget = (endAt - startAt) * 0.45;
+  for (const v of vids) {
+    const vd = v.duration || 3;
+    if (vd < 1.4 || budget <= 0) continue;
+    const want = Math.max(Math.min(vd * 0.9, 2 * barDur, 4.8), Math.min(vd * 0.9, Math.max(2.2, barDur)));
+    const p = all.length > 1 ? all.indexOf(v) / (all.length - 1) : 0.5;
+    const target = startAt + p * span;
+    let best = null;
+    for (let k = 0; k < segs.length - 1; k++) {
+      const g = segs[k];
+      if (special(g) || g.start < startAt - 0.01 || g.end > endAt + 0.01) continue;
+      const lab = labelAt(g.start);
+      let j = k, end = g.end;
+      while (end - g.start < want * 0.92 && j + 1 < segs.length - 1 && !special(segs[j + 1]) && labelAt(segs[j + 1].start) === lab && segs[j + 1].end - g.start <= want * 1.35) { j++; end = segs[j].end; }
+      const len = end - g.start;
+      if (len < Math.min(want, 1.5)) continue;
+      const cost = Math.abs(g.start - target) / span + (isCalmLabel(lab) ? 0 : 0.9) + Math.abs(len - want) / want * 0.3;
+      if (!best || cost < best.cost) best = { k, j, cost, end };
+    }
+    if (!best) continue;
+    const g0 = segs[best.k];
+    segs.splice(best.k, best.j - best.k + 1, { start: g0.start, end: best.end, w: g0.w, vslot: true, vid: v.id, freezeAt: undefined });
+    budget -= best.end - g0.start;
+  }
+  return segs;
+}
+
+/**
+ * Verteilt Aufnahmen auf die Einstellungen: Videos auf ihre Plätze (oder die längste passende ruhige Einstellung),
+ * Fotos in ihrer Reihenfolge, aber jeweils die, deren Energie am besten zum Songteil passt (Blick auf die nächsten drei).
+ */
+function assignStream(clips, idxs, list, byId) {
+  const taken = new Set();
+  const vids = list.filter((m) => m.kind === 'video');
+  const free = new Set(idxs);
+  // 1. Videoplätze
+  for (const i of idxs) {
+    const c = clips[i];
+    if (c.vid && byId.has(c.vid) && list.includes(byId.get(c.vid))) { c.mediaId = c.vid; free.delete(i); taken.add(c.vid); }
+  }
+  // 2. übrige Videos: längste ruhige Einstellung nahe ihrer Zeitposition
+  const idxArr = idxs.slice();
+  for (const v of vids) {
+    if (taken.has(v.id)) continue;
+    const p = list.length > 1 ? list.indexOf(v) / (list.length - 1) : 0.5;
+    let best = -1, bs = -Infinity;
+    for (const i of free) {
+      const c = clips[i], len = c.end - c.start;
+      if (len < 1.5) continue;
+      const pos = idxArr.indexOf(i) / Math.max(1, idxArr.length - 1);
+      const sc = Math.min(len, 4) - Math.abs(pos - p) * 6 + (isCalmLabel(c.label) ? 1.2 : 0);
+      if (sc > bs) { bs = sc; best = i; }
+    }
+    if (best >= 0) { clips[best].mediaId = v.id; free.delete(best); taken.add(v.id); }
+  }
+  // 3. Fotos (und Videos ohne Platz nur auf langen Einstellungen) nach Reihenfolge und passender Energie
+  let stream = list.filter((m) => !taken.has(m.id));
+  if (!stream.length) stream = list.slice();
+  let pos = 0;
+  const recent = [];
+  for (const i of idxs) {
+    if (!free.has(i)) { recent.push(clips[i].mediaId); continue; }
+    const c = clips[i];
+    const want = Math.max(0, Math.min(1, c.energy != null ? c.energy : 0.5));
+    let bk = -1, bv = Infinity;
+    for (let k = 0; k < Math.min(3, stream.length); k++) {
+      const m = stream[(pos + k) % stream.length];
+      if (m.kind === 'video' && c.end - c.start < 1.5) continue;
+      if (recent.slice(-3).includes(m.id) && stream.length > 3) continue;
+      const v = Math.abs(mediaEnergy(m) - want) + k * 0.16;
+      if (v < bv) { bv = v; bk = k; }
+    }
+    if (bk < 0) bk = 0;
+    // gewählte Aufnahme mit der fälligen tauschen: keine wird übersprungen, die Reihenfolge bleibt fast erhalten
+    const at = (pos + bk) % stream.length, here = pos % stream.length;
+    const m = stream[at];
+    stream[at] = stream[here]; stream[here] = m;
+    c.mediaId = m.id;
+    recent.push(m.id);
+    pos = (pos + 1) % stream.length;
+  }
 }
 
 function orderChrono(list) {
@@ -393,7 +505,7 @@ function buildPlan(opts) {
   if (flight) {
     const byIdF = new Map(pool.map((m) => [m.id, m]));
     const extras = (flight.extraIds || []).filter((id) => byIdF.has(id) && !byIdF.get(id).excluded).slice(0, 4);
-    const dbs = an.beats.filter((_, i) => i % 4 === an.downPhase).map((b) => b - win.start).filter((t) => t > 0.3 && t < D - 0.3);
+    const dbs = an.beats.filter((_, i) => downSet(an).has(i)).map((b) => b - win.start).filter((t) => t > 0.3 && t < D - 0.3);
     const at = (k) => (dbs[k - 1] != null ? dbs[k - 1] : k * barDur);
     let ex = extras.slice();
     let bounds;
@@ -462,8 +574,17 @@ function buildPlan(opts) {
     if (leader.end > D * 0.5 || leader.marks[1] - leader.marks[0] < 0.2) leader = null;
   }
 
+  // Aufblende: ein kurzer, ruhiger Aufbau aus Details, dann öffnet sich auf dem Höhepunkt das stärkste Bild
+  let reveal = null;
+  if (intro === 'reveal') {
+    const nb = revealBeats(an);
+    const at = (k) => atB(k + pb);
+    reveal = { marks: [pb ? at(0) : 0, at(nb / 2)], end: at(nb) };
+    if (reveal.end > D * 0.4 || reveal.end - reveal.marks[0] < 1.6) reveal = null;
+  }
+
   // Einstieg: Mindestdauer der ersten Einstellung
-  const firstMin = knock || leader || intro === 'grid' ? 0 : intro === 'city' ? Math.min(D * 0.35, Math.max(2.4, barDur * 1.2)) : intro === 'cinema' ? Math.min(D * 0.35, Math.max(3.2, barDur * 1.6)) : intro === 'type' ? Math.min(D * 0.3, Math.max(1.8, barDur)) : intro === 'split' ? Math.min(D * 0.3, Math.max(2.2, barDur)) : Math.min(Math.max(1.3, barDur * 0.95), 2.8, D * 0.3);
+  const firstMin = knock || leader || reveal || intro === 'grid' ? 0 : intro === 'city' ? Math.min(D * 0.35, Math.max(2.4, barDur * 1.2)) : intro === 'cinema' ? Math.min(D * 0.35, Math.max(3.2, barDur * 1.6)) : intro === 'type' ? Math.min(D * 0.3, Math.max(1.8, barDur)) : intro === 'split' ? Math.min(D * 0.3, Math.max(2.2, barDur)) : Math.min(Math.max(1.3, barDur * 0.95), 2.8, D * 0.3);
   if (!flight && !pre && segs.length > 1 && segs[0].end < firstMin) {
     let k = 0;
     while (k < segs.length - 1 && segs[k].end < firstMin) k++;
@@ -483,14 +604,16 @@ function buildPlan(opts) {
   };
   const mainPieces = knock ? [{ start: T0, end: knock.end, f: { knock: true } }]
     : leader ? leader.marks.map((m, i) => ({ start: m, end: i < 2 ? leader.marks[i + 1] : leader.end, f: { leader: true } }))
-      : gridPlan ? [{ start: T0, end: gridPlan.zoomEnd, f: { gridSeg: true } }] : [];
+      : gridPlan ? [{ start: T0, end: gridPlan.zoomEnd, f: { gridSeg: true } }]
+        : reveal ? reveal.marks.map((m, i) => ({ start: m, end: i < reveal.marks.length - 1 ? reveal.marks[i + 1] : reveal.end, f: { reveal: true } })) : [];
   if (pre || mainPieces.length) {
-    const ok = forceStart([...(pre ? pre.pieces : []), ...mainPieces], mainPieces.length ? 0 : firstMin);
-    if (!ok) { pre = null; knock = null; leader = null; gridPlan = null; }
+    // nach der Aufblende bekommt das Highlight mindestens einen ganzen Takt
+    const ok = forceStart([...(pre ? pre.pieces : []), ...mainPieces], reveal ? barDur : mainPieces.length ? 0 : firstMin);
+    if (!ok) { pre = null; knock = null; leader = null; gridPlan = null; reveal = null; }
   }
   // Foto-Serie im Drop: ein Takt, jeder halbe Beat ein neues Bild
   // Einstiege mit fester Länge enden auf dem Drop: die Foto-Serie darf direkt dort beginnen
-  const forced = segs.filter((g) => g.knock || g.leader || g.gridSeg || g.pre);
+  const forced = segs.filter((g) => g.knock || g.leader || g.gridSeg || g.pre || g.reveal);
   // nach Raster und „Durch den Namen“ behält das freigelegte Bild seine volle Einstellung
   const lastForced = forced[forced.length - 1];
   const introEnd = !lastForced ? segs[0].end : lastForced.leader ? lastForced.end : (segs[forced.length] || lastForced).end;
@@ -515,13 +638,21 @@ function buildPlan(opts) {
       // Reststücke unter 0,6 s an einen normalen Nachbarn hängen
       for (let i = 0; i < out.length; i++) {
         const g = out[i];
-        const fixed = (x) => x && (x.burst || x.leader || x.knock || x.gridSeg || x.pre);
+        const fixed = (x) => x && (x.burst || x.leader || x.knock || x.gridSeg || x.pre || x.reveal);
         if (fixed(g) || g.end - g.start >= 0.6) continue;
         const prev = out[i - 1], next = out[i + 1];
         if (prev && !fixed(prev)) { prev.end = g.end; out.splice(i--, 1); } else if (next && !fixed(next)) { next.start = g.start; out.splice(i--, 1); }
       }
       segs = out;
     }
+  }
+  // Videos: eigene, längere Plätze in ruhigen Songteilen (nicht bei Flügen: dort legt die Rolle die Videos fest)
+  if (!flight) {
+    const all = orderChrono(goodMedia(usable));
+    const vids = all.filter((m) => m.kind === 'video');
+    // erst nach dem Einstieg und seiner ersten Vollbild-Einstellung (dem Highlight)
+    const afterIntro = segs[forced.length] ? segs[forced.length].end : segs[0] ? segs[0].end : 0;
+    if (vids.length) segs = videoSlots(segs, an, win, vids, all, barDur, afterIntro, D);
   }
   // Ende: letzte Einstellung lang genug für Schlusstitel/Standbild
   const lastMin = outro === 'strip' ? Math.min(D * 0.32, Math.max(3.8, barDur * 2)) : outro === 'credits' ? Math.min(D * 0.3, Math.max(3.4, barDur * 1.5)) : outro === 'freeze' ? Math.min(D * 0.3, Math.max(2.6, barDur)) : outro === 'split' ? Math.min(D * 0.3, Math.max(2.2, barDur)) : 0;
@@ -535,7 +666,7 @@ function buildPlan(opts) {
     const abs = win.start + g.start;
     const sec = sectionAt(an, abs + 0.01);
     return {
-      i, start: g.start, end: g.end, label: sec.label, energy: sec.energy, weight: g.w, freezeAt: g.freezeAt, burst: !!g.burst, leader: !!g.leader, pre: g.pre || null,
+      i, start: g.start, end: g.end, label: sec.label, energy: sec.energy, weight: g.w, freezeAt: g.freezeAt, burst: !!g.burst, leader: !!g.leader, pre: g.pre || null, reveal: !!g.reveal, vid: g.vid || null,
       sectionChange: i > 0 && (an.sections || []).some((x) => Math.abs(x.start - abs) < 0.05),
       mediaId: null, role: 'normal',
     };
@@ -555,7 +686,7 @@ function buildPlan(opts) {
     let since = every;
     for (const c of clips) {
       since++;
-      if (c.i <= P + (gridPlan ? 1 : leader ? 3 : 0) || c.i === clips.length - 1 || splitClips.includes(c.i)) continue;
+      if (c.vid || c.i <= P + (gridPlan ? 1 : leader ? 3 : reveal ? 2 : 0) || c.i === clips.length - 1 || splitClips.includes(c.i)) continue;
       const peak = c.label === 'drop' || c.label === 'chorus';
       if (peak && c.end - c.start >= Math.max(1.4, beatDur * 3) && (c.sectionChange || since >= every)) { splitClips.push(c.i); since = 0; }
     }
@@ -599,14 +730,14 @@ function buildPlan(opts) {
     for (let c = 0; c < chapters.length; c++) {
       const cnt = bounds[c + 1] - bounds[c];
       const sel = spreadSimilar(flowOrder(selectMedia(chapters[c].media, cnt, new Set()), s.match !== 'off'));
-      for (let k = 0; k < cnt; k++) {
-        order.push(sel.length ? sel[k % sel.length] : null);
-        if (k === 0) { clips[bounds[c]].chapter = chapters[c].title; clips[bounds[c]].chapterNo = c + 1; clips[bounds[c]].role = 'chapter'; }
-      }
+      const idxs = [];
+      for (let k = 0; k < cnt; k++) idxs.push(bounds[c] + k);
+      if (sel.length) assignStream(clips, idxs, sel, byId);
+      clips[bounds[c]].chapter = chapters[c].title; clips[bounds[c]].chapterNo = c + 1; clips[bounds[c]].role = 'chapter';
     }
-    for (let i = 0; i < clips.length; i++) clips[i].mediaId = order[i] ? order[i].id : null;
-    hook = order[0];
+    hook = byId.get(clips[0].mediaId) || null;
   } else {
+    for (const c of clips) if (c.vid) mustIds.add(c.vid);
     const chosen = selectMedia(pool, clips.length - splitClips.length + 2, mustIds);
     hook = settings.hookId && byId.get(settings.hookId) ? byId.get(settings.hookId) : chosen.slice().sort((a, b) => (b.score || 0) - (a.score || 0))[0] || null;
     const rest = spreadSimilar(flowOrder(chosen.filter((m) => m !== hook), s.match !== 'off'));
@@ -618,15 +749,8 @@ function buildPlan(opts) {
       const at = order.indexOf(best2);
       if (at > 0) { order.splice(at, 1); order.splice(Math.min(dropIdx, order.length), 0, best2); }
     }
-    let cur = 0;
-    for (let i = 0; i < clips.length; i++) {
-      if (splitClips.includes(i) && i !== 0) continue;
-      let m = order.length ? order[cur % order.length] : null;
-      cur++;
-      const prevId = i > 0 ? clips[i - 1].mediaId : null;
-      if (m && prevId === m.id && order.length > 1) { m = order[cur % order.length]; cur++; }
-      clips[i].mediaId = m ? m.id : null;
-    }
+    const idxs = clips.map((c) => c.i).filter((i) => !(splitClips.includes(i) && i !== 0));
+    if (order.length) assignStream(clips, idxs, order, byId);
     if (hook && intro !== 'split' && clips[P]) { clips[P].mediaId = hook.id; clips[P].role = 'hook'; }
     if (leader && hook && clips[P + 3]) {
       // Nach dem Countdown kommt das stärkste Bild in Farbe; der Vorspann zeigt andere Motive
@@ -639,6 +763,28 @@ function buildPlan(opts) {
       const was = clips[P + 1].mediaId;
       clips[P + 1].mediaId = hook.id; clips[P + 1].role = 'hook';
       clips[P].mediaId = was && was !== hook.id ? was : clips[P].mediaId;
+    }
+  }
+  if (reveal) {
+    // Aufblende: erst das Detail eines anderen starken Bilds, dann ein Detail des Highlights, dann das Highlight ganz
+    const R = clips.filter((c) => c.reveal);
+    const hi = clips[P + R.length];
+    const hl = hi && byId.get(hi.mediaId) ? byId.get(hi.mediaId) : hook;
+    if (hi && hl) { hi.mediaId = hl.id; hi.role = 'hook'; }
+    const others = pool.filter((m) => !m.excluded && m !== hl && !m.bad).sort((a, b) => (b.sharp || 0) + (b.color || 0) - (a.sharp || 0) - (a.color || 0));
+    R.forEach((c, k) => {
+      const m = k === R.length - 1 ? hl : others[k] || hl;
+      c.mediaId = m ? m.id : null;
+      c.role = 'reveal';
+    });
+  }
+  // Sicherheitsnetz: ein Video mit eigenem Platz, das ein Einstieg überschrieben hat, bekommt die längste freie ruhige Einstellung
+  if (!chapters || !chapters.length) {
+    for (const c of clips) {
+      if (!c.vid || clips.some((x) => x.mediaId === c.vid)) continue;
+      const cand = clips.filter((x) => x.i > P + 1 && !x.pre && !x.leader && !x.reveal && !x.grid && !x.burst && !splitClips.includes(x.i) && x.role !== 'hook' && !(byId.get(x.mediaId) && byId.get(x.mediaId).kind === 'video'))
+        .sort((a, b) => (isCalmLabel(b.label) - isCalmLabel(a.label)) || (b.end - b.start) - (a.end - a.start))[0];
+      if (cand) cand.mediaId = c.vid;
     }
   }
   if (pre && P) {
@@ -667,8 +813,10 @@ function buildPlan(opts) {
   for (const c of clips) if (c.mediaId) useCount.set(c.mediaId, (useCount.get(c.mediaId) || 0) + 1);
   for (const si of splitClips.sort((a, b) => a - b)) {
     const c = clips[si];
-    const fitting = goodMedia(usable).filter(splitFit);
-    const src = (fitting.length >= splitN ? fitting : goodMedia(usable)).slice().sort((a, b) => (useCount.get(a.id) || 0) - (useCount.get(b.id) || 0) || (b.score || 0) - (a.score || 0));
+    // Videos mit eigenem Platz nicht zusätzlich im Split-Screen
+    const pool2 = goodMedia(usable).filter((m) => !(m.kind === 'video' && clips.some((x) => x.vid === m.id)));
+    const fitting = pool2.filter(splitFit);
+    const src = (fitting.length >= splitN ? fitting : pool2).slice().sort((a, b) => (useCount.get(a.id) || 0) - (useCount.get(b.id) || 0) || (b.score || 0) - (a.score || 0));
     const ids = orderChrono(src.slice(0, splitN)).map((m) => m.id);
     if (ids.length < 2) continue;
     for (const id of ids) useCount.set(id, (useCount.get(id) || 0) + 1);
@@ -725,7 +873,7 @@ function buildPlan(opts) {
   }
 
   // Übergänge: aus dem Songaufbau und aus dem, was das vorige Bild zeigt
-  let matches = 0, morphs = 0;
+  let matches = 0, morphs = 0, lastTr = -1;
   for (let i = 1; i < clips.length; i++) {
     const A = clips[i - 1], B = clips[i];
     const stopEnd = (an.stops || []).some((x) => Math.abs(x.end - (win.start + B.start)) < 0.06);
@@ -734,13 +882,25 @@ function buildPlan(opts) {
       peak: B.label === 'drop' || B.label === 'chorus', pace: s.pace, beatDur,
       lenA: A.end - A.start, lenB: B.end - B.start, stopEnd,
     }, rng);
-    const fixedCut = A.split || B.split || A.grid || A.flightAnim || B.flightAnim || A.burst || B.burst || A.leader || A.pre || B.pre;
+    const fixedCut = A.split || B.split || A.grid || A.flightAnim || B.flightAnim || A.burst || B.burst || A.leader || A.pre || B.pre || A.reveal;
     if (!fixedCut && B.role !== 'chapter') tr = refineTransition(tr, shotRelation(byId.get(A.mediaId), byId.get(B.mediaId)), {
       B, A, beatDur, s, peak: B.label === 'drop' || B.label === 'chorus', rng, morphCount: morphs,
     });
+    // aus einem Video in einem ruhigen Teil nicht hart heraus: weich ausblenden
+    const mA = byId.get(A.mediaId);
+    if (!fixedCut && mA && mA.kind === 'video' && tr.type === TR.CUT && !tr.punch && !tr.match && isCalmLabel(B.label)) tr = { type: TR.DISSOLVE, dur: Math.min(beatDur, 0.45 * (A.end - A.start), 0.45 * (B.end - B.start)), punch: false };
+    // Abwechslung ohne Unruhe: derselbe Effekt nie zweimal hintereinander, sondern ein Verwandter aus seiner Familie
+    if (tr.type !== TR.CUT && tr.type === lastTr && !fixedCut) {
+      const fam = [[TR.DISSOLVE, TR.LUMA, TR.LEAK], [TR.WHIP, TR.PUSH, TR.ZOOM], [TR.MORPH, TR.INK, TR.DOUBLE], [TR.DIP, TR.DISSOLVE]].find((f) => f.includes(tr.type));
+      if (fam) tr = { ...tr, type: fam[(fam.indexOf(tr.type) + 1) % fam.length] };
+    }
+    if (tr.type !== TR.CUT) lastTr = tr.type;
     if (tr.match) { B.matchCut = true; matches++; }
     if (tr.type === TR.MORPH || tr.type === TR.INK || tr.type === TR.DOUBLE) morphs++;
     if (fixedCut) tr = { type: TR.CUT, dur: 0, punch: false };
+    // Aufblende: die Details gehen weich ineinander über, auf dem Höhepunkt ein harter Schnitt
+    if (A.reveal && B.reveal) tr = { type: TR.DISSOLVE, dur: Math.min(beatDur * 1.5, 0.45 * (A.end - A.start)), punch: false };
+    else if (A.reveal) tr = { type: TR.CUT, dur: 0, punch: true };
     if (B.strip) tr = { type: TR.DISSOLVE, dur: Math.min(0.35, 0.45 * (A.end - A.start)), punch: false };
     if (B.role === 'chapter') tr = { type: TR.DIP, dur: Math.min(beatDur * 1.5, 0.45 * (A.end - A.start), 0.45 * (B.end - B.start)), punch: false };
     const o = ov[B.i];
@@ -879,6 +1039,21 @@ function buildPlan(opts) {
         prevDir = pc.dir;
       }
     }
+    if (c.reveal || (c.role === 'hook' && clips[c.i - 1] && clips[c.i - 1].reveal)) {
+      // Aufblende: enger Ausschnitt um das Motiv, langsame Fahrt hinein; das Highlight springt danach
+      // aus demselben Motiv auf das ganze Bild auf
+      const f = m.focus || [0.5, 0.45];
+      const pos = (v, sc) => Math.max(-1, Math.min(1, ((v - 0.5) * 2) / Math.max(0.05, 1 - 1 / sc)));
+      if (c.reveal) {
+        const s0 = byId.get(clips[c.i + 1] && clips[c.i + 1].mediaId) === m ? 1.7 : 1.45;
+        c.motion = { from: { s: s0, x: pos(f[0], s0), y: pos(f[1], s0) }, to: { s: s0 * 1.07, x: pos(f[0], s0 * 1.07), y: pos(f[1], s0 * 1.07) } };
+        if (m.kind === 'video') { c.rate = Math.min(c.rate || 1, 0.5); c.motion = { from: { s: 1.25, x: 0, y: 0 }, to: { s: 1.32, x: 0, y: 0 } }; }
+      } else {
+        c.motion = { from: { s: 1.22, x: pos(f[0], 1.22), y: pos(f[1], 1.22) }, to: { s: 1.02, x: 0, y: 0 } };
+        c.revealHit = true;
+      }
+      c.contain = false;
+    }
     if (c.pre === 'rew') {
       // Zurückspulen: jedes Bild zieht sich schnell zusammen und rutscht gegen die Laufrichtung
       const sg = c.i % 2 ? 1 : -1;
@@ -925,10 +1100,24 @@ function buildPlan(opts) {
   const beatsRel = [], downs = [], beatEnergy = [];
   for (let i = 0; i < an.beats.length; i++) {
     const t = an.beats[i] - win.start;
-    if (t >= -0.01 && t <= D + 0.01) { beatsRel.push(t); downs.push(i % 4 === an.downPhase); beatEnergy.push(an.energy[i]); }
+    if (t >= -0.01 && t <= D + 0.01) { beatsRel.push(t); downs.push(downSet(an).has(i)); beatEnergy.push(an.energy[i]); }
   }
   const beatsIn = (a, b) => beatsRel.filter((t) => t >= a - 0.01 && t < b);
   const tEnd = T0 + Math.min(D * 0.45, Math.max(2.6, barDur * 1.4));
+
+  // Aufblende: gedämpft, leicht entsättigt, Schärfe zieht an; auf dem Höhepunkt Licht und Farbe
+  if (reveal) {
+    const R = clips.filter((c) => c.reveal);
+    R.forEach((c, k) => {
+      const last = k === R.length - 1;
+      fx.push({ type: 'focus', start: c.start, end: c.end, amp: last ? 0.35 : 0.6 });
+      fx.push({ type: 'dim', start: c.start, end: c.end, amp: last ? 0.2 : 0.34, fadeIn: k === 0 ? Math.min(0.6, beatDur) : 0 });
+    });
+    fx.push({ type: 'desat', start: R[0].start, end: reveal.end, amp: 0.5 });
+    fx.push({ type: 'flash', start: reveal.end, end: reveal.end + 0.28, amp: 0.24 });
+    fx.push({ type: 'punch', start: reveal.end, end: reveal.end + 0.5, amp: 0.8 });
+    if (title) overlays.push({ type: 'reveal', text: title, sub: subtitle, geo, start: R[0].start + Math.min(0.5, beatDur), end: reveal.end - 0.04 });
+  }
 
   // Vorspann
   if (pre && pre.kind === 'countdown') {

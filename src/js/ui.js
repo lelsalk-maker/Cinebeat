@@ -31,7 +31,7 @@ function normalizeSettings(st, defaults) {
     format: FORMATS[s.format] ? s.format : '9:16',
     look: s.look === 'auto' || LOOKS[s.look] ? s.look : 'auto',
     pace: pick1(s.pace, ['auto', 'ruhig', 'mittel', 'schnell'], 'auto'),
-    intro: pick1(s.intro, ['auto', 'countdown', 'grid', 'knockout', 'cinema', 'city', 'hook', 'type', 'split'], 'auto'),
+    intro: pick1(s.intro, ['auto', 'reveal', 'countdown', 'grid', 'knockout', 'cinema', 'city', 'hook', 'type', 'split'], 'auto'),
     outro: pick1(s.outro, ['auto', 'credits', 'loop', 'freeze', 'split', 'strip'], 'auto'),
     pre: pick1(s.pre, ['off', 'countdown', 'rewind'], 'off'),
     match: pick1(s.match, ['auto', 'off'], 'auto'),
@@ -67,7 +67,7 @@ function baseSettings(defaults) {
 }
 function styleSummary(st) {
   const names = { sway: 'Pendeln', pulse: 'Puls', handheld: 'Handkamera' };
-  const intros = { countdown: 'Countdown', grid: '9er-Raster', knockout: 'Durch den Namen', cinema: 'Titelkarte', city: 'Ortsname', hook: 'Stärkstes Bild', type: 'Wort für Wort', split: 'Split-Screen' };
+  const intros = { reveal: 'Aufblende', countdown: 'Countdown', grid: '9er-Raster', knockout: 'Durch den Namen', cinema: 'Titelkarte', city: 'Ortsname', hook: 'Stärkstes Bild', type: 'Wort für Wort', split: 'Split-Screen' };
   return [st.look === 'auto' ? 'Look automatisch' : `Look ${LOOKS[st.look].label}`, `Schrift ${FONT_SETS[st.font].label}`, names[st.motion], st.pre !== 'off' ? (st.pre === 'rewind' ? 'Rewind' : 'Countdown') + ' +' : '', intros[st.intro], st.morph === 'on' ? 'Bild aus Bild' : '', st.burst === 'drop' ? 'Foto-Serie' : '', st.ramp === 'drop' ? 'Speed-Ramp' : '', st.km !== 'off' ? 'Koordinaten' : ''].filter(Boolean).join(' · ');
 }
 
@@ -241,17 +241,24 @@ async function getSong(songId) {
     busy('Lade Song …');
     try {
       const buffer = r.pcm ? pcmBuffer(r.pcm, r.sampleRate) : await decodeAudioFile(await r.file.arrayBuffer());
-      const an = r.an || await analyzeAudio(buffer, (p) => busy(`Analysiere Songaufbau … ${Math.round(p * 100)} %`));
+      // ältere Analysen (ungenauere Beats) einmal erneuern und zurückschreiben
+      const fresh = r.an && r.an.ver === AN_VER;
+      const an = fresh ? r.an : await analyzeAudio(buffer, (p) => busy(`Analysiere Songaufbau … ${Math.round(p * 100)} %`));
+      if (!fresh) { r.an = an; S.store.put('work', r).catch(() => {}); }
       const song = { id: r.id, name: r.name, buffer, an, mic: r.mic, offset: r.offset || 0 };
       S.songs.set(song.id, song);
       return song;
     } finally { busy(null); }
   }
-  const buffer = await synthDemoSong();
-  const an = await analyzeAudio(buffer);
-  const song = { id: 'demo', name: 'Beispiel-Beat', buffer, an, demo: true };
-  S.songs.set('demo', song);
-  return song;
+  // Beispiel-Song nur einmal erzeugen (auch wenn mehrere gleichzeitig danach fragen)
+  if (!S.demoSong) S.demoSong = (async () => {
+    const buffer = await synthDemoSong();
+    const an = await analyzeAudio(buffer);
+    const song = { id: 'demo', name: 'Beispiel-Beat', buffer, an, demo: true };
+    S.songs.set('demo', song);
+    return song;
+  })();
+  return S.demoSong;
 }
 
 async function useSong(song) {
@@ -964,6 +971,29 @@ function showImportSummary(touched, known, bad) {
   });
 }
 
+/* ---------- Weiterarbeiten nach einem Neustart ----------
+ * iOS verwirft Web-Apps im Hintergrund (Galerie-Auswahl, Instagram, Sperrbildschirm) und lädt sie neu.
+ * Gemerkt wird nur, wo du warst (Ort, Tab, Position), nichts von den Aufnahmen selbst. */
+const RESUME_KEY = 'cinebeat.resume';
+function saveResume() {
+  try {
+    if (!S.ctx) { localStorage.removeItem(RESUME_KEY); return; }
+    localStorage.setItem(RESUME_KEY, JSON.stringify({ kind: S.ctx.kind, id: S.ctx.kind === 'place' ? S.ctx.rec.id : 'bestof', tab: S.tab, t: engine ? +engine.t.toFixed(2) : 0, at: Date.now() }));
+  } catch (e) { /* ohne Speicher: dann eben Startseite */ }
+}
+function readResume() {
+  try { return JSON.parse(localStorage.getItem(RESUME_KEY) || 'null'); } catch (e) { return null; }
+}
+async function resumeWork(r) {
+  if (!r || Date.now() - r.at > 12 * 3600 * 1000) return false;
+  if (r.kind === 'place' && !S.places.some((p) => p.id === r.id)) return false;
+  if (r.tab) S.tab = r.tab;
+  if (r.kind === 'bestof') await openBestof(); else await openPlace(r.id);
+  if (!S.ctx) return false;
+  if (r.t > 0 && S.plan) { engine.t = Math.min(r.t, S.plan.duration - 0.05); engine.renderStill(engine.t); }
+  return true;
+}
+
 /* ---------- Kontext (Ort oder Gesamtfilm) ---------- */
 async function openPlace(placeId) {
   const rec = S.places.find((p) => p.id === placeId);
@@ -978,6 +1008,7 @@ async function openPlace(placeId) {
   startHistory();
   renderEditor();
   await rebuild({ fresh: true });
+  saveResume();
 }
 
 async function openBestof() {
@@ -1004,6 +1035,7 @@ async function openBestof() {
   startHistory();
   renderEditor();
   await rebuild({ fresh: true });
+  saveResume();
 }
 
 function closeContext() {
@@ -1316,7 +1348,7 @@ function showView(v) {
   $('viewTrip').hidden = v !== 'trip';
   $('viewEdit').hidden = v !== 'edit';
   window.scrollTo(0, 0);
-  if (v === 'trip') { closeContext(); renderTrip(); }
+  if (v === 'trip') { closeContext(); renderTrip(); saveResume(); }
 }
 
 function placeCover(p) {
@@ -1692,7 +1724,7 @@ function renderStyle() {
     const b = $(group).querySelector('[data-v="auto"]');
     if (b) b.textContent = st[val] === 'auto' && r && names[r[val]] ? `Auto · ${names[r[val]]}` : 'Auto';
   };
-  autoLabel('introChips', 'intro', { countdown: 'Countdown', grid: '9er-Raster', knockout: 'Durch den Namen', cinema: 'Titelkarte', city: 'Ortsname', hook: 'Stärkstes Bild', type: 'Wort für Wort', split: 'Split' });
+  autoLabel('introChips', 'intro', { reveal: 'Aufblende', countdown: 'Countdown', grid: '9er-Raster', knockout: 'Durch den Namen', cinema: 'Titelkarte', city: 'Ortsname', hook: 'Stärkstes Bild', type: 'Wort für Wort', split: 'Split' });
   autoLabel('outroChips', 'outro', { credits: 'Schlusstitel', loop: 'Loop', freeze: 'Standbild', split: 'Split', strip: 'Filmstreifen' });
   autoLabel('frameChips', 'frame', { full: 'Vollbild', band: 'Kinoband' });
   autoLabel('paceChips', 'pace', { ruhig: 'ruhig', mittel: 'mittel', schnell: 'schnell' });
@@ -2318,6 +2350,7 @@ async function init() {
     if (!b) return;
     S.tab = b.dataset.tab;
     renderTabs();
+    saveResume();
   });
   document.querySelector('.tabs').addEventListener('keydown', (e) => {
     if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
@@ -2427,7 +2460,13 @@ async function init() {
     if (e.key === 'Escape' && !$('sheet').hidden) closeSheet();
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && S.ctx && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
   });
-  document.addEventListener('visibilitychange', () => { if (document.hidden && engine && engine.playing) engine.pause(); });
+  // Hintergrund: Stelle merken und Speicher freigeben; zurück im Vordergrund das Bild neu aufbauen
+  document.addEventListener('visibilitychange', () => {
+    if (!engine) return;
+    if (document.hidden) { saveResume(); if (!engine.exporting) engine.trim(); }
+    else if (S.ctx && S.plan && !engine.playing && !engine.exporting) engine.renderStill(engine.t);
+  });
+  window.addEventListener('pagehide', saveResume);
   // iOS meldet beim Scrollen (Adressleiste) ständig resize: nur echte Breitenänderungen neu zeichnen, einmal pro Frame
   let lastW = window.innerWidth, resizeRaf = 0;
   window.addEventListener('resize', () => {
@@ -2436,7 +2475,16 @@ async function init() {
   }, { passive: true });
   setupStrip();
   setupOverlayDrag();
+  const resume = readResume();
   showView('trip');
+  // Beispiel-Song schon im Hintergrund vorbereiten: neue Orte öffnen dann ohne Wartezeit
+  setTimeout(() => {
+    getSong('demo').catch(() => {});
+    const demo = S.places.find((p) => p.demo);
+    if (demo) ensureDemoMedia(demo).catch(() => {});
+  }, resume ? 0 : 600);
+  // nach einem Neustart durch iOS direkt dorthin zurück, wo du warst
+  resumeWork(resume).catch(() => showView('trip'));
 }
 
 window.CineBeat = {

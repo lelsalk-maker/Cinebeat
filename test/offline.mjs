@@ -29,7 +29,8 @@ const res = await page.evaluate(async () => {
 });
 console.log('Export in der Einzeldatei:', res);
 await page.reload();
-await page.waitForSelector('.place');
+// nach dem Neuladen geht es dort weiter, wo man war (Ort); die Orte sind geladen
+await page.waitForFunction(() => window.CineBeat && CineBeat.S.places && CineBeat.S.places.length, null, { timeout: 30000 });
 console.log('Nach Neuladen Orte:', await page.evaluate(() => CineBeat.S.places.map((p) => p.name)));
 console.log('CSP-Verstöße:', await page.evaluate(() => window.__csp));
 console.log('Netzanfragen:', reqs.length ? reqs : 'keine');

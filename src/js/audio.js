@@ -52,6 +52,9 @@ function percentile(arr, p) {
  * Liefert Tempo, Beat-Zeiten (lückenloses Raster über den ganzen Song),
  * Taktphase (Downbeats), Energie je Beat und eine Hüllkurve für die Anzeige.
  */
+/** Version der Analyse: gespeicherte Songs mit älterer Version werden einmal neu analysiert. */
+const AN_VER = 2;
+
 async function analyzeAudio(buffer, onProgress) {
   const sr0 = buffer.sampleRate;
   const factor = Math.max(1, Math.round(sr0 / 22050));
@@ -93,6 +96,9 @@ async function analyzeAudio(buffer, onProgress) {
   const rms = new Float32Array(nFrames);
   const re = new Float32Array(N), im = new Float32Array(N);
   let prev = new Float32Array(nBands), cur = new Float32Array(nBands);
+  // lineare Energie je Band: für die genaue Lage lauter Anschläge (die Log-Kurve reagiert auch auf leise Einsätze)
+  const linFlux = new Float32Array(nFrames);
+  let prevL = new Float32Array(nBands), curL = new Float32Array(nBands);
   // Klangfarbe (12 Gruppen aus den 36 Bändern) und Chroma (12 Tonklassen) je Frame
   const timbreF = new Float32Array(nFrames * 12);
   const chromaF = new Float32Array(nFrames * 12);
@@ -117,7 +123,8 @@ async function analyzeAudio(buffer, onProgress) {
       let s = 0;
       const a = bandEdges[b], z = Math.max(a + 1, bandEdges[b + 1]);
       for (let k = a; k < z; k++) s += re[k] * re[k] + im[k] * im[k];
-      cur[b] = Math.log10(1e-9 + s / (z - a));
+      curL[b] = s / (z - a);
+      cur[b] = Math.log10(1e-9 + curL[b]);
     }
     for (let g = 0; g < 12; g++) timbreF[f * 12 + g] = (cur[g * 3] + cur[g * 3 + 1] + cur[g * 3 + 2]) / 3;
     for (let k = 1; k < N / 2; k++) {
@@ -132,8 +139,12 @@ async function analyzeAudio(buffer, onProgress) {
       }
       flux[f] = fl;
       lowFlux[f] = lf;
+      let ll = 0;
+      for (let b = 0; b < nBands; b++) { const d = Math.sqrt(curL[b]) - Math.sqrt(prevL[b]); if (d > 0) ll += d; }
+      linFlux[f] = ll;
     }
     const t = prev; prev = cur; cur = t;
+    const tl = prevL; prevL = curL; curL = tl;
     if ((f & 2047) === 2047) {
       onProgress && onProgress(0.8 * (f / nFrames));
       await yieldUI();
@@ -257,7 +268,75 @@ async function analyzeAudio(buffer, onProgress) {
   const frameTime = (f) => (f * hop + N / 2) / sr + 0.014;
   const duration = buffer.duration;
   const pSec = period / fps;
-  let beats = beatFrames.map(frameTime).filter((t) => t >= 0 && t < duration);
+  // Feinjustierung: jeden Beat auf den tatsächlichen Anschlag in seiner Nähe ziehen (Zwischen-Frame-genau).
+  // Schwache Stellen (kein klarer Anschlag) behalten die Position aus dem Beat-Tracking.
+  const rr = Math.max(2, Math.round(period * 0.07));
+  const peaks = beatFrames.map((f) => {
+    let bj = f, bv = -Infinity;
+    for (let j = Math.max(1, f - rr); j <= Math.min(nFrames - 2, f + rr); j++) if (onset[j] > bv) { bv = onset[j]; bj = j; }
+    return { bj, bv, edge: Math.abs(bj - f) === rr };
+  });
+  const medPeak = percentile(peaks.map((q) => q.bv), 0.5);
+  const linMed = percentile(Array.from(linFlux), 0.5) || 1e-9;
+  const LIN_SHIFT = -1.3; // Versatz der linearen Kurve gegenüber der Log-Kurve (Frames), per Test kalibriert
+  const anchored = peaks.map((q) => q.bv >= Math.max(1.2, medPeak * 0.35) && !q.edge);
+  const strong = new Array(beatFrames.length).fill(false);
+  const refined = beatFrames.map((f, i) => {
+    if (!anchored[i]) return f;
+    let { bj } = peaks[i];
+    // lauter Anschlag in der Nähe? Dann dessen Lage (lineare Energie) statt der Log-Kurve
+    let lj = -1, lv = 0;
+    for (let j = Math.max(1, f - rr); j <= Math.min(nFrames - 2, f + rr); j++) if (linFlux[j] > lv) { lv = linFlux[j]; lj = j; }
+    if (lj > 0 && lv > linMed * 3) {
+      strong[i] = true;
+      const y0 = linFlux[lj - 1], y1 = linFlux[lj], y2 = linFlux[lj + 1];
+      const den = y0 - 2 * y1 + y2;
+      return lj + (den < 0 ? Math.max(-0.5, Math.min(0.5, (0.5 * (y0 - y2)) / den)) : 0) + LIN_SHIFT;
+    }
+    const y0 = onset[bj - 1], y1 = onset[bj], y2 = onset[bj + 1];
+    const den = y0 - 2 * y1 + y2;
+    return bj + (den < 0 ? Math.max(-0.5, Math.min(0.5, (0.5 * (y0 - y2)) / den)) : 0);
+  });
+  // Einzelne Ausreißer (ein Beat springt aus dem gleichmäßigen Raster seiner Nachbarn) zurückholen
+  for (let i = 1; i < refined.length - 1; i++) {
+    const a = refined[i] - refined[i - 1], b = refined[i + 1] - refined[i];
+    const mid = (refined[i - 1] + refined[i + 1]) / 2;
+    const span = refined[i + 1] - refined[i - 1];
+    if (anchored[i - 1] && anchored[i + 1] && Math.abs(span / 2 - period) < period * 0.12 && Math.abs(refined[i] - mid) > Math.max(1.5, period * 0.05) && Math.abs(a - b) > period * 0.1) {
+      refined[i] = mid;
+      anchored[i] = false;
+    }
+  }
+  // Beats ohne eigenen Anschlag (z. B. im Break ohne Schlagzeug) gleichmäßig zwischen die sicheren Nachbarn legen:
+  // so folgt das Raster auch dort dem echten Tempo, statt mit dem Durchschnittstempo wegzudriften.
+  for (let i = 0; i < refined.length; i++) {
+    if (anchored[i]) continue;
+    let a = i - 1; while (a >= 0 && !anchored[a]) a--;
+    let z = i; while (z < refined.length && !anchored[z]) z++;
+    if (a >= 0 && z < refined.length) {
+      const n = z - a;
+      for (let k = a + 1; k < z; k++) refined[k] = refined[a] + ((refined[z] - refined[a]) * (k - a)) / n;
+    }
+    i = z;
+  }
+  // Wo kein harter Anschlag den Beat festlegt, gilt das lokale Tempo: gewichtete Gerade über ±12 Beats
+  // (harte Anschläge voll, weiche Einsätze wenig, geschätzte Beats kaum). So bleibt auch ein Break ohne
+  // Schlagzeug gleichmäßig und exakt im Tempo der Umgebung.
+  {
+    const src = refined.slice();
+    const wt = src.map((_, i) => (strong[i] ? 1 : anchored[i] ? 0.25 : 0.02));
+    for (let i = 0; i < src.length; i++) {
+      if (strong[i]) continue;
+      let sw = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+      for (let k = Math.max(0, i - 12); k <= Math.min(src.length - 1, i + 12); k++) {
+        const w = wt[k] * (1 - Math.abs(k - i) / 13);
+        sw += w; sx += w * k; sy += w * src[k]; sxx += w * k * k; sxy += w * k * src[k];
+      }
+      const den = sw * sxx - sx * sx;
+      if (sw > 0 && Math.abs(den) > 1e-9) refined[i] = (sy * sxx - sx * sxy + (sw * sxy - sx * sy) * i) / den;
+    }
+  }
+  let beats = refined.map(frameTime).filter((t) => t >= 0 && t < duration);
   if (beats.length < 4) {
     beats = [];
     const firstLoud = 0;
@@ -309,11 +388,7 @@ async function analyzeAudio(buffer, onProgress) {
     energy[i] = s / c;
   }
 
-  // Taktphase (4/4): welche Beat-Phase trägt die stärksten Bass-Onsets?
-  const phaseScore = [0, 0, 0, 0];
-  for (let i = 0; i < beats.length; i++) phaseScore[i % 4] += beatLow[i];
-  let downPhase = 0;
-  for (let k = 1; k < 4; k++) if (phaseScore[k] > phaseScore[downPhase]) downPhase = k;
+
 
   // Stille am Anfang/Ende
   let peak = 0;
@@ -337,18 +412,20 @@ async function analyzeAudio(buffer, onProgress) {
   for (let p = 0; p < envPoints; p++) env[p] = Math.sqrt(env[p] / envMax);
 
   const structure = analyzeStructure({
-    beats, downPhase, beatDb: db, timbreF, chromaF, onset, rms, fps, nFrames, toFrame, frameTime, duration, beatPeriod: pSec,
+    beats, beatLow, beatDb: db, timbreF, chromaF, onset, rms, fps, nFrames, toFrame, frameTime, duration, beatPeriod: pSec,
     firstSound, lastSound,
   });
 
   onProgress && onProgress(1);
   return {
     ...structure,
+    ver: AN_VER,
     bpm: (60 * fps) / period,
     beatPeriod: pSec,
     hasRhythm,
     beats: Float64Array.from(beats),
-    downPhase,
+    // häufigste Taktphase (nur noch für ältere Aufrufer; maßgeblich ist downIdx)
+    downPhase: (() => { const c = [0, 0, 0, 0]; for (const i of structure.downIdx) c[i % 4]++; return c.indexOf(Math.max(...c)); })(),
     energy,
     duration,
     firstSound,
@@ -362,7 +439,7 @@ async function analyzeAudio(buffer, onProgress) {
  * Hook, Akzente (starke Einzelschläge) und Stopps (kurze Pausen im Song).
  */
 function analyzeStructure(a) {
-  const { beats, downPhase, beatDb, timbreF, chromaF, onset, rms, fps, nFrames, toFrame, frameTime, duration, beatPeriod } = a;
+  const { beats, beatLow, beatDb, timbreF, chromaF, onset, rms, fps, nFrames, toFrame, frameTime, duration, beatPeriod } = a;
   const nb = beats.length;
   const tb = [], cb = [];
   for (let i = 0; i < nb; i++) {
@@ -380,9 +457,47 @@ function analyzeStructure(a) {
     for (let g = 0; g < 12; g++) c[g] /= cn;
     tb.push(t); cb.push(c);
   }
-  // Takte
+  // Takte: Taktposition jedes Beats per Viterbi. Hinweise auf eine Eins: Bass-Anschlag und Akkordwechsel.
+  // Ein Sprung im Zählen kostet viel, ist aber möglich: ein verlorener oder zusätzlicher Beat verschiebt
+  // so nicht den ganzen restlichen Song.
   const barStart = [];
-  for (let i = 0; i < nb; i++) if (i % 4 === downPhase) barStart.push(i);
+  {
+    const z = (arr) => { const m = arr.reduce((x, y) => x + y, 0) / Math.max(1, arr.length); const sd = Math.sqrt(arr.reduce((x, y) => x + (y - m) * (y - m), 0) / Math.max(1, arr.length)) || 1; return arr.map((v) => (v - m) / sd); };
+    const nov = new Array(nb).fill(0);
+    for (let i = 2; i < nb - 1; i++) {
+      let dot = 0, na = 0, nn = 0;
+      for (let g = 0; g < 12; g++) {
+        const pa = cb[i - 1][g] + cb[i - 2][g], nx = cb[i][g] + cb[i + 1][g];
+        dot += pa * nx; na += pa * pa; nn += nx * nx;
+      }
+      nov[i] = 1 - dot / (Math.sqrt(na * nn) || 1);
+    }
+    const lowZ = z(Array.from(beatLow || new Float32Array(nb))), novZ = z(nov);
+    const sal = lowZ.map((v, i) => v + 1.2 * novZ[i]);
+    const pen = 6;
+    const sc = [new Float64Array(4)], bk = [new Int8Array(4)];
+    for (let q = 0; q < 4; q++) sc[0][q] = q === 0 ? sal[0] : 0;
+    for (let i = 1; i < nb; i++) {
+      const row = new Float64Array(4), br = new Int8Array(4), prev = sc[i - 1];
+      for (let q = 0; q < 4; q++) {
+        let best = -Infinity, bq = 0;
+        for (let r = 0; r < 4; r++) {
+          const v = prev[r] - ((r + 1) % 4 === q ? 0 : pen);
+          if (v > best) { best = v; bq = r; }
+        }
+        row[q] = best + (q === 0 ? sal[i] : 0);
+        br[q] = bq;
+      }
+      sc.push(row); bk.push(br);
+    }
+    const pos = new Int8Array(nb);
+    if (nb) {
+      let q = 0;
+      for (let r = 1; r < 4; r++) if (sc[nb - 1][r] > sc[nb - 1][q]) q = r;
+      for (let i = nb - 1; i >= 0; i--) { pos[i] = q; q = bk[i][q]; }
+    }
+    for (let i = 0; i < nb; i++) if (pos[i] === 0 && (!barStart.length || i - barStart[barStart.length - 1] >= 2)) barStart.push(i);
+  }
   const B = barStart.length;
   const dbLo = percentile(beatDb, 0.05), dbHi = percentile(beatDb, 0.97);
   const eNorm = (v) => Math.max(0, Math.min(1, (v - dbLo) / Math.max(1e-6, dbHi - dbLo)));
@@ -487,21 +602,6 @@ function analyzeStructure(a) {
   });
   let hookSec = sections.find((x) => x.label === 'drop') || sections.find((x) => x.label === 'chorus');
   if (!hookSec) hookSec = sections.reduce((m, x) => (x.energy > m.energy ? x : m), sections[0]);
-  // Akzente: herausragende Onsets
-  const on = Array.from(onset);
-  const thr = percentile(on, 0.97);
-  const accents = [];
-  const minGap = Math.max(2, Math.round(fps * 0.22));
-  let lastF = -minGap;
-  for (let f = 1; f < nFrames - 1; f++) {
-    if (onset[f] >= thr && onset[f] >= onset[f - 1] && onset[f] >= onset[f + 1] && f - lastF >= minGap) {
-      const t = frameTime(f);
-      let nearest = Infinity;
-      for (let i = 0; i < nb; i++) { const d = Math.abs(beats[i] - t); if (d < nearest) nearest = d; if (beats[i] > t) break; }
-      accents.push({ t, s: onset[f], off: nearest > beatPeriod * 0.2 });
-      lastF = f;
-    }
-  }
   // Stopps: plötzliche kurze Stille mitten im Song
   const stops = [];
   const avgW = Math.round(fps * 1.5);
@@ -524,7 +624,7 @@ function analyzeStructure(a) {
     } else f++;
   }
   const stopsIn = stops.filter((x) => x.t > a.firstSound + 1 && x.end < a.lastSound - 1);
-  return { sections: sections.map((x) => ({ ...x, slope: +x.slope.toFixed(3), bright: +x.bright.toFixed(2) })), hook: hookSec ? hookSec.start : 0, accents, stops: stopsIn, barStart: barStart.map((i) => beats[i]), phrasePhase: phase };
+  return { sections: sections.map((x) => ({ ...x, slope: +x.slope.toFixed(3), bright: +x.bright.toFixed(2) })), hook: hookSec ? hookSec.start : 0, stops: stopsIn, barStart: barStart.map((i) => beats[i]), downIdx: barStart.slice(), phrasePhase: phase };
 }
 
 /** Eingebauter Beispiel-Song mit Aufbau: Intro, Strophe, Aufbau, Drop, Break (mit Stopp), Drop, Outro. */

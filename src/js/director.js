@@ -39,7 +39,7 @@ function shotsAvailable(list) {
  */
 function smartWindow(an, T, lead = 0) {
   const first = Math.max(0, an.firstSound), last = Math.min(an.duration, an.lastSound + 0.2);
-  const bars = an.barStart && an.barStart.length ? an.barStart : Array.from(an.beats).filter((_, i) => i % 4 === an.downPhase);
+  const bars = an.barStart && an.barStart.length ? an.barStart : Array.from(an.beats).filter((_, i) => downSet(an).has(i));
   const barDur = an.beatPeriod * 4;
   const secs = an.sections || [];
   const phase = an.phrasePhase || 0;
@@ -93,6 +93,11 @@ function smartWindow(an, T, lead = 0) {
   }
   if (!best) best = { s: first, e: Math.min(last, first + T) };
   return { start: best.s, end: best.e };
+}
+
+/** Aufblende als Standard: bei Songs mit Höhepunkt (Drop/Refrain), nicht für Flüge, Kapitel-Filme und Kinoformat */
+function autoReveal(an, chapters, flight, fr) {
+  return !flight && !(chapters && chapters.length) && fr.kind !== 'film' && (an.sections || []).some((x) => x.label === 'drop' || x.label === 'chorus');
 }
 
 function describeWindow(an, win) {
@@ -183,7 +188,8 @@ function direct(an, media, s, chapters, flight) {
     // Raster und Countdown: der Übergang ins erste Vollbild soll auf dem Drop/Refrain landen
     const step = an.beatPeriod < 0.42 ? 2 : 1;
     const preLead = s.pre === 'countdown' && s.intro !== 'countdown' ? 3 : s.pre === 'rewind' ? 4 : 0;
-    const lead = (s.intro === 'grid' && list.length >= 4 ? (list.length >= 9 ? 9 : 4) * step * an.beatPeriod : s.intro === 'countdown' ? 3 * step * an.beatPeriod : 0) + (flight || s.intro === 'split' ? 0 : preLead * step * an.beatPeriod);
+    const willReveal = s.intro === 'reveal' || (s.intro === 'auto' && autoReveal(an, chapters, flight, fr));
+    const lead = (willReveal ? revealBeats(an) * an.beatPeriod : 0) + (s.intro === 'grid' && list.length >= 4 ? (list.length >= 9 ? 9 : 4) * step * an.beatPeriod : s.intro === 'countdown' ? 3 * step * an.beatPeriod : 0) + (flight || s.intro === 'split' ? 0 : preLead * step * an.beatPeriod);
     win = smartWindow(an, T, lead);
   } else {
     win = pickWindow(an, { length: T, songStart: s.songStart });
@@ -232,7 +238,11 @@ function direct(an, media, s, chapters, flight) {
   const pick = (opts) => opts[(hashStr((s.title || '') + ':' + s.seed) >>> 0) % opts.length];
   const hasTitle = !!(s.title && s.title.trim()) && s.showTitle !== false;
   if (s.intro === 'auto') {
-    if (chapters && chapters.length) rs.intro = 'cinema';
+    // Standard: Aufblende, wenn der Höhepunkt im Ausschnitt genau nach dem kurzen Aufbau kommt
+    const peakAt = win.start + revealBeats(an) * an.beatPeriod;
+    const fits = autoReveal(an, chapters, flight, fr) && (an.sections || []).some((x) => (x.label === 'drop' || x.label === 'chorus') && Math.abs(x.start - peakAt) < an.beatPeriod * 0.6);
+    if (fits) rs.intro = 'reveal';
+    else if (chapters && chapters.length) rs.intro = 'cinema';
     else if (fr.kind === 'film') rs.intro = D >= 25 ? 'cinema' : 'type';
     else if (D <= 18) rs.intro = hasTitle ? 'city' : 'hook';
     else rs.intro = pick([hasTitle ? 'city' : 'hook', 'hook', 'type', ...(rs.split !== 'off' ? ['split'] : [])]);
@@ -249,7 +259,7 @@ function direct(an, media, s, chapters, flight) {
   if (flight && s.outro === 'auto') rs.outro = 'freeze';
   if (rs.outro === 'split' && splitPool < 3) rs.outro = 'credits';
 
-  const INTRO_DE = { countdown: 'Countdown wie im alten Kino, darunter blitzen deine Bilder in Schwarzweiß auf, auf dem Einsatz geht es in Farbe los', knockout: 'der Ortsname ist ein Fenster ins Bild, dann zoomt der Film durch die Buchstaben', flight: 'Abflug-Video, dann zeichnet sich deine Flugroute über dem Globus, danach die Landung', grid: 'neun Bilder in Schwarzweiß werden im Takt farbig, dann zoomt der Film ins mittlere Bild', city: 'dein stärkstes Bild mit dem Ortsnamen groß im Bild', cinema: fr.kind === 'film' ? 'Titelkarte auf Schwarz, dann blendet das erste Bild auf' : 'Titelkarte über dem abgedunkelten ersten Bild', hook: 'dein stärkstes Bild eröffnet, der Titel steht dezent unten', type: 'der Titel läuft Wort für Wort im Takt', split: 'drei Bilder öffnen den Film nacheinander im Split-Screen' };
+  const INTRO_DE = { reveal: 'ein kurzer, ruhiger Aufbau aus Details deiner Bilder, auf dem Höhepunkt öffnet sich das stärkste Bild', countdown: 'Countdown wie im alten Kino, darunter blitzen deine Bilder in Schwarzweiß auf, auf dem Einsatz geht es in Farbe los', knockout: 'der Ortsname ist ein Fenster ins Bild, dann zoomt der Film durch die Buchstaben', flight: 'Abflug-Video, dann zeichnet sich deine Flugroute über dem Globus, danach die Landung', grid: 'neun Bilder in Schwarzweiß werden im Takt farbig, dann zoomt der Film ins mittlere Bild', city: 'dein stärkstes Bild mit dem Ortsnamen groß im Bild', cinema: fr.kind === 'film' ? 'Titelkarte auf Schwarz, dann blendet das erste Bild auf' : 'Titelkarte über dem abgedunkelten ersten Bild', hook: 'dein stärkstes Bild eröffnet, der Titel steht dezent unten', type: 'der Titel läuft Wort für Wort im Takt', split: 'drei Bilder öffnen den Film nacheinander im Split-Screen' };
   const OUTRO_DE = { strip: 'Filmstreifen, der rückwärts durch deinen Film läuft', credits: 'Abblende und Schlusstitel', loop: 'nahtloser Übergang zurück zum Anfang (Endlos-Loop)', freeze: 'Standbild, das in Schwarzweiß ausläuft', split: 'Split-Screen und harter Schnitt auf Schwarz' };
   if (s.intro === 'auto' || s.outro === 'auto') notes.push(`Einstieg: ${INTRO_DE[rs.intro]}. Ende: ${OUTRO_DE[rs.outro]}.`);
 

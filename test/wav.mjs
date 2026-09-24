@@ -80,3 +80,41 @@ export function makeStructuredSong(file, { bpm = 124, sr = 44100, lead = 0.3 } =
   writeFileSync(file, buf);
   return { bounds, stopAt: lead + (8 + 8 + 4 + 8 + 3.5) * bar, bar };
 }
+
+/**
+ * Langer Song mit realistischen Tücken: krumme BPM, langsame Tempodrift (wie eine Live-Band),
+ * ein Break ohne Schlagzeug in der Mitte, Downbeat mit tieferem Kick. Liefert {beats, downs}.
+ */
+export function makeLongSong(file, { bpm = 123.4, dur = 185, sr = 22050, offset = 0.53, drift = 0.015, breakBars = [40, 48], seed = 3 } = {}) {
+  const n = Math.floor(dur * sr);
+  const d = new Float32Array(n);
+  let s = seed; const rnd = () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff) * 2 - 1;
+  const add = (t0, len, fn) => { const i0 = Math.floor(t0 * sr); for (let i = 0; i < len * sr && i0 + i < n; i++) d[i0 + i] += fn(i / sr); };
+  const beats = [], downs = [];
+  let t = offset, k = 0;
+  while (t < dur - 1) {
+    beats.push(t);
+    const bar = Math.floor(k / 4), pos = k % 4;
+    if (pos === 0) downs.push(t);
+    const inBreak = bar >= breakBars[0] && bar < breakBars[1];
+    if (!inBreak) {
+      const v = pos === 0 ? 0.95 : 0.6;
+      if (pos === 0 || pos === 2) add(t, 0.28, (x) => v * Math.sin(2 * Math.PI * (45 + 90 * Math.exp(-x * 30)) * x) * Math.exp(-x * 9));
+      if (pos === 1 || pos === 3) add(t, 0.18, (x) => 0.35 * rnd() * Math.exp(-x * 22));
+      add(t + (60 / bpm) / 2, 0.04, (x) => 0.1 * rnd() * Math.exp(-x * 90));
+    }
+    // Akkord je Takt (auch im Break: dort trägt nur die Harmonie)
+    if (pos === 0) { const f = [220, 196, 174.6, 246.9][bar % 4]; add(t, 4 * 60 / bpm, (x) => (inBreak ? 0.09 : 0.05) * (Math.sin(2 * Math.PI * f * x) + 0.6 * Math.sin(2 * Math.PI * f * 1.26 * x)) * Math.min(1, x / 0.03)); }
+    // Tempo driftet sinusförmig um ±drift
+    const cur = bpm * (1 + drift * Math.sin((2 * Math.PI * t) / dur));
+    t += 60 / cur; k++;
+  }
+  let peak = 0; for (const v of d) peak = Math.max(peak, Math.abs(v));
+  const buf = Buffer.alloc(44 + n * 2);
+  buf.write('RIFF', 0); buf.writeUInt32LE(36 + n * 2, 4); buf.write('WAVE', 8); buf.write('fmt ', 12);
+  buf.writeUInt32LE(16, 16); buf.writeUInt16LE(1, 20); buf.writeUInt16LE(1, 22); buf.writeUInt32LE(sr, 24);
+  buf.writeUInt32LE(sr * 2, 28); buf.writeUInt16LE(2, 32); buf.writeUInt16LE(16, 34); buf.write('data', 36); buf.writeUInt32LE(n * 2, 40);
+  for (let i = 0; i < n; i++) buf.writeInt16LE(Math.round((d[i] / peak) * 0.9 * 32767), 44 + i * 2);
+  writeFileSync(file, buf);
+  return { beats, downs };
+}

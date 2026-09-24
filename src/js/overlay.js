@@ -150,6 +150,7 @@ class OverlayPainter {
         else if (o.type === 'knockout') this.drawKnockout(ctx, o, t, geo);
         else if (o.type === 'leader') this.drawLeader(ctx, o, t, geo);
         else if (o.type === 'rewind') this.drawRewind(ctx, o, t, geo);
+        else if (o.type === 'reveal') this.drawReveal(ctx, o, t, geo);
         else if (o.type === 'datestamp') this.drawDateStamp(ctx, o, t, geo);
         else if (o.type === 'usertext') this.drawUserText(ctx, o, t, geo, o.id === selectedId);
         else if (o.type === 'sticker') this.drawSticker(ctx, o, t, geo, o.id === selectedId);
@@ -259,6 +260,39 @@ class OverlayPainter {
       drawTracked(ctx, o.sub.toLocaleUpperCase('de-DE'), g.cx, y + ss * 2.8, 0.4, ss, 'center');
     }
     this.drawGeoLine(ctx, o, t, g.cx, y + g.base * 0.026 * (o.sub ? 5 : 2.8), g.base * 0.023, 'center', a);
+  }
+
+  /**
+   * Aufblende: schlichter, weit gesperrter Titel, eine feine Linie wächst aus der Mitte.
+   * Die Sperrung zieht langsam zusammen, kurz vor dem Höhepunkt löst sich alles nach oben auf.
+   */
+  drawReveal(ctx, o, t, g) {
+    const local = t - o.start, left = o.end - t, dur = Math.max(0.5, o.end - o.start);
+    const a = smooth(cl01(local / 0.9)) * smooth(cl01(left / 0.35));
+    if (a <= 0) return;
+    const title = this.caseTitle(o.text);
+    const u = cl01(local / dur);
+    const track = 0.42 - 0.2 * easeOutCubic(u);
+    const size = fitSize(ctx, title, (s) => this.font('title', s), g.base * 0.075, g.W * 0.8, track);
+    const lift = (1 - smooth(cl01(left / 0.35))) * size * 0.35;
+    const y = g.cy + size * 0.3 - lift;
+    ctx.globalAlpha = a;
+    ctx.fillStyle = OV_INK;
+    this.shadow(ctx, size * 0.8);
+    ctx.textBaseline = 'alphabetic';
+    ctx.font = this.font('title', size);
+    drawTracked(ctx, title, g.cx, y, track, size, 'center');
+    // Linie wächst aus der Mitte
+    const lw = g.W * 0.16 * easeOutCubic(cl01((local - 0.3) / 1.4));
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = a * 0.75;
+    ctx.fillRect(g.cx - lw / 2, y + size * 0.55, lw, Math.max(1, g.base * 0.0016));
+    if (o.sub) {
+      const ss = g.base * 0.022;
+      ctx.font = `400 ${ss}px ${OV_FONTS.mono}`;
+      ctx.globalAlpha = a * 0.85 * cl01((local - 0.6) / 0.6);
+      drawTracked(ctx, o.sub.toLocaleUpperCase('de-DE'), g.cx, y + size * 0.55 + ss * 2.6, 0.45, ss, 'center');
+    }
   }
 
   /** Flug: Globus oder flache Karte mit Kontinenten, Großkreis, Flugzeug, Zeiten. Deckt das Bild ab. */
