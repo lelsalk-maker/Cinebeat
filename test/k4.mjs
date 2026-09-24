@@ -1,0 +1,20 @@
+import { chromium } from '/opt/node22/lib/node_modules/playwright/index.mjs';
+const b = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+const page = await (await b.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+const errs = []; page.on('pageerror', (e) => errs.push(e.message));
+await page.goto('http://127.0.0.1:8123/index.html');
+await page.waitForSelector('.place'); await page.click('.place');
+await page.waitForFunction(() => CineBeat.S.plan && document.getElementById('busy').hidden, null, { timeout: 90000 });
+const r = await page.evaluate(async () => {
+  const e = CineBeat.engine, S = CineBeat.S;
+  const size = { w: 2160, h: 3840 };
+  const sup = await e.constructor.exportSupport(size, 30, false, 0.12);
+  let frames = 0; const t0 = performance.now();
+  S.exporting = true;
+  const res = await e.exportOffline({ size, fps: 30, withAudio: false, support: sup, onProgress() { frames += 3; }, isCancelled: () => frames >= 9 });
+  S.exporting = false;
+  const px = (() => { const c = e.canvas; return c.width + 'x' + c.height; })();
+  return { codec: sup.video && sup.video.cfg.codec, bitrate: sup.video && sup.video.cfg.bitrate, res, px, msPerFrame: Math.round((performance.now() - t0) / frames) };
+});
+console.log(r, errs.join('\n') || 'keine Fehler');
+await b.close();

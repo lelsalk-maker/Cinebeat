@@ -1,0 +1,20 @@
+import { chromium } from '/opt/node22/lib/node_modules/playwright/index.mjs';
+import { makeStructuredSong } from './wav.mjs';
+const OUT = process.env.OUT || '/tmp/cinebeat-test';
+(await import('node:fs')).mkdirSync(OUT, { recursive: true });
+const truth = makeStructuredSong(`${OUT}/struct.wav`, { bpm: +(process.argv[2] || 124) });
+const b = await chromium.launch();
+const p = await b.newPage();
+p.on('pageerror', (e) => console.log('pageerror', e.message));
+await p.goto('http://127.0.0.1:8124/test/blank.html');
+await p.addScriptTag({ url: '/src/js/audio.js' });
+const wav = (await import('node:fs')).readFileSync(`${OUT}/struct.wav`).toString('base64');
+const r = await p.evaluate(async (b64) => {
+  const bin = atob(b64); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  const buf = await new OfflineAudioContext(1, 1, 44100).decodeAudioData(u.buffer);
+  const an = await analyzeAudio(buf);
+  return { bpm: an.bpm.toFixed(1), sections: an.sections.map((s) => `${s.start.toFixed(2)}-${s.end.toFixed(2)} ${s.label} e=${s.energy.toFixed(2)} sl=${s.slope}`), hook: an.hook.toFixed(2), stops: an.stops.map((s) => s.t.toFixed(2) + '..' + s.end.toFixed(2)).join(' '), accents: an.accents.length };
+}, wav);
+console.log('Wahrheit:', truth.bounds.map((x) => `${x.t.toFixed(2)} ${x.name}`).join(' | '), 'Stopp', truth.stopAt.toFixed(2));
+console.log(r);
+await b.close();

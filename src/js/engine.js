@@ -1,0 +1,969 @@
+/* ============================================================
+ * Engine: Vorschau (Audio-Uhr als Master), Standbild,
+ * Split-Screens, exakter Offline-Export (WebCodecs), Echtzeit-Rückfall
+ * ============================================================ */
+
+function srcTimeOf(c, t) {
+  const tt = c.freezeAt != null ? Math.min(t, c.freezeAt) : t;
+  return (c.srcOffset || 0) + Math.max(0, tt - c.visStart) * (c.rate || 1);
+}
+function panelTime(c, k, t) {
+  const it = c.split.items[k];
+  const tt = c.freezeAt != null ? Math.min(t, c.freezeAt) : t;
+  return (it.srcOffset || 0) + Math.max(0, tt - c.split.reveal[k]) * (it.rate || 1);
+}
+
+const H264_CANDIDATES = (fps, w, h) => {
+  if (w * h > 2200000) return fps > 30 ? ['avc1.640034', 'avc1.4D4034'] : ['avc1.640033', 'avc1.4D4033', 'avc1.640034'];
+  const big = w * h > 1280 * 720;
+  const list = [];
+  if (fps > 30 && big) list.push('avc1.64002A', 'avc1.4D402A', 'avc1.42E02A');
+  list.push('avc1.640028', 'avc1.4D4028', 'avc1.42E028', 'avc1.640033');
+  return list;
+};
+
+class Engine {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.r = new Renderer(canvas);
+    this.painter = new OverlayPainter();
+    this.slots = new Map();
+    this.videos = [];
+    this.imgCache = new Map();
+    this.playing = false;
+    this.t = 0;
+    this.plan = null;
+    this.media = [];
+    this.audioBuffer = null;
+    this.ac = null;
+    this.src = null;
+    this.exporting = false;
+    this.selectedOverlay = null;
+    this.onTime = null;
+    this.onEnded = null;
+    this.onState = null;
+    this._raf = 0;
+    this._token = 0;
+    this._loop = this._loop.bind(this);
+    this.size = { w: canvas.width, h: canvas.height };
+  }
+
+  /** Muss synchron in einer Nutzeraktion aufgerufen werden (iOS). */
+  ensureAudio() {
+    if (!this.ac) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      this.ac = new AC({ latencyHint: 'playback' });
+      this.master = this.ac.createGain();
+      this.master.connect(this.ac.destination);
+      try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) { /* optional */ }
+    }
+    if (this.ac.state !== 'running') this.ac.resume().catch(() => {});
+    return this.ac;
+  }
+
+  setProject({ plan, media, audioBuffer, size }) {
+    const wasPlaying = this.playing;
+    const t = this.t;
+    if (wasPlaying) this._stopPlayback();
+    this.plan = plan;
+    this.media = media;
+    this.audioBuffer = audioBuffer;
+    this.size = size;
+    this.r.resize(size.w, size.h);
+    this.painter.resize(size.w, size.h);
+    this.releaseAll();
+    this.t = Math.min(t, Math.max(0, plan.duration - 0.05));
+    return wasPlaying;
+  }
+
+  setOverlays(overlays) {
+    if (this.plan) this.plan = { ...this.plan, overlays };
+  }
+
+  get bandPx() {
+    const b = this.plan ? this.plan.band : [0, 1];
+    return { w: this.size.w, h: Math.max(2, Math.round(this.size.h * b[1])) };
+  }
+
+  /* ---------- Ressourcen ---------- */
+  async getImage(m, maxDimOverride) {
+    const maxDim = maxDimOverride || Math.min(this.size.w * this.size.h > 2200000 ? 4096 : 2560, Math.round(Math.max(this.size.w, this.size.h) * 1.25));
+    const key = m.id + '@' + maxDim;
+    if (this.imgCache.has(key)) {
+      const v = this.imgCache.get(key);
+      this.imgCache.delete(key);
+      this.imgCache.set(key, v);
+      return v;
+    }
+    const p = decodeImage(m, maxDim);
+    this.imgCache.set(key, p);
+    try {
+      const c = await p;
+      if (this.imgCache.get(key) === p) this.imgCache.set(key, c);
+      while (this.imgCache.size > (maxDim > 2600 ? 4 : 10)) this.imgCache.delete(this.imgCache.keys().next().value);
+      return c;
+    } catch (e) {
+      this.imgCache.delete(key);
+      throw e;
+    }
+  }
+
+  acquireVideo(url) {
+    let v = this.videos.find((x) => !x._busy && x._url === url) || this.videos.find((x) => !x._busy);
+    if (!v) { v = makeVideoEl(); this.videos.push(v); }
+    v._busy = true;
+    return v;
+  }
+
+  releaseVideo(v) {
+    if (!v) return;
+    try { v.pause(); } catch (e) { /* ignore */ }
+    v._busy = false;
+    const free = this.videos.filter((x) => !x._busy);
+    if (free.length > 3) {
+      const drop = free[0];
+      drop.removeAttribute('src');
+      drop._url = null;
+      try { drop.load(); } catch (e) { /* ignore */ }
+      drop.remove();
+      this.videos.splice(this.videos.indexOf(drop), 1);
+    }
+  }
+
+  releaseSlot(k) {
+    const s = this.slots.get(k);
+    if (!s) return;
+    s.dead = true;
+    this.r.deleteTexture(s.tex);
+    this.releaseVideo(s.video);
+    if (s.panels) for (const p of s.panels) this.releaseVideo(p.video);
+    this.slots.delete(k);
+  }
+
+  releaseAll() {
+    for (const k of Array.from(this.slots.keys())) this.releaseSlot(k);
+  }
+
+  prepareSlot(clip, t) {
+    let s = this.slots.get(clip.i);
+    if (s) return s;
+    s = { clip, tex: null, video: null, ready: false, dead: false, failed: false, lastUpload: -1, frozen: false };
+    this.slots.set(clip.i, s);
+    s.promise = (clip.grid ? this._prepareGrid(s) : clip.split ? this._prepareSplit(s, t) : this._prepare(s, t)).catch((e) => {
+      s.failed = true;
+      s.ready = true;
+      if (!s.dead) console.warn(e);
+    });
+    return s;
+  }
+
+  async _prepare(s, t) {
+    const clip = s.clip;
+    const m = this.media[clip.mediaIndex];
+    if (!m) { s.ready = true; return; }
+    if (m.kind === 'image') {
+      const img = await this.getImage(m);
+      if (s.dead) return;
+      s.tex = this.r.createTexture();
+      if (!this.r.upload(s.tex, img)) throw new Error('Upload fehlgeschlagen');
+      s.srcW = img.width; s.srcH = img.height;
+      s.ready = true;
+      return;
+    }
+    const v = this.acquireVideo(m.url);
+    s.video = v;
+    const ok = await loadVideoSrc(v, m.url);
+    if (s.dead) return;
+    s.tex = this.r.createTexture();
+    if (m.poster) this.r.upload(s.tex, m.poster);
+    s.srcW = m.w; s.srcH = m.h;
+    if (!ok) { s.ready = true; s.failed = true; return; }
+    await seekVideo(v, srcTimeOf(clip, Math.max(t, clip.visStart)));
+    if (s.dead) return;
+    s.srcW = v.videoWidth || m.w; s.srcH = v.videoHeight || m.h;
+    if (v.readyState >= 2) this.r.upload(s.tex, v);
+    s.ready = true;
+  }
+
+  /* ---------- 9er-Raster ---------- */
+  async _prepareGrid(s) {
+    const g = s.clip.grid;
+    const bp = this.bandPx;
+    s.canvas = document.createElement('canvas');
+    s.canvas.width = bp.w; s.canvas.height = bp.h;
+    s.srcW = bp.w; s.srcH = bp.h;
+    s.grid = new Array(g.items.length);
+    const small = Math.min(1400, Math.round(Math.max(bp.w, bp.h) * 0.7));
+    await Promise.all(g.items.map(async (it, k) => {
+      const m = this.media[it.mediaIndex];
+      if (!m) return;
+      // Zielbild in voller Auflösung: es füllt am Ende des Zooms das ganze Bild
+      if (m.kind === 'image') s.grid[k] = await this.getImage(m, k === g.target ? undefined : small);
+      else s.grid[k] = m.poster || null;
+    }));
+    if (s.dead) return;
+    s.tex = this.r.createTexture();
+    this.composeGrid(s, 0);
+    s.ready = true;
+  }
+
+  composeGrid(s, t) {
+    const c = s.clip, g = c.grid, cv = s.canvas;
+    const ctx = cv.getContext('2d');
+    const W = cv.width, H = cv.height, n = g.n;
+    // Loop-Ende: zurück ins schwarzweiße Raster
+    const tt = c.loop ? -1 : t;
+    const gx = W * 0.007, gy = H * 0.007;
+    const cw = (W - gx * (n + 1)) / n, ch = (H - gy * (n + 1)) / n;
+    const cellX = (k) => gx + (k % n) * (cw + gx), cellY = (k) => gy + Math.floor(k / n) * (ch + gy);
+    // Zoom: Zielzelle wächst geometrisch auf Vollbild
+    const zp = clamp01((tt - g.zoomStart) / Math.max(0.05, g.zoomEnd - g.zoomStart));
+    const ez = zp < 0.5 ? 4 * zp * zp * zp : 1 - Math.pow(-2 * zp + 2, 3) / 2;
+    const Sfin = W / cw;
+    const breathe = 1 + 0.025 * clamp01(tt / Math.max(0.1, g.zoomStart));
+    const S = breathe * Math.pow(Sfin / breathe, ez);
+    const tx0 = cellX(g.target), ty0 = cellY(g.target);
+    // Punkt der Zielzelle, der fix bleibt, so gewählt, dass die Zelle am Ende exakt das Bild füllt
+    const f = (S - breathe) / Math.max(1e-6, Sfin - breathe);
+    const ax = lerp(W / 2, tx0 + (tx0 * cw) / Math.max(1e-6, W - cw), f), ay = lerp(H / 2, ty0 + (ty0 * ch) / Math.max(1e-6, H - ch), f);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#07090d';
+    ctx.fillRect(0, 0, W, H);
+    ctx.imageSmoothingQuality = 'high';
+    ctx.setTransform(S, 0, 0, S, ax - ax * S, ay - ay * S);
+    for (let k = 0; k < g.items.length; k++) {
+      const src = s.grid[k];
+      const x = cellX(k), y = cellY(k);
+      // unsichtbare Zellen während des Zooms überspringen
+      const X0 = x * S + ax - ax * S, Y0 = y * S + ay - ay * S;
+      if (X0 > W || Y0 > H || X0 + cw * S < 0 || Y0 + ch * S < 0) continue;
+      if (!src) { ctx.fillStyle = '#10151e'; ctx.fillRect(x, y, cw, ch); continue; }
+      const sw = src.videoWidth || src.width, sh = src.videoHeight || src.height;
+      if (!sw || !sh) continue;
+      const cp = easeOutCubic(clamp01((tt - g.colorAt[k]) / 0.4));
+      const bump = k === g.target ? 1 : 1 + 0.035 * Math.sin(Math.PI * clamp01((tt - g.colorAt[k]) / 0.45));
+      const sc = Math.max(cw / sw, ch / sh) * 1.0;
+      const vw = cw / sc / bump, vh = ch / sc / bump;
+      const fo = k === g.target ? [0.5, 0.5] : g.items[k].focus || [0.5, 0.45];
+      const sx = Math.max(0, Math.min(sw - vw, fo[0] * sw - vw / 2));
+      const sy = Math.max(0, Math.min(sh - vh, fo[1] * sh - vh / 2));
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x, y, cw, ch);
+      ctx.clip();
+      ctx.drawImage(src, sx, sy, vw, vh, x, y, cw, ch);
+      if (cp < 1) {
+        // Schwarzweiß über Mischmodus „Sättigung“: kein Zusatzspeicher, stufenlos
+        ctx.globalCompositeOperation = 'saturation';
+        ctx.globalAlpha = 1 - cp;
+        ctx.fillStyle = '#808080';
+        ctx.fillRect(x, y, cw, ch);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = (1 - cp) * 0.12;
+        ctx.fillStyle = '#000';
+        ctx.fillRect(x, y, cw, ch);
+      }
+      ctx.restore();
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    this.r.upload(s.tex, cv);
+  }
+
+  /* ---------- Split-Screen ---------- */
+  async _prepareSplit(s, t) {
+    const c = s.clip;
+    const bp = this.bandPx;
+    s.canvas = document.createElement('canvas');
+    s.canvas.width = bp.w; s.canvas.height = bp.h;
+    s.srcW = bp.w; s.srcH = bp.h;
+    s.panels = [];
+    const maxDim = Math.min(1600, Math.round(Math.max(bp.w, bp.h) * 0.9));
+    await Promise.all(c.split.items.map(async (it, k) => {
+      const m = this.media[it.mediaIndex];
+      const p = { m, item: it, img: null, video: null, lastUpload: -1 };
+      s.panels[k] = p;
+      if (!m) return;
+      if (m.kind === 'image') { p.img = await this.getImage(m, maxDim); return; }
+      p.video = this.acquireVideo(m.url);
+      const ok = await loadVideoSrc(p.video, m.url);
+      if (!ok) { p.img = m.poster || null; this.releaseVideo(p.video); p.video = null; return; }
+      await seekVideo(p.video, panelTime(c, k, Math.max(t, c.split.reveal[k])));
+    }));
+    if (s.dead) return;
+    s.tex = this.r.createTexture();
+    this.composeSplit(s, t);
+    s.ready = true;
+  }
+
+  composeSplit(s, t) {
+    const c = s.clip, cv = s.canvas;
+    const ctx = cv.getContext('2d');
+    const W = cv.width, H = cv.height;
+    const n = s.panels.length;
+    const gap = Math.max(2, Math.round(Math.min(W, H) * 0.012));
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, H);
+    ctx.imageSmoothingQuality = 'high';
+    const stack = c.split.orient === 'stack';
+    const pw = stack ? W : (W - gap * (n - 1)) / n;
+    const ph = stack ? (H - gap * (n - 1)) / n : H;
+    for (let k = 0; k < n; k++) {
+      const p = s.panels[k];
+      if (!p || !p.m) continue;
+      const r = c.split.reveal[k];
+      const q = (t - r) / 0.5;
+      const e = q <= 0 ? 0 : 1 - Math.pow(1 - Math.min(1, q), 3);
+      const x = stack ? 0 : k * (pw + gap), y = stack ? k * (ph + gap) : 0;
+      const src = p.video && p.video.readyState >= 2 ? p.video : p.img || p.m.poster;
+      if (!src) continue;
+      const sw = src.videoWidth || src.width, sh = src.videoHeight || src.height;
+      if (!sw || !sh) continue;
+      // Noch nicht aufgedeckte Felder zeigen ihr Bild gedämpft vorab: nie ein schwarzes Feld
+      if (e < 1) {
+        const sc0 = Math.max(pw / sw, ph / sh) * 1.12;
+        ctx.globalAlpha = 0.22;
+        ctx.drawImage(src, (sw - pw / sc0) / 2, (sh - ph / sc0) / 2, pw / sc0, ph / sc0, x, y, pw, ph);
+        ctx.globalAlpha = 1;
+      }
+      if (e <= 0) continue;
+      // Aufdecken von der Mitte aus
+      ctx.save();
+      ctx.beginPath();
+      if (stack) ctx.rect(x, y + (ph * (1 - e)) / 2, pw, ph * e);
+      else ctx.rect(x + (pw * (1 - e)) / 2, y, pw * e, ph);
+      ctx.clip();
+      const life = Math.min(1, Math.max(0, (t - r) / Math.max(0.5, c.visEnd - r)));
+      const zoom = 1.12 - 0.07 * life - 0.05 * (1 - e);
+      const scale = Math.max(pw / sw, ph / sh) * zoom;
+      const vw = pw / scale, vh = ph / scale;
+      const f = p.item.focus || [0.5, 0.45];
+      const sx = Math.max(0, Math.min(sw - vw, f[0] * sw - vw / 2));
+      const sy = Math.max(0, Math.min(sh - vh, f[1] * sh - vh / 2));
+      ctx.drawImage(src, sx, sy, vw, vh, x, y, pw, ph);
+      ctx.restore();
+    }
+    this.r.upload(s.tex, cv);
+  }
+
+  ensureWindow(t, lookahead) {
+    const clips = this.plan.clips;
+    const needed = new Set();
+    let i = Math.max(0, clipIndexAt(clips, t) - 1);
+    for (; i < clips.length; i++) {
+      const c = clips[i];
+      if (c.visStart > t + lookahead) break;
+      if (c.visEnd > t - 0.02 && c.visStart <= t + lookahead) needed.add(i);
+    }
+    const last = clips[clips.length - 1];
+    if (last && last.loop && last.visStart <= t + lookahead) needed.add(clips.length - 1);
+    for (const k of Array.from(this.slots.keys())) if (!needed.has(k)) this.releaseSlot(k);
+    for (const k of needed) this.prepareSlot(clips[k], t);
+    return needed;
+  }
+
+  /* ---------- Bildaufbau ---------- */
+  fxState(t) {
+    const st = { zoom: 1, soft: 0, flash: 0, black: 0, dim: 0, desat: 0 };
+    for (const f of this.plan.fx) {
+      if (t < f.start || t >= f.end) continue;
+      const p = clamp01((t - f.start) / Math.max(0.001, f.end - f.start));
+      let a = f.amp || 1;
+      if (f.fadeIn) a *= smooth(clamp01((t - f.start) / f.fadeIn));
+      if (f.fadeOut) a *= smooth(clamp01((f.end - t) / f.fadeOut));
+      if (f.type === 'focus') st.soft += 4.5 * a * (1 - smooth(p));
+      else if (f.type === 'blur') st.soft += 3.2 * a;
+      else if (f.type === 'punch') st.zoom *= 1 + 0.05 * a * Math.pow(1 - p, 3);
+      else if (f.type === 'flash') st.flash = Math.max(st.flash, a * (1 - p) * (1 - p));
+      else if (f.type === 'black') st.black = Math.max(st.black, a);
+      else if (f.type === 'dim') st.dim = Math.max(st.dim, a);
+      else if (f.type === 'desat') st.desat = Math.max(st.desat, a);
+    }
+    return st;
+  }
+
+  layerParams(slot, t, fx, extra) {
+    const c = slot.clip;
+    if (!slot.ready || !slot.tex) return null;
+    const bp = this.bandPx;
+    const outA = bp.w / bp.h;
+    const sw = slot.srcW || bp.w, sh = slot.srcH || bp.h;
+    const srcA = sw / sh;
+    const tt = c.freezeAt != null ? Math.min(t, c.freezeAt) : t;
+    const u = clamp01((tt - c.visStart) / Math.max(0.001, c.visEnd - c.visStart));
+    const e = easeMotion(u);
+    const mo = c.motion || { from: { s: 1, x: 0, y: 0 }, to: { s: 1, x: 0, y: 0 } };
+    const s = lerp(mo.from.s, mo.to.s, e) * extra.zoom * fx.zoom;
+    const x = lerp(mo.from.x, mo.to.x, e), y = lerp(mo.from.y, mo.to.y, e);
+    let fw, fh;
+    if (srcA > outA) { fw = outA / srcA; fh = 1; } else { fw = 1; fh = srcA / outA; }
+    const geo = [0, fx.soft + (extra.soft || 0), 0, 0];
+    const blur = extra.blur || [0, 0, 0];
+    const corr = c.split ? [1, 1, 1] : c.corr || [1, 1, 1];
+    if (c.contain) {
+      const bw = srcA > outA ? 1 : srcA / outA;
+      const bh = srcA > outA ? outA / srcA : 1;
+      return { tex: slot.tex, xf: [fw / 1.15, fh / 1.15, 0.5, 0.5], box: [1, bw * s, bh * s], blur, geo, corr };
+    }
+    fw /= s; fh /= s;
+    const cx = 0.5 + (x * (1 - fw)) / 2 + (extra.shiftX || 0) * fw;
+    const cy = 0.5 + (y * (1 - fh)) / 2 + (extra.shiftY || 0) * fh;
+    if (extra.rot) geo[0] = extra.rot;
+    return { tex: slot.tex, xf: [fw, fh, cx, cy], box: [0, 1, 1], blur, geo, corr };
+  }
+
+  /**
+   * Bewegung im Takt: Pendeln (links/rechts, Wendepunkt genau auf dem Beat),
+   * Puls (kurzer Zoom je Beat) oder Handkamera (ruhiges, organisches Schweben).
+   */
+  motionFx(t) {
+    const plan = this.plan;
+    const mode = plan.motion;
+    if (!mode || mode === 'ken') return null;
+    const k = { soft: 0.55, medium: 1, strong: 1.6 }[plan.motionAmt] || 1;
+    const b = plan.beats;
+    const bp = this.beatPulse(t);
+    const energy = Math.min(1.3, 0.55 + 0.5 * (bp.energy || 0.5));
+    if (mode === 'sway') {
+      if (!b.length || t < b[0]) return { zoom: 1 + 0.05 * k, dx: 0, dy: 0, rot: 0 };
+      const i = bp.index, next = b[i + 1] != null ? b[i + 1] : b[i] + plan.beatDur;
+      const u = clamp01((t - b[i]) / Math.max(0.05, next - b[i]));
+      const e = u * u * (3 - 2 * u);
+      const side = i % 2 === 0 ? 1 : -1;
+      const pos = side * (1 - 2 * e); // +1 auf dem Beat, gleitet zur Gegenseite
+      const a = 0.016 * k * energy;
+      return { zoom: 1 + 0.05 * k, dx: pos * a, dy: -Math.abs(pos) * a * 0.18, rot: pos * 0.011 * k * energy };
+    }
+    if (mode === 'pulse') return { zoom: 1 + 0.02 + 0.03 * k * bp.env * energy, dx: 0, dy: 0, rot: 0 };
+    if (mode === 'handheld') {
+      const a = 0.008 * k;
+      const nx = Math.sin(t * 1.31) + 0.5 * Math.sin(t * 2.87 + 1.3) + 0.25 * Math.sin(t * 5.1 + 0.4);
+      const ny = Math.sin(t * 1.07 + 2.1) + 0.5 * Math.sin(t * 3.3 + 0.2);
+      return { zoom: 1 + 0.045 * k, dx: nx * a, dy: ny * a * 0.8, rot: Math.sin(t * 0.9 + 0.7) * 0.006 * k };
+    }
+    return null;
+  }
+
+  beatPulse(t) {
+    const b = this.plan.beats;
+    if (!b.length || t < b[0]) return { env: 0, down: false, energy: 0 };
+    let lo = 0, hi = b.length - 1;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (b[mid] <= t) lo = mid; else hi = mid - 1; }
+    return { env: Math.exp(-(t - b[lo]) / 0.11), down: this.plan.downs[lo], energy: this.plan.beatEnergy[lo] || 0, index: lo };
+  }
+
+  _driveVideo(v, active, frozen, playing, rate, expected, freezeT, state) {
+    if (playing && active && !frozen) {
+      if (v.playbackRate !== rate) v.playbackRate = rate;
+      if (v.paused && !v.ended) {
+        if (Math.abs(v.currentTime - expected) > 0.25 && expected < v.duration - 0.1) v.currentTime = expected;
+        const p = v.play();
+        if (p && p.catch) p.catch(() => {});
+      } else if (!v.paused && !v.seeking && Math.abs(v.currentTime - expected) > 0.45 && expected < v.duration - 0.2) {
+        v.currentTime = expected;
+      }
+    } else {
+      if (!v.paused) v.pause();
+      if (frozen && !state.frozen && playing) {
+        state.frozen = true;
+        if (Math.abs(v.currentTime - freezeT) > 0.05) v.currentTime = freezeT;
+      }
+    }
+    if (!frozen) state.frozen = false;
+  }
+
+  updateVideos(t, playing) {
+    for (const s of this.slots.values()) {
+      if (!s.ready || s.failed) continue;
+      const c = s.clip;
+      const active = t >= c.visStart - 0.04 && t < c.visEnd;
+      const frozen = c.freezeAt != null && t >= c.freezeAt;
+      if (s.grid) { if (active) this.composeGrid(s, t); continue; }
+      if (s.panels) {
+        let dirty = !playing;
+        s.panels.forEach((p, k) => {
+          if (!p || !p.video) return;
+          const on = active && t >= c.split.reveal[k] - 0.04;
+          this._driveVideo(p.video, on, frozen, playing, p.item.rate || 1, panelTime(c, k, t), panelTime(c, k, c.freezeAt || 0), p);
+          if (on && p.video.currentTime !== p.lastUpload) { dirty = true; p.lastUpload = p.video.currentTime; }
+        });
+        if (active && (dirty || playing)) this.composeSplit(s, t);
+        continue;
+      }
+      const v = s.video;
+      if (!v) continue;
+      this._driveVideo(v, active, frozen, playing, c.rate, srcTimeOf(c, t), srcTimeOf(c, c.freezeAt || 0), s);
+      if (active && v.readyState >= 2 && (v.currentTime !== s.lastUpload || !playing)) {
+        if (this.r.upload(s.tex, v)) s.lastUpload = v.currentTime;
+      }
+    }
+  }
+
+  drawAt(t, mode) {
+    const plan = this.plan;
+    if (!plan) return;
+    const look = LOOKS[plan.look] || LOOKS.natur;
+    const L = layersAt(plan.clips, t);
+    if (mode === 'play') this.updateVideos(t, true);
+    else if (mode === 'still') this.updateVideos(t, false);
+    else if (mode === 'offline') for (const s of this.slots.values()) if (s.ready && !s.failed) { if (s.panels) this.composeSplit(s, t); else if (s.grid) this.composeGrid(s, t); }
+    const fx = this.fxState(t);
+    let A = null, B = null, mix = 0, trans = 0, dir = 1;
+    if (L) {
+      const p = clamp01(L.p);
+      const w = 1 - Math.abs(p - 0.5) * 2;
+      const ea = { zoom: 1 }, eb = { zoom: 1 };
+      if (L.b) {
+        trans = L.type; mix = p; dir = L.dirSign || 1;
+        if (L.type === TR.ZOOM) {
+          const pa = clamp01(p / 0.5), pb = clamp01((p - 0.5) / 0.5);
+          ea.zoom *= 1 + 0.3 * pa * pa;
+          eb.zoom *= 1 + 0.3 * (1 - pb) * (1 - pb);
+          ea.blur = [2, 0.25 * w, 0]; eb.blur = [2, 0.25 * w, 0];
+        } else if (L.type === TR.WHIP) {
+          const pa = clamp01(p / 0.5), pb = clamp01((p - 0.5) / 0.5);
+          ea.shiftX = 0.3 * pa * pa * dir;
+          eb.shiftX = -0.3 * (1 - pb) * (1 - pb) * dir;
+          ea.blur = [1, 0.2 * w * dir, 0]; eb.blur = [1, 0.2 * w * dir, 0];
+        } else if (L.type === TR.PUSH) {
+          ea.blur = [1, 0.08 * w, 0]; eb.blur = [1, 0.08 * w, 0];
+        }
+      }
+      const mv = this.motionFx(t);
+      if (mv) {
+        for (const [ex, c] of [[ea, L.a], [eb, L.b]]) {
+          if (!c || c.grid || c.split || c.flightAnim) continue;
+          ex.zoom *= mv.zoom;
+          ex.shiftX = (ex.shiftX || 0) + mv.dx;
+          ex.shiftY = mv.dy;
+          ex.rot = mv.rot;
+        }
+      }
+      const sa = this.slots.get(plan.clips.indexOf(L.a));
+      if (sa) A = this.layerParams(sa, t, fx, ea);
+      if (L.b) {
+        const sb = this.slots.get(plan.clips.indexOf(L.b));
+        if (sb) B = this.layerParams(sb, t, fx, eb);
+        if (!B) { mix = 0; trans = 0; }
+        if (!A && B) { A = B; B = null; mix = 0; trans = 0; }
+      }
+    }
+    const ov = this.painter.paint(plan, t, this.selectedOverlay);
+    if (ov.topDirty) this.r.uploadOverlay('top', this.painter.top);
+    this.r.draw({
+      A, B, mix, trans, dir, grade: look.grade, time: t, band: plan.band,
+      flash: fx.flash, black: fx.black, dim: fx.dim, desat: fx.desat, bars: 0, ovTop: ov.top,
+    });
+  }
+
+  /* ---------- Standbild ---------- */
+  async renderStill(t) {
+    if (!this.plan) return;
+    const token = ++this._token;
+    this.t = Math.max(0, Math.min(t, this.plan.duration));
+    const tt = this.t;
+    const needed = this.ensureWindow(tt, 0.01);
+    const waits = [];
+    for (const k of needed) {
+      const s = this.slots.get(k);
+      waits.push(s.promise.then(() => this._seekSlot(s, tt)));
+    }
+    await Promise.all(waits);
+    if (token !== this._token || this.playing) return;
+    this.drawAt(tt, 'still');
+  }
+
+  async _seekSlot(s, t, fps) {
+    if (s.dead || s.failed) return;
+    const tol = fps ? 0.45 / fps : 0.015;
+    if (s.panels) {
+      await Promise.all(s.panels.map(async (p, k) => {
+        if (!p || !p.video) return;
+        const target = panelTime(s.clip, k, t);
+        if (Math.abs(p.video.currentTime - target) > tol || p.video.readyState < 2) await seekVideo(p.video, target);
+      }));
+      return;
+    }
+    if (!s.video) return;
+    const target = srcTimeOf(s.clip, t);
+    if (Math.abs(s.video.currentTime - target) > tol || s.video.readyState < 2) await seekVideo(s.video, target);
+  }
+
+  /* ---------- Wiedergabe ---------- */
+  async play(from) {
+    if (!this.plan || !this.audioBuffer) return;
+    this.ensureAudio();
+    this._stopPlayback();
+    const token = ++this._token;
+    const t0 = Math.max(0, Math.min(from, this.plan.duration - 0.05));
+    this.t = t0;
+    const needed = this.ensureWindow(t0, 0.3);
+    await Promise.race([
+      Promise.all(Array.from(needed, (k) => this.slots.get(k).promise)),
+      new Promise((r) => setTimeout(r, 4000)),
+    ]);
+    if (token !== this._token) return;
+    if (this.ac.state !== 'running') { try { await this.ac.resume(); } catch (e) { /* ignore */ } }
+    this._startAudio(t0, this.master);
+    this._t0 = t0;
+    this.playing = true;
+    this.onState && this.onState(true);
+    cancelAnimationFrame(this._raf);
+    this._raf = requestAnimationFrame(this._loop);
+  }
+
+  _gainCurve(g, when, offset) {
+    const w = this.plan.win, D = this.plan.duration;
+    const fi = Math.max(0.005, w.fadeIn || 0.02);
+    const fo = Math.max(0.05, Math.min(w.fadeOut || 1, D * 0.3));
+    const gAt = (x) => Math.min(clamp01(x / fi), clamp01((D - x) / fo));
+    g.gain.setValueAtTime(gAt(offset), when);
+    if (offset < fi) g.gain.linearRampToValueAtTime(1, when + (fi - offset));
+    const foStart = D - fo;
+    if (offset < foStart) g.gain.setValueAtTime(1, when + (foStart - offset));
+    g.gain.linearRampToValueAtTime(0, when + (D - offset));
+  }
+
+  _startAudio(offset, out, extraOut, withSong = true) {
+    const ac = this.ac;
+    const D = this.plan.duration;
+    const src = ac.createBufferSource();
+    src.buffer = this.audioBuffer;
+    const g = ac.createGain();
+    const duck = ac.createGain();
+    src.connect(g).connect(duck);
+    const when = ac.currentTime + 0.08;
+    if (withSong) {
+      duck.connect(out);
+      if (extraOut) duck.connect(extraOut);
+    }
+    this._gainCurve(g, when, offset);
+    this._duckCurve(duck.gain, when, offset);
+    src.start(when, this.plan.win.start + offset, Math.max(0.05, D - offset + 0.05));
+    this.src = src;
+    this.srcGain = g;
+    this.voiceSrcs = this._scheduleVoices(ac, [out, extraOut].filter(Boolean), when, offset);
+    this.clockBase = when - offset;
+  }
+
+  /** Originalton-Abschnitte zusammengefasst (für das Absenken der Musik). */
+  _voiceSpans() {
+    const vs = (this.plan.voice || []).slice().sort((a, b) => a.t0 - b.t0);
+    const spans = [];
+    for (const v of vs) {
+      const last = spans[spans.length - 1];
+      if (last && v.t0 < last.b + 0.6) { last.b = Math.max(last.b, v.t1); last.g = Math.max(last.g, v.gain); } else spans.push({ a: v.t0, b: v.t1, g: v.gain });
+    }
+    return spans;
+  }
+
+  /** Musik unter dem Originalton absenken (weiche Rampen). */
+  _duckCurve(param, when, offset) {
+    const pts = [];
+    for (const sp of this._voiceSpans()) {
+      const low = 1 - 0.72 * Math.min(1, sp.g);
+      pts.push([sp.a - 0.25, 1], [sp.a, low], [sp.b, low], [sp.b + 0.35, 1]);
+    }
+    const valAt = (x) => {
+      if (!pts.length || x <= pts[0][0]) return 1;
+      for (let i = 1; i < pts.length; i++) if (x <= pts[i][0]) { const [x0, y0] = pts[i - 1], [x1, y1] = pts[i]; return x1 > x0 ? y0 + ((y1 - y0) * (x - x0)) / (x1 - x0) : y1; }
+      return 1;
+    };
+    param.setValueAtTime(valAt(offset), when);
+    for (const [x, y] of pts) if (x > offset) param.linearRampToValueAtTime(y, when + (x - offset));
+  }
+
+  /** Originalton der Videos exakt zu ihren Einstellungen einplanen. */
+  _scheduleVoices(ac, outs, when, offset) {
+    const list = [];
+    for (const v of this.plan.voice || []) {
+      const m = this.media[v.mediaIndex];
+      if (!m || !m.audio || v.t1 <= offset + 0.02) continue;
+      const st = Math.max(v.t0, offset);
+      const bufOff = v.src + (st - v.t0);
+      if (bufOff >= m.audio.duration) continue;
+      const src = ac.createBufferSource();
+      src.buffer = m.audio;
+      const g = ac.createGain();
+      src.connect(g);
+      for (const o of outs) g.connect(o);
+      const fade = Math.min(0.12, (v.t1 - v.t0) / 4);
+      const at = (x) => when + (x - offset);
+      const gainAt = (x) => v.gain * Math.min(1, Math.max(0, (x - v.t0) / fade), Math.max(0, (v.t1 - x) / fade));
+      g.gain.setValueAtTime(gainAt(st), at(st));
+      if (st < v.t0 + fade) g.gain.linearRampToValueAtTime(v.gain, at(v.t0 + fade));
+      g.gain.setValueAtTime(v.gain, at(Math.max(st, v.t1 - fade)));
+      g.gain.linearRampToValueAtTime(0, at(v.t1));
+      src.start(at(st), bufOff, v.t1 - st + 0.02);
+      list.push(src);
+    }
+    return list;
+  }
+
+  clock() {
+    const ac = this.ac;
+    let t = ac.currentTime - this.clockBase;
+    if (!this.exportMode) t -= (ac.outputLatency || 0) + (ac.baseLatency || 0);
+    return t;
+  }
+
+  _loop() {
+    if (!this.playing) return;
+    const D = this.plan.duration;
+    const t = Math.max(this._t0 || 0, this.clock());
+    if (t >= D) {
+      this.t = D;
+      this.drawAt(D - 0.001, 'play');
+      this._stopPlayback();
+      this.onTime && this.onTime(D);
+      this.onEnded && this.onEnded();
+      return;
+    }
+    this.t = t;
+    this.ensureWindow(t, 3.0);
+    this.drawAt(t, 'play');
+    this.onTime && this.onTime(t);
+    this._raf = requestAnimationFrame(this._loop);
+  }
+
+  _stopPlayback() {
+    const was = this.playing;
+    this.playing = false;
+    cancelAnimationFrame(this._raf);
+    if (this.src) {
+      try { this.src.stop(); } catch (e) { /* ignore */ }
+      try { this.src.disconnect(); this.srcGain.disconnect(); } catch (e) { /* ignore */ }
+      this.src = null;
+    }
+    for (const v of this.voiceSrcs || []) { try { v.stop(); v.disconnect(); } catch (e) { /* ignore */ } }
+    this.voiceSrcs = [];
+    for (const s of this.slots.values()) {
+      if (s.video) { try { s.video.pause(); } catch (e) { /* ignore */ } }
+      if (s.panels) for (const p of s.panels) if (p && p.video) { try { p.video.pause(); } catch (e) { /* ignore */ } }
+    }
+    if (was) this.onState && this.onState(false);
+  }
+
+  pause() {
+    this._token++;
+    this._stopPlayback();
+  }
+
+  /* ---------- Offline-Export (Bild für Bild) ---------- */
+  async _prepareExact(t, fps) {
+    const needed = this.ensureWindow(t, 1.5);
+    const vis = [];
+    for (const k of needed) {
+      const s = this.slots.get(k);
+      if (s.clip.visStart <= t + 1e-6 && s.clip.visEnd > t) vis.push(s);
+    }
+    await Promise.all(vis.map((s) => s.promise));
+    await Promise.all(vis.map((s) => this._seekSlot(s, t, fps)));
+    for (const s of vis) {
+      if (s.panels || !s.video || s.failed || s.dead) continue;
+      if (s.video.readyState >= 2) this.r.upload(s.tex, s.video);
+    }
+  }
+
+  /** bpp: Bits pro Pixel und Bild (0.22 ≈ 14 Mbit/s bei 1080 × 1920 und 30 fps) */
+  static async exportSupport(size, fps, withAudio, bpp = 0.22) {
+    const res = { video: null, audio: null };
+    if (typeof VideoEncoder === 'undefined' || typeof VideoFrame === 'undefined') return res;
+    const bitrate = Math.min(80e6, Math.round(size.w * size.h * fps * bpp));
+    for (const codec of H264_CANDIDATES(fps, size.w, size.h)) {
+      try {
+        const cfg = { codec, width: size.w, height: size.h, bitrate, framerate: fps, avc: { format: 'avc' }, latencyMode: 'quality' };
+        const r = await VideoEncoder.isConfigSupported(cfg);
+        if (r.supported) { res.video = { cfg, kind: 'avc' }; break; }
+      } catch (e) { /* nächster */ }
+    }
+    if (!res.video) {
+      try {
+        const cfg = { codec: size.w * size.h > 2200000 ? 'vp09.00.51.08' : 'vp09.00.40.08', width: size.w, height: size.h, bitrate, framerate: fps, latencyMode: 'quality' };
+        const r = await VideoEncoder.isConfigSupported(cfg);
+        if (r.supported) res.video = { cfg, kind: 'vp9' };
+      } catch (e) { /* keiner */ }
+    }
+    if (withAudio && typeof AudioEncoder !== 'undefined') {
+      for (const [codec, kind, sr] of [['mp4a.40.2', 'aac', 48000], ['mp4a.40.2', 'aac', 44100], ['opus', 'opus', 48000]]) {
+        try {
+          const cfg = { codec, sampleRate: sr, numberOfChannels: 2, bitrate: 192000 };
+          const r = await AudioEncoder.isConfigSupported(cfg);
+          if (r.supported) { res.audio = { cfg, kind, sampleRate: sr }; break; }
+        } catch (e) { /* nächster */ }
+      }
+    }
+    return res;
+  }
+
+  async _renderAudio(sampleRate, withSong = true) {
+    const D = this.plan.duration;
+    const len = Math.ceil(D * sampleRate);
+    const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    const ctx = new OAC(2, len, sampleRate);
+    if (withSong) {
+      const src = ctx.createBufferSource();
+      src.buffer = this.audioBuffer;
+      const g = ctx.createGain();
+      const duck = ctx.createGain();
+      src.connect(g).connect(duck).connect(ctx.destination);
+      this._gainCurve(g, 0, 0);
+      this._duckCurve(duck.gain, 0, 0);
+      src.start(0, this.plan.win.start, D + 0.05);
+    }
+    this._scheduleVoices(ctx, [ctx.destination], 0, 0);
+    return ctx.startRendering();
+  }
+
+  /** Hat der Film hörbaren Originalton? */
+  get hasVoice() {
+    return !!(this.plan && (this.plan.voice || []).some((v) => this.media[v.mediaIndex] && this.media[v.mediaIndex].audio));
+  }
+
+  async exportOffline({ size, fps, withAudio, withSong = true, support, onProgress, isCancelled }) {
+    this.pause();
+    this.exporting = true;
+    const plan = this.plan;
+    const D = plan.duration;
+    this.r.resize(size.w, size.h);
+    this.painter.resize(size.w, size.h);
+    this.size = size;
+    this.releaseAll();
+    const vs = support.video;
+    const as = withAudio ? support.audio : null;
+    const mux = new Mp4Muxer({
+      video: { codec: vs.kind, width: size.w, height: size.h, fps },
+      audio: as ? { codec: as.kind, sampleRate: as.sampleRate, channels: 2, bitrate: 192000 } : null,
+    });
+    let failed = null;
+    const enc = new VideoEncoder({ output: (c, m) => mux.addVideoChunk(c, m), error: (e) => { failed = e; } });
+    enc.configure(vs.cfg);
+    const N = Math.max(1, Math.round(D * fps));
+    const frameUs = 1e6 / fps;
+    let cancelled = false;
+    try {
+      for (let n = 0; n < N; n++) {
+        if (failed) throw failed;
+        if (isCancelled && isCancelled()) { cancelled = true; break; }
+        const t = n / fps;
+        await this._prepareExact(t, fps);
+        this.drawAt(t, 'offline');
+        const frame = new VideoFrame(this.canvas, { timestamp: Math.round(n * frameUs), duration: Math.round(frameUs) });
+        enc.encode(frame, { keyFrame: n % (fps * 2) === 0 });
+        frame.close();
+        while (enc.encodeQueueSize > 4) await new Promise((r) => setTimeout(r, 2));
+        if (onProgress && n % 3 === 0) onProgress((n / N) * (as ? 0.93 : 1), t);
+      }
+      if (!cancelled) await enc.flush();
+    } finally {
+      try { enc.close(); } catch (e) { /* ignore */ }
+    }
+    if (cancelled) { this.exporting = false; return null; }
+    if (failed) { this.exporting = false; throw failed; }
+    if (as) {
+      const buf = await this._renderAudio(as.sampleRate, withSong);
+      const aenc = new AudioEncoder({ output: (c, m) => mux.addAudioChunk(c, m), error: (e) => { failed = e; } });
+      aenc.configure(as.cfg);
+      const chunk = 1024;
+      const L = buf.getChannelData(0), R = buf.getChannelData(1);
+      for (let o = 0; o < buf.length; o += chunk) {
+        const nFr = Math.min(chunk, buf.length - o);
+        const data = new Float32Array(nFr * 2);
+        data.set(L.subarray(o, o + nFr), 0);
+        data.set(R.subarray(o, o + nFr), nFr);
+        const ad = new AudioData({ format: 'f32-planar', sampleRate: as.sampleRate, numberOfFrames: nFr, numberOfChannels: 2, timestamp: Math.round((o * 1e6) / as.sampleRate), data });
+        aenc.encode(ad);
+        ad.close();
+        if (aenc.encodeQueueSize > 20) await new Promise((r) => setTimeout(r, 1));
+      }
+      await aenc.flush();
+      aenc.close();
+      if (failed) { this.exporting = false; throw failed; }
+    }
+    onProgress && onProgress(1, D);
+    const blob = mux.finalize();
+    this.exporting = false;
+    return { blob, type: 'video/mp4', ext: 'mp4', codec: vs.kind, audio: as ? as.kind : null };
+  }
+
+  /* ---------- Echtzeit-Export (Rückfall für ältere Browser) ---------- */
+  async exportRealtime({ size, withAudio, withSong = true, onProgress, isCancelled, fps = 30, bpp = 0.22 }) {
+    const mime = pickRecorderMime();
+    if (mime === null || !this.canvas.captureStream) throw new Error('Dieser Browser kann keine Videos erzeugen. Bitte iOS 16.4+ oder aktuelles Chrome verwenden.');
+    this.ensureAudio();
+    this.pause();
+    this.r.resize(size.w, size.h);
+    this.painter.resize(size.w, size.h);
+    this.size = size;
+    this.releaseAll();
+    const stream = this.canvas.captureStream(fps);
+    const tracks = [...stream.getVideoTracks()];
+    let dest = null, keep = null, keepGain = null;
+    if (withAudio) {
+      dest = this.ac.createMediaStreamDestination();
+      keep = this.ac.createConstantSource ? this.ac.createConstantSource() : this.ac.createOscillator();
+      keepGain = this.ac.createGain();
+      keepGain.gain.value = 0;
+      keep.connect(keepGain); keepGain.connect(dest); keep.start();
+      tracks.push(...dest.stream.getAudioTracks());
+    }
+    const ms = new MediaStream(tracks);
+    const vbr = Math.min(40e6, Math.round(size.w * size.h * fps * bpp));
+    let rec;
+    try { rec = new MediaRecorder(ms, mime ? { mimeType: mime, videoBitsPerSecond: vbr, audioBitsPerSecond: 192000 } : { videoBitsPerSecond: vbr }); } catch (e) { rec = new MediaRecorder(ms); }
+    const chunks = [];
+    rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    const stopped = new Promise((r) => { rec.onstop = r; });
+    this.exporting = true;
+    let cancelled = false;
+    const D = this.plan.duration;
+    try {
+      await this.renderStill(0);
+      rec.start(1000);
+      await new Promise((r) => setTimeout(r, 200));
+      this.exportMode = true;
+      // Wiedergabe mit Tonausgang in die Aufnahme
+      const token = ++this._token;
+      const needed = this.ensureWindow(0, 0.3);
+      await Promise.all(Array.from(needed, (k) => this.slots.get(k).promise));
+      if (token !== this._token) throw new Error('abgebrochen');
+      if (this.ac.state !== 'running') { try { await this.ac.resume(); } catch (e) { /* ignore */ } }
+      const silent = this.ac.createGain();
+      silent.gain.value = 0;
+      silent.connect(this.ac.destination);
+      this._startAudio(0, silent, dest, withSong);
+      this._t0 = 0;
+      this.playing = true;
+      const prevEnded = this.onEnded;
+      await new Promise((resolve) => {
+        this.onEnded = resolve;
+        this._raf = requestAnimationFrame(this._loop);
+        const tick = () => {
+          if (!this.playing) return resolve();
+          if (isCancelled && isCancelled()) { cancelled = true; return resolve(); }
+          onProgress && onProgress(clamp01(this.t / D), this.t);
+          setTimeout(tick, 200);
+        };
+        tick();
+      });
+      this.onEnded = prevEnded;
+      this.pause();
+      try { silent.disconnect(); } catch (e) { /* ignore */ }
+      if (!cancelled) { this.drawAt(D - 0.001, 'still'); await new Promise((r) => setTimeout(r, 300)); }
+      if (rec.state !== 'inactive') rec.stop();
+      await stopped;
+    } finally {
+      this.exporting = false;
+      this.exportMode = false;
+      if (keep) { try { keep.stop(); keep.disconnect(); keepGain.disconnect(); dest.disconnect(); } catch (e) { /* ignore */ } }
+      for (const tr of ms.getTracks()) tr.stop();
+    }
+    if (cancelled) return null;
+    const type = (rec.mimeType || mime || 'video/webm').split(';')[0];
+    let blob = new Blob(chunks, { type });
+    if (type === 'video/webm') blob = await fixWebmDuration(blob, D * 1000 + 300);
+    return { blob, type, ext: type === 'video/mp4' ? 'mp4' : 'webm', codec: 'realtime', audio: withAudio ? 'yes' : null };
+  }
+}

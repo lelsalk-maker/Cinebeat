@@ -1,0 +1,37 @@
+import { chromium } from '/opt/node22/lib/node_modules/playwright/index.mjs';
+const FILE = 'file:///home/user/cinebeat/docs/CineBeat.html';
+const b = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required'] });
+const ctx = await b.newContext({ viewport: { width: 390, height: 844 } });
+const page = await ctx.newPage();
+const reqs = [], errs = [];
+page.on('request', (r) => { const u = r.url(); if (!u.startsWith('blob:') && !u.startsWith('data:') && u !== FILE) reqs.push(u); });
+page.on('pageerror', (e) => errs.push('pageerror: ' + e.message));
+page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errs.push(m.type() + ': ' + m.text()); });
+await page.addInitScript(() => { window.__csp = []; document.addEventListener('securitypolicyviolation', (e) => window.__csp.push(e.violatedDirective + ' ' + e.blockedURI)); });
+await page.goto(FILE);
+await page.waitForSelector('.place', { timeout: 30000 });
+console.log('Speicher dauerhaft:', await page.evaluate(() => CineBeat.S.store.persistent));
+// Versuch einer Netzverbindung aus der Seite heraus muss scheitern
+console.log('fetch nach außen:', await page.evaluate(async () => { try { await fetch('https://example.com/'); return 'ERLAUBT (schlecht)'; } catch (e) { return 'blockiert'; } }));
+console.log('Bild von außen:', await page.evaluate(() => new Promise((r) => { const i = new Image(); i.onload = () => r('geladen (schlecht)'); i.onerror = () => r('blockiert'); i.src = 'https://example.com/x.png'; })));
+await page.click('.place');
+await page.waitForFunction(() => CineBeat.S.plan && document.getElementById('busy').hidden, null, { timeout: 90000 });
+const res = await page.evaluate(async () => {
+  const e = CineBeat.engine, S = CineBeat.S;
+  const size = { w: 180, h: 320 };
+  const support = await e.constructor.exportSupport(size, 30, true);
+  S.exporting = true;
+  const out = await e.exportOffline({ size, fps: 30, withAudio: true, support });
+  S.exporting = false;
+  const v = document.createElement('video'); v.muted = true; v.src = URL.createObjectURL(out.blob); document.body.appendChild(v);
+  const ok = await new Promise((r) => { v.onloadedmetadata = () => r(true); v.onerror = () => r(false); });
+  return { ok, dur: v.duration, size: out.blob.size, codec: out.codec, audio: out.audio, D: S.plan.duration };
+});
+console.log('Export in der Einzeldatei:', res);
+await page.reload();
+await page.waitForSelector('.place');
+console.log('Nach Neuladen Orte:', await page.evaluate(() => CineBeat.S.places.map((p) => p.name)));
+console.log('CSP-Verstöße:', await page.evaluate(() => window.__csp));
+console.log('Netzanfragen:', reqs.length ? reqs : 'keine');
+console.log('Fehler:', errs.filter((e) => !e.includes('example.com') && !e.includes('Content Security Policy')).join('\n') || 'keine');
+await b.close();

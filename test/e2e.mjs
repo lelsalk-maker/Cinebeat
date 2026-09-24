@@ -1,0 +1,57 @@
+import { chromium } from '/opt/node22/lib/node_modules/playwright/index.mjs';
+import { makeStructuredSong } from './wav.mjs';
+import { writeFileSync } from 'node:fs';
+const OUT = process.env.OUT || '/tmp/cinebeat-test';
+(await import('node:fs')).mkdirSync(OUT, { recursive: true });
+makeStructuredSong(`${OUT}/Sommerhit.wav`, { bpm: 124 });
+const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+const page = await (await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 })).newPage();
+const errs = [];
+page.on('pageerror', (e) => errs.push('pageerror: ' + e.message));
+page.on('console', (m) => { if ((m.type() === 'error' || m.type() === 'warning') && !m.text().includes('TUNNEL')) errs.push(m.type() + ': ' + m.text()); });
+await page.goto(process.env.APP || 'file:///home/user/cinebeat/docs/CineBeat.html');
+await page.waitForSelector('.place');
+// Testdateien im Browser erzeugen
+const files = await page.evaluate(async () => {
+  const out = [];
+  const img = (w, h, hue, label, blur) => { const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d'); if (blur) x.filter = 'blur(8px)'; const g = x.createLinearGradient(0, 0, w, h); g.addColorStop(0, `hsl(${hue},70%,55%)`); g.addColorStop(1, `hsl(${hue + 50},60%,25%)`); x.fillStyle = g; x.fillRect(0, 0, w, h); for (let i = 0; i < 40; i++) { x.fillStyle = `hsla(${hue + i * 9},80%,${40 + i % 30}%,.8)`; x.beginPath(); x.arc((i * 131) % w, (i * 77) % h, 20 + (i * 7) % 60, 0, 7); x.fill(); } x.fillStyle = '#fff'; x.font = `bold ${h / 8}px sans-serif`; x.fillText(label, w * 0.1, h * 0.55); return c.toDataURL('image/jpeg', 0.9); };
+  out.push(['Strand.jpg', img(1600, 1200, 190, 'Strand')]);
+  out.push(['Gasse.jpg', img(1200, 1600, 20, 'Gasse')]);
+  out.push(['Gasse_unscharf.jpg', img(1200, 1600, 20, 'Gasse', true)]);
+  out.push(['Markt.jpg', img(1600, 1200, 90, 'Markt')]);
+  out.push(['Sunset.jpg', img(1600, 1200, 10, 'Sunset')]);
+  const c = document.createElement('canvas'); c.width = 720; c.height = 1280; const x = c.getContext('2d');
+  const rec = new MediaRecorder(c.captureStream(30), { mimeType: 'video/webm' }); const ch = []; rec.ondataavailable = (e) => ch.push(e.data);
+  const done = new Promise((r) => (rec.onstop = r)); rec.start(); const t0 = performance.now();
+  await new Promise((res) => { const f = () => { const t = (performance.now() - t0) / 1000; x.fillStyle = `hsl(${t * 60},55%,40%)`; x.fillRect(0, 0, 720, 1280); x.fillStyle = '#fff'; x.beginPath(); x.arc(360 + Math.sin(t * 2) * 250, 640, 90, 0, 7); x.fill(); x.font = 'bold 70px sans-serif'; x.fillText('Tram ' + t.toFixed(1), 60, 300); if (t < 5) requestAnimationFrame(f); else { rec.stop(); res(); } }; f(); });
+  await done;
+  const blob = new Blob(ch, { type: 'video/webm' });
+  const b64 = await new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(blob); });
+  out.push(['Tram.webm', b64]);
+  return out;
+});
+const paths = files.map(([n, d]) => { const p = `${OUT}/in_${n}`; writeFileSync(p, Buffer.from(d.split(',')[1], 'base64')); return p; });
+// Neuer Ort
+await page.click('#addPlace');
+await page.waitForFunction(() => CineBeat.S.ctx && CineBeat.S.ctx.kind === 'place' && document.getElementById('busy').hidden, null, { timeout: 60000 });
+await page.fill('#placeName', 'Porto');
+await page.setInputFiles('#fileMedia', paths);
+await page.waitForFunction(() => CineBeat.S.ctx.media.length === 6 && CineBeat.S.ctx.media.every((m) => !m.loading) && document.getElementById('busy').hidden, null, { timeout: 120000 });
+console.log('Material:', await page.evaluate(() => CineBeat.S.ctx.media.map((m) => `${m.name} ${m.kind} ${m.w}x${m.h} score=${(m.score || 0).toFixed(2)}${m.dupOf ? ' DUP' : ''}${m.bad ? ' BAD' : ''}`).join('\n  ')), '\nUntertitel:', await page.inputValue('#placeSub'));
+await page.click('[data-tab="music"]');
+await page.setInputFiles('#fileMusic', `${OUT}/Sommerhit.wav`);
+await page.waitForFunction(() => CineBeat.S.ctx.song && CineBeat.S.ctx.song.name === 'Sommerhit' && document.getElementById('busy').hidden && CineBeat.S.plan, null, { timeout: 120000 });
+await page.waitForTimeout(1500);
+console.log('Plan Porto:', await page.evaluate(() => { const p = CineBeat.S.plan; return { D: p.duration.toFixed(2), win: p.win.start.toFixed(2), intro: p.intro, outro: p.outro, look: p.look, frame: p.frame, clips: p.clips.map((c) => `${c.start.toFixed(1)}:${CineBeat.S.ctx.media.find((m) => m.id === c.mediaId)?.name}`).join(' '), ig: document.getElementById('igLine').textContent }; }));
+await page.screenshot({ path: `${OUT}/e2e_porto.png` });
+console.log('Regie:', await page.evaluate(() => CineBeat.S.plan.notes));
+// Gesamtfilm
+await page.click('#backBtn');
+await page.waitForSelector('.place');
+await page.click('#openBestof');
+await page.waitForFunction(() => CineBeat.S.ctx && CineBeat.S.ctx.kind === 'bestof' && CineBeat.S.plan && document.getElementById('busy').hidden, null, { timeout: 120000 });
+await page.waitForTimeout(1000);
+console.log('Gesamtfilm:', await page.evaluate(() => { const p = CineBeat.S.plan; return { D: p.duration.toFixed(1), chapters: CineBeat.S.ctx.chapters.map((c) => c.title + '(' + c.media.length + ')').join(', '), chapterStarts: p.clips.filter((c) => c.chapter).map((c) => c.chapter + '@' + c.start.toFixed(1)).join(' '), clips: p.visibleClips, intro: p.intro, outro: p.outro, format: p.format, notes: p.notes }; }));
+await page.screenshot({ path: `${OUT}/e2e_bestof.png` });
+console.log('Fehler:', errs.length ? errs.join('\n') : 'keine');
+await browser.close();

@@ -1,0 +1,9 @@
+{
+  "name": "cinebeat",
+  "private": true,
+  "description": "Reisefilme im Takt deines Songs – Web-App, läuft komplett auf dem Gerät",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  }
+}

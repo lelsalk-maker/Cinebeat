@@ -1,0 +1,16 @@
+{
+  "name": "CineBeat",
+  "short_name": "CineBeat",
+  "description": "Reisefilme im Takt deines Songs, für Instagram Stories, Reels und Beiträge",
+  "lang": "de",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#050608",
+  "theme_color": "#050608",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
