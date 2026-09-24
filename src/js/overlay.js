@@ -149,6 +149,8 @@ class OverlayPainter {
         else if (o.type === 'flight') this.drawFlight(ctx, o, t, geo);
         else if (o.type === 'knockout') this.drawKnockout(ctx, o, t, geo);
         else if (o.type === 'leader') this.drawLeader(ctx, o, t, geo);
+        else if (o.type === 'rewind') this.drawRewind(ctx, o, t, geo);
+        else if (o.type === 'datestamp') this.drawDateStamp(ctx, o, t, geo);
         else if (o.type === 'usertext') this.drawUserText(ctx, o, t, geo, o.id === selectedId);
         else if (o.type === 'sticker') this.drawSticker(ctx, o, t, geo, o.id === selectedId);
         ctx.restore();
@@ -457,6 +459,89 @@ class OverlayPainter {
    * Countdown wie ein alter Filmvorspann: Kreise, Fadenkreuz, umlaufender Zeiger, große Ziffer.
    * Darunter laufen deine Bilder in Schwarzweiß (nie ein schwarzes Bild), dazu Sepia, Flackern, Kratzer.
    */
+  /** Zurückspulen wie auf einer alten Kassette: Bildstörstreifen, Zeilen, ◀◀ und rückwärts laufende Zeit. */
+  drawRewind(ctx, o, t, g) {
+    const W = g.W, top = g.by, bh = g.bh;
+    const short = Math.min(W, bh);
+    const local = t - o.start, dur = Math.max(0.1, o.end - o.start);
+    const u = cl01(local / dur);
+    const frame = Math.floor(t * 30);
+    const rnd = (n) => { const x = Math.sin(n * 12.9898 + 78.233) * 43758.5453; return x - Math.floor(x); };
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, top, W, bh); ctx.clip();
+    // kühler Videoton
+    ctx.fillStyle = 'rgba(30,48,96,0.14)';
+    ctx.fillRect(0, top, W, bh);
+    // Zeilenstruktur
+    ctx.fillStyle = 'rgba(0,0,0,0.13)';
+    const step = Math.max(2, Math.round(bh / 260));
+    for (let y = top; y < top + bh; y += step * 2) ctx.fillRect(0, y, W, step);
+    // Bildstörstreifen, die schnell nach oben laufen
+    for (let k = 0; k < 2; k++) {
+      const yb = top + bh * (1 - ((t * (1.7 + k * 0.9) + k * 0.37) % 1));
+      const hb = bh * (0.035 + 0.02 * k);
+      for (let i = 0; i < 14; i++) {
+        const yy = yb + (i / 14) * hb;
+        const x0 = rnd(frame * 31 + i + k * 7) * W * 0.6;
+        ctx.fillStyle = `rgba(245,242,235,${(0.1 + rnd(frame + i * 3 + k) * 0.28).toFixed(3)})`;
+        ctx.fillRect(x0, yy, W * (0.2 + rnd(i + frame) * 0.8), Math.max(1, hb / 16));
+      }
+    }
+    // kurzes Aufflackern beim Einlegen des Rückspulens
+    if (t < o.teaseEnd + 0.1) {
+      ctx.fillStyle = 'rgba(255,255,255,0.35)';
+      for (let i = 0; i < 6; i++) ctx.fillRect(0, top + rnd(frame + i * 11) * bh, W, Math.max(2, bh * 0.012));
+    }
+    ctx.restore();
+    // Anzeige
+    const m = g.margin;
+    const fs = short * 0.06;
+    ctx.font = `600 ${fs}px ${OV_FONTS.mono}`;
+    ctx.textBaseline = 'top';
+    ctx.shadowColor = 'rgba(0,0,0,0.45)';
+    ctx.shadowBlur = fs * 0.2;
+    ctx.fillStyle = 'rgba(246,242,232,0.95)';
+    const y = top + m * 0.8;
+    if (frame % 16 < 12) {
+      // ◀◀ als zwei Dreiecke (unabhängig von der Schrift)
+      const tw = fs * 0.62, th = fs * 0.72;
+      for (let k = 0; k < 2; k++) {
+        const x = m + k * tw * 0.95;
+        ctx.beginPath(); ctx.moveTo(x, y + th / 2); ctx.lineTo(x + tw, y); ctx.lineTo(x + tw, y + th); ctx.closePath(); ctx.fill();
+      }
+      ctx.fillText('REW', m + tw * 2.3, y - fs * 0.04);
+    }
+    // Zeit läuft rückwärts auf 0:00:00 zu
+    const secs = Math.max(0, Math.round((1 - u) * (o.span || 754)));
+    const tc = `0:${String(Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(tc, W - m, top + bh - m * 0.9);
+    ctx.textAlign = 'left';
+  }
+
+  /** Datumsstempel wie auf einer Digitalkamera der 2000er: orange Ziffern unten rechts. */
+  drawDateStamp(ctx, o, t, g) {
+    const W = g.W, short = Math.min(W, g.bh);
+    const fs = short * 0.045;
+    ctx.font = `600 ${fs}px ${OV_FONTS.mono}`;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'bottom';
+    const a = cl01((t - o.start) / 0.15) * cl01((o.end - t) / 0.15);
+    ctx.globalAlpha = a;
+    const x = W - g.margin * 0.9, y = g.by + g.bh - g.margin * (g.vertical ? 1.6 : 0.8);
+    // weiches Leuchten wie bei eingebrannten LED-Ziffern
+    ctx.shadowColor = 'rgba(255,120,30,0.75)';
+    ctx.shadowBlur = fs * 0.5;
+    ctx.fillStyle = '#ffa23a';
+    ctx.fillText(o.text, x, y);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(255,196,120,0.9)';
+    ctx.fillText(o.text, x, y);
+    ctx.globalAlpha = 1;
+    ctx.textAlign = 'left';
+  }
+
   drawLeader(ctx, o, t, g) {
     const W = g.W, H = g.H, cx = g.cx, cy = g.cy;
     const m = o.marks;

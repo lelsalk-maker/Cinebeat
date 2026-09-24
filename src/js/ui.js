@@ -16,6 +16,7 @@ const LOOK_SWATCH = {
   kino: 'linear-gradient(120deg,#0c3440,#1f6f78 40%,#d98a45 75%,#f1c27f)',
   blau: 'linear-gradient(120deg,#060d1c,#1c3560 55%,#7ea3d6)',
   film: 'linear-gradient(120deg,#4f3a2a,#a98563 50%,#e6d3b0)',
+  digicam: 'linear-gradient(120deg,#0e1f33,#3b7fa8 50%,#ffa23a 88%)',
   noir: 'linear-gradient(120deg,#050505,#4d4d4d 55%,#e6e6e6)',
 };
 const TEXT_COLORS = ['#efe6d2', '#ffffff', '#0b0d12', '#c7b48f', '#9fb8dc'];
@@ -31,7 +32,12 @@ function normalizeSettings(st, defaults) {
     look: s.look === 'auto' || LOOKS[s.look] ? s.look : 'auto',
     pace: pick1(s.pace, ['auto', 'ruhig', 'mittel', 'schnell'], 'auto'),
     intro: pick1(s.intro, ['auto', 'countdown', 'grid', 'knockout', 'cinema', 'city', 'hook', 'type', 'split'], 'auto'),
-    outro: pick1(s.outro, ['auto', 'credits', 'loop', 'freeze', 'split'], 'auto'),
+    outro: pick1(s.outro, ['auto', 'credits', 'loop', 'freeze', 'split', 'strip'], 'auto'),
+    pre: pick1(s.pre, ['off', 'countdown', 'rewind'], 'off'),
+    match: pick1(s.match, ['auto', 'off'], 'auto'),
+    morph: pick1(s.morph, ['off', 'on'], 'off'),
+    ramp: pick1(s.ramp, ['off', 'drop'], 'off'),
+    stamp: pick1(s.stamp, ['auto', 'on', 'off'], 'auto'),
     length: s.length === 'auto' || s.length === 'full' || (+s.length > 0 && +s.length <= 600) ? s.length : 'auto',
     songStart: s.songStart == null ? 'auto' : s.songStart,
     frame: pick1(s.frame, ['auto', 'full', 'band'], 'auto'),
@@ -53,7 +59,7 @@ function normalizeSettings(st, defaults) {
 }
 
 /* ---------- Stil-Vorlage: ein Stil für alle Filme der Reise ---------- */
-const STYLE_KEYS = ['look', 'font', 'motion', 'motionAmt', 'intro', 'outro', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
+const STYLE_KEYS = ['look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
 const styleOf = (st) => Object.fromEntries(STYLE_KEYS.map((k) => [k, st[k]]));
 /** Einstellungen für neue Filme: Standard, darüber die Vorlage der Reise */
 function baseSettings(defaults) {
@@ -62,7 +68,7 @@ function baseSettings(defaults) {
 function styleSummary(st) {
   const names = { sway: 'Pendeln', pulse: 'Puls', handheld: 'Handkamera' };
   const intros = { countdown: 'Countdown', grid: '9er-Raster', knockout: 'Durch den Namen', cinema: 'Titelkarte', city: 'Ortsname', hook: 'Stärkstes Bild', type: 'Wort für Wort', split: 'Split-Screen' };
-  return [st.look === 'auto' ? 'Look automatisch' : `Look ${LOOKS[st.look].label}`, `Schrift ${FONT_SETS[st.font].label}`, names[st.motion], intros[st.intro], st.burst === 'drop' ? 'Foto-Serie' : '', st.km !== 'off' ? 'Koordinaten' : ''].filter(Boolean).join(' · ');
+  return [st.look === 'auto' ? 'Look automatisch' : `Look ${LOOKS[st.look].label}`, `Schrift ${FONT_SETS[st.font].label}`, names[st.motion], st.pre !== 'off' ? (st.pre === 'rewind' ? 'Rewind' : 'Countdown') + ' +' : '', intros[st.intro], st.morph === 'on' ? 'Bild aus Bild' : '', st.burst === 'drop' ? 'Foto-Serie' : '', st.ramp === 'drop' ? 'Speed-Ramp' : '', st.km !== 'off' ? 'Koordinaten' : ''].filter(Boolean).join(' · ');
 }
 
 function openStyleSheet() {
@@ -477,7 +483,8 @@ async function restoreWork() {
     if (!last || now - Math.max(last, r.savedAt || 0) > maxAge) { try { await S.store.del('work', r.id); } catch (e) { /* egal */ } continue; }
     if (r.type !== 'media' || S.pool.has(r.id) || !r.file) continue;
     const it = { ...r.meta, id: r.id, file: r.file, url: URL.createObjectURL(r.file), loading: false };
-    if (r.poster) { try { it.poster = await createImageBitmap(r.poster); } catch (e) { /* ohne Vorschaubild */ } }
+    // Vorschaubild im Hintergrund dekodieren, der Start wartet nicht darauf
+    if (r.poster) createImageBitmap(r.poster).then((b) => { it.poster = b; }, () => { /* ohne Vorschaubild */ });
     S.pool.set(r.id, it);
   }
 }
@@ -531,10 +538,27 @@ async function loadImageEl(url) {
 
 async function probeAndScore(item) {
   if (item.kind === 'image') {
-    const img = await loadImageEl(item.url);
+    let img = await loadImageEl(item.url);
     item.w = img.naturalWidth; item.h = img.naturalHeight;
-    item.thumb = thumbFrom(img, item.w, item.h, 160);
-    Object.assign(item, scoreImage(img, item.w, item.h));
+    // Einmal auf Arbeitsgröße verkleinern, alles Weitere (Bewertung, Vorschaubild) daraus: spart Rechenzeit und Akku
+    const sc = Math.min(1, 480 / Math.max(item.w, item.h));
+    const c = document.createElement('canvas');
+    c.width = Math.max(2, Math.round(item.w * sc)); c.height = Math.max(2, Math.round(item.h * sc));
+    const x = c.getContext('2d');
+    x.imageSmoothingQuality = 'high';
+    x.drawImage(img, 0, 0, c.width, c.height);
+    img.src = ''; img = null;
+    item.thumb = thumbFrom(c, c.width, c.height, 160);
+    Object.assign(item, scoreImage(c, c.width, c.height));
+    return;
+  }
+  // Schnell: benötigte Stellen direkt aus der Datei dekodieren (MP4/MOV, WebCodecs)
+  const fast = item.file ? await probeVideoFast(item.file) : null;
+  if (fast && fast.duration > 0) {
+    const { poster, ...rest } = fast;
+    Object.assign(item, rest);
+    item.poster = poster;
+    item.thumb = thumbFrom(poster, poster.width, poster.height, 160);
     return;
   }
   const v = makeVideoEl();
@@ -578,6 +602,15 @@ const IMAGE_EXT = /\.(jpe?g|png|webp|gif|heic|heif|avif|bmp)$/i;
 // Wiedererkennung ohne Dateinamen zu speichern: nur eine Prüfsumme aus Name, Größe und Datum
 const fingerprint = (f) => 'f' + hashStr(`${f.name}|${f.size}|${f.lastModified || 0}`).toString(36) + (f.size % 1e6).toString(36);
 
+/** Einfache Zählsperre: await acquire() liefert die Freigabe-Funktion. */
+function semaphore(n) {
+  const wait = [];
+  return () => new Promise((res) => {
+    const take = () => { n--; res(() => { n++; if (wait.length) wait.shift()(); }); };
+    if (n > 0) take(); else wait.push(take);
+  });
+}
+
 /** Führt fn für alle Elemente mit begrenzter Parallelität aus. */
 async function mapLimit(list, limit, fn) {
   let next = 0;
@@ -603,16 +636,23 @@ async function ingestFiles(fileList, onProgress) {
     all.push(it);
   }
   let done = 0, bad = 0;
-  await mapLimit(fresh, 3, async (it) => {
+  // Parallel nach Gerät: Fotos breit, Videos höchstens zwei gleichzeitig (Hardware-Dekoder sind knapp)
+  const cores = navigator.hardwareConcurrency || 4;
+  const vids = semaphore(2);
+  await mapLimit(fresh, Math.max(2, Math.min(6, cores - 1)), async (it) => {
+    const release = it.kind === 'video' ? await vids() : null;
+    try { await ingestOne(it); } finally { release && release(); }
+    done++;
+    onProgress && onProgress(done, fresh.length);
+  });
+  async function ingestOne(it) {
     const meta = await readMediaMeta(it.file, it.kind);
     if (meta.time) it.time = meta.time;
     if (meta.pos) it.pos = meta.pos;
     try { await probeAndScore(it); } catch (e) { it.bad = true; bad++; }
     it.loading = false;
     if (!it.bad) saveWork(it);
-    done++;
-    onProgress && onProgress(done, fresh.length);
-  });
+  }
   return { items: all, fresh, bad, skipped: Array.from(fileList || []).length - files.length };
 }
 
@@ -1625,7 +1665,12 @@ function renderStyle() {
   setRadio($('motionAmtChips'), st.motionAmt);
   $('motionAmtChips').hidden = st.motion === 'ken';
   $('motionHint').textContent = { ken: 'Ruhige Fahrten und Zooms, passend zum Songteil.', sway: 'Die Bilder pendeln sanft von links nach rechts, der Wendepunkt sitzt genau auf dem Beat. Im Drop etwas stärker.', pulse: 'Jeder Beat gibt dem Bild einen kurzen Zoom-Impuls.', handheld: 'Ruhiges, organisches Schweben wie aus der Hand gefilmt.' }[st.motion];
-  setRadio($('burstChips'), st.burst);
+  setRadio($('preChips'), st.pre);
+  $('preField').hidden = isFlight(S.ctx.rec);
+  const introR = st.intro === 'auto' && r ? r.intro : st.intro;
+  for (const b of $('preChips').querySelectorAll('[data-v]')) b.disabled = (b.dataset.v !== 'off' && introR === 'split') || (b.dataset.v === 'countdown' && introR === 'countdown');
+  $('preHint').textContent = introR === 'split' ? 'Der Split-Screen-Einstieg steht für sich, ohne Vorspann.' : st.pre === 'rewind' ? 'Ein kurzer Blick auf den besten Moment, dann spult der Film wie eine Kassette zurück an den Anfang.' : st.pre === 'countdown' ? 'Countdown wie im alten Kino, danach dein Einstieg.' : 'Läuft vor dem Einstieg und lässt sich mit jedem Einstieg kombinieren, z. B. Countdown und danach das 9er-Raster.';
+  renderFx(st, r);
   const mt = $('mapThemeChips');
   if (!mt.children.length) mt.innerHTML = Object.entries(MAP_THEMES).map(([k, th]) => `<button type="button" role="radio" data-v="${k}"><i class="map-sw" style="background:radial-gradient(circle at 35% 35%, ${th.body0}, ${th.bg1});box-shadow:inset 0 0 0 2px ${th.ink}"></i>${th.label}</button>`).join('');
   setRadio(mt, st.mapTheme);
@@ -1648,13 +1693,33 @@ function renderStyle() {
     if (b) b.textContent = st[val] === 'auto' && r && names[r[val]] ? `Auto · ${names[r[val]]}` : 'Auto';
   };
   autoLabel('introChips', 'intro', { countdown: 'Countdown', grid: '9er-Raster', knockout: 'Durch den Namen', cinema: 'Titelkarte', city: 'Ortsname', hook: 'Stärkstes Bild', type: 'Wort für Wort', split: 'Split' });
-  autoLabel('outroChips', 'outro', { credits: 'Schlusstitel', loop: 'Loop', freeze: 'Standbild', split: 'Split' });
+  autoLabel('outroChips', 'outro', { credits: 'Schlusstitel', loop: 'Loop', freeze: 'Standbild', split: 'Split', strip: 'Filmstreifen' });
   autoLabel('frameChips', 'frame', { full: 'Vollbild', band: 'Kinoband' });
   autoLabel('paceChips', 'pace', { ruhig: 'ruhig', mittel: 'mittel', schnell: 'schnell' });
   const g = $('lookGrid');
   const autoBlurb = st.look === 'auto' && r && LOOKS[r.look] ? LOOKS[r.look].label : 'passend zum Material';
   g.innerHTML = [['auto', { label: 'Auto', blurb: autoBlurb }], ...Object.entries(LOOKS)].map(([k, l]) => `<button class="look-card" type="button" role="radio" data-v="${k}" aria-checked="${k === st.look}"><span class="sw" style="background:${LOOK_SWATCH[k]}"></span><span class="tx"><strong>${l.label}</strong><span>${esc(l.blurb)}</span></span></button>`).join('');
   setRadio(g, st.look);
+}
+
+/** „Im Film“: mehrere Elemente gleichzeitig; jedes hat seinen festen Platz, damit sie sich ergänzen statt stören. */
+const FX_KEYS = {
+  match: { on: 'auto', off: 'off', is: (st) => st.match !== 'off' },
+  morph: { on: 'on', off: 'off', is: (st) => st.morph === 'on' },
+  split: { on: 'auto', off: 'off', is: (st) => st.split !== 'off' },
+  burst: { on: 'drop', off: 'off', is: (st) => st.burst === 'drop' },
+  ramp: { on: 'drop', off: 'off', is: (st) => st.ramp === 'drop' },
+  stamp: { on: 'on', off: 'off', is: (st, r) => st.stamp === 'on' || (st.stamp !== 'off' && ((r && r.look) || st.look) === 'digicam') },
+};
+function renderFx(st, r) {
+  for (const b of $('fxChips').querySelectorAll('[data-fx]')) b.setAttribute('aria-pressed', String(FX_KEYS[b.dataset.fx].is(st, r)));
+  const on = (k) => FX_KEYS[k].is(st, r);
+  const parts = [];
+  if (on('match') || on('morph')) parts.push(`Übergänge: ${[on('match') ? 'Match-Cuts bei ähnlichem Bildaufbau' : '', on('morph') ? 'Bild aus Bild in ruhigen Teilen' : ''].filter(Boolean).join(', ')}`);
+  if (on('split')) parts.push('Refrain: Split-Screens');
+  if (on('burst') || on('ramp')) parts.push(`Drop: ${[on('burst') ? 'Foto-Serie' : '', on('ramp') ? 'Videos beschleunigen hinein und landen in Zeitlupe' : ''].filter(Boolean).join(', ')}`);
+  if (on('stamp')) parts.push('Datum wie bei einer alten Digicam unten rechts');
+  $('fxHint').textContent = parts.length ? parts.join(' · ') + '.' : 'Tippe an, was im Film vorkommen soll. Die Regie setzt jedes Element an die Stelle im Song, wo es am besten wirkt.';
 }
 
 function renderRegie() {
@@ -1707,7 +1772,7 @@ function openClipSheet(i) {
   const ov = (ctx.rec.overrides.clips[i] = ctx.rec.overrides.clips[i] || {});
   const m = ctx.media.find((x) => x.id === c.mediaId);
   const usable = ctx.media.filter((x) => !x.bad && !x.loading);
-  const trOpts = [['', 'Automatisch'], [String(TR.CUT), 'Schnitt'], [String(TR.DISSOLVE), 'Blende'], [String(TR.DIP), 'Schwarzblende'], [String(TR.WHIP), 'Wischer'], [String(TR.ZOOM), 'Zoom'], [String(TR.PUSH), 'Schieben'], [String(TR.LUMA), 'Lichtblende'], [String(TR.LEAK), 'Lichtleck']];
+  const trOpts = [['', 'Automatisch'], [String(TR.CUT), 'Schnitt'], [String(TR.DISSOLVE), 'Blende'], [String(TR.DIP), 'Schwarzblende'], [String(TR.WHIP), 'Wischer'], [String(TR.ZOOM), 'Zoom'], [String(TR.PUSH), 'Schieben'], [String(TR.LUMA), 'Lichtblende'], [String(TR.LEAK), 'Lichtleck'], [String(TR.MORPH), 'Bild aus Bild'], [String(TR.INK), 'Farbfluss'], [String(TR.DOUBLE), 'Doppelbelichtung']];
   const isVideo = m && m.kind === 'video';
   const visDur = c.visEnd - c.visStart;
   const maxOff = isVideo ? Math.max(0, (m.duration || 0) - visDur * (c.rate || 1)) : 0;
@@ -1966,6 +2031,7 @@ function openExportSheet() {
     <div class="field"><span class="field-label">Song im Video</span><div id="audPick">${radioHTML('Song', [['without', 'Ohne Song, für Instagram'], ['with', 'Mit Song']], audio)}</div>
       <p class="hint small" id="audHint"></p></div>
     <button class="btn primary big" id="startExport" type="button"><i class="rec-dot" aria-hidden="true"></i>Export starten</button>
+    <button class="btn ghost" id="coverExport" type="button">Titelbild für Reels erstellen</button>
     <div class="progress" id="expProgress" hidden>
       <div class="progress-bar"><span id="expBar"></span></div>
       <div class="progress-meta"><span id="expStage">Bereite vor …</span><span id="expPct">0 %</span></div>
@@ -2004,6 +2070,7 @@ function openExportSheet() {
       info();
     }
     if (e.target.closest('#cancelExport')) cancel = true;
+    if (e.target.closest('#coverExport')) await makeCover(body, sizeOf());
     if (e.target.closest('#startExport')) {
       try { localStorage.setItem('cinebeat.export', JSON.stringify({ fps, audio, quality })); } catch (err) { /* egal */ }
       await runExport(body, { size: sizeOf(), fps, bpp: QUALITY[quality].bpp, withSong: audio === 'with', withAudio: audio === 'with' || engine.hasVoice, isCancelled: () => cancel });
@@ -2098,6 +2165,43 @@ function showExportResult(body, res, size, fps, withAudio, withSong) {
     if (a.dataset.act === 'save') saveBlob(res.blob, name, url);
   });
   toast('Dein Film ist fertig.');
+}
+
+/** Reel-Titelbild: stärkstes Bild mit Titel, als JPEG in Exportgröße (bleibt auf dem Gerät). */
+async function makeCover(body, size) {
+  const btn = body.querySelector('#coverExport');
+  btn.disabled = true;
+  busy('Erstelle Titelbild …');
+  try {
+    const rec = S.ctx.rec;
+    const best = S.ctx.kind === 'bestof';
+    const title = best ? S.trip.name : rec.name, sub = ctxSub();
+    const cv = await engine.renderCover(size, { text: rec.settings.showTitle === false ? '' : title || '', sub });
+    const blob = await new Promise((r) => cv.toBlob(r, 'image/jpeg', 0.95));
+    const url = URL.createObjectURL(blob);
+    const name = `${(title || 'CineBeat').replace(/[^\p{L}\p{N} _-]/gu, '').trim().replace(/\s+/g, '_') || 'CineBeat'}_Titelbild.jpg`;
+    const file = new File([blob], name, { type: 'image/jpeg' });
+    const canShare = (() => { try { return !!(navigator.canShare && navigator.canShare({ files: [file] })); } catch (e) { return false; } })();
+    let box = body.querySelector('#coverResult');
+    if (!box) { box = document.createElement('div'); box.id = 'coverResult'; box.className = 'result'; btn.after(box); }
+    box.innerHTML = `<img src="${url}" alt="Titelbild" class="cover-preview">
+      <p class="hint small">${size.w} × ${size.h} · JPEG · ${fmtBytes(blob.size)}. In Instagram beim Reel unter „Titelbild bearbeiten“ → „Aus Aufnahmen hinzufügen“ wählen. Der Titel sitzt im Bereich, den das Profilraster zeigt.</p>
+      <div class="sheet-actions">
+        ${canShare ? '<button class="btn primary" data-cover="share" type="button">In Fotos sichern oder teilen</button>' : ''}
+        <button class="btn" data-cover="save" type="button">Als Datei laden</button>
+      </div>`;
+    box.onclick = async (e) => {
+      const a = e.target.closest('[data-cover]');
+      if (!a) return;
+      if (a.dataset.cover === 'share') { try { await navigator.share({ files: [file], title: name }); } catch (err) { /* abgebrochen */ } }
+      else saveBlob(blob, name, url);
+    };
+  } catch (e) {
+    toast('Titelbild konnte nicht erstellt werden: ' + e.message, true);
+  } finally {
+    busy(null);
+    btn.disabled = false;
+  }
 }
 
 async function saveBlob(blob, name, url) {
@@ -2262,7 +2366,16 @@ async function init() {
   bindSetting('kmChips', 'km');
   bindSetting('motionChips', 'motion');
   bindSetting('motionAmtChips', 'motionAmt');
-  bindSetting('burstChips', 'burst');
+  bindSetting('preChips', 'pre');
+  $('fxChips').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-fx]');
+    if (!b) return;
+    const st = S.ctx.rec.settings;
+    const k = b.dataset.fx, d = FX_KEYS[k];
+    st[k] = d.is(st, S.plan && S.plan.resolved) ? d.off : d.on;
+    renderFx(st, S.plan && S.plan.resolved);
+    commit(); savePlaceSoon(); engine && (engine.t = 0); scheduleRebuild(0);
+  });
   bindSetting('mapThemeChips', 'mapTheme');
   bindSetting('mapInkChips', 'mapInk');
   bindSetting('mapLandChips', 'mapLand');

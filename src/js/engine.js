@@ -5,6 +5,7 @@
 
 function srcTimeOf(c, t) {
   const tt = c.freezeAt != null ? Math.min(t, c.freezeAt) : t;
+  if (c.rp) return (c.srcOffset || 0) + rampIntegral(c.rp, Math.max(c.visStart, tt)) - rampIntegral(c.rp, c.visStart);
   return (c.srcOffset || 0) + Math.max(0, tt - c.visStart) * (c.rate || 1);
 }
 function panelTime(c, k, t) {
@@ -29,6 +30,7 @@ class Engine {
     this.painter = new OverlayPainter();
     this.slots = new Map();
     this.videos = [];
+    this.demuxCache = new Map();
     this.imgCache = new Map();
     this.playing = false;
     this.t = 0;
@@ -69,6 +71,8 @@ class Engine {
     this.media = media;
     this.audioBuffer = audioBuffer;
     this.size = size;
+    this.scale = 1;
+    this._dts = [];
     this.r.resize(size.w, size.h);
     this.painter.resize(size.w, size.h);
     this.releaseAll();
@@ -156,6 +160,7 @@ class Engine {
     s.dead = true;
     this.r.deleteTexture(s.tex);
     this.releaseVideo(s.video);
+    if (s.fr) { s.fr.close(); s.fr = null; }
     if (s.panels) for (const p of s.panels) this.releaseVideo(p.video);
     this.slots.delete(k);
   }
@@ -169,7 +174,7 @@ class Engine {
     if (s) return s;
     s = { clip, tex: null, video: null, ready: false, dead: false, failed: false, lastUpload: -1, frozen: false };
     this.slots.set(clip.i, s);
-    s.promise = (clip.grid ? this._prepareGrid(s) : clip.split ? this._prepareSplit(s, t) : this._prepare(s, t)).catch((e) => {
+    s.promise = (clip.grid ? this._prepareGrid(s) : clip.strip ? this._prepareStrip(s) : clip.split ? this._prepareSplit(s, t) : this._prepare(s, t)).catch((e) => {
       s.failed = true;
       s.ready = true;
       if (!s.dead) console.warn(e);
@@ -190,6 +195,8 @@ class Engine {
       s.ready = true;
       return;
     }
+    if (this.offline && m.file && await this._openReader(s, m)) return;
+    if (s.dead) return;
     const v = this.acquireVideo(m.url);
     s.video = v;
     const ok = await loadVideoSrc(v, m.url);
@@ -203,6 +210,32 @@ class Engine {
     s.srcW = v.videoWidth || m.w; s.srcH = v.videoHeight || m.h;
     if (v.readyState >= 2) this.r.upload(s.tex, v);
     s.ready = true;
+  }
+
+  /** Export: Bilder direkt aus der Datei dekodieren (WebCodecs) statt das Video-Element zu spulen. */
+  async _openReader(s, m) {
+    if (typeof VideoDecoder === 'undefined' || m.fastBad) return false;
+    try {
+      if (!this.demuxCache.has(m.id)) this.demuxCache.set(m.id, demuxVideo(m.file).catch(() => null));
+      const track = await this.demuxCache.get(m.id);
+      if (!track || s.dead) return false;
+      const fr = await FrameReader.open(track);
+      if (!fr) return false;
+      if (s.dead) { fr.close(); return false; }
+      const cv = await fr.canvasAt(srcTimeOf(s.clip, s.clip.visStart));
+      if (!cv || s.dead) { fr.close(); return false; }
+      s.fr = fr;
+      s.tex = this.r.createTexture();
+      this.r.upload(s.tex, cv);
+      s.srcW = cv.width; s.srcH = cv.height;
+      s.ready = true;
+      return true;
+    } catch (e) {
+      console.warn('Schneller Export nicht möglich, nutze Video-Element', e);
+      m.fastBad = true;
+      if (s.fr) { s.fr.close(); s.fr = null; }
+      return false;
+    }
   }
 
   /* ---------- 9er-Raster ---------- */
@@ -289,6 +322,105 @@ class Engine {
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = 1;
+    this.r.upload(s.tex, cv);
+  }
+
+  /* ---------- Film-Strip-Ende ---------- */
+  async _prepareStrip(s) {
+    const st = s.clip.strip;
+    const bp = this.bandPx;
+    s.canvas = document.createElement('canvas');
+    s.canvas.width = bp.w; s.canvas.height = bp.h;
+    s.srcW = bp.w; s.srcH = bp.h;
+    s.strip = new Array(st.items.length);
+    const small = Math.min(1600, Math.round(Math.max(bp.w, bp.h) * 0.8));
+    await Promise.all(st.items.map(async (it, k) => {
+      const m = this.media[it.mediaIndex];
+      if (!m) return;
+      if (m.kind === 'image') s.strip[k] = await this.getImage(m, k === 0 ? undefined : small);
+      else s.strip[k] = m.poster || null;
+    }));
+    if (s.dead) return;
+    s.tex = this.r.createTexture();
+    this.composeStrip(s, s.clip.visStart);
+    s.ready = true;
+  }
+
+  composeStrip(s, t) {
+    const c = s.clip, st = c.strip, cv = s.canvas;
+    const ctx = cv.getContext('2d');
+    const W = cv.width, H = cv.height;
+    const vert = H >= W;
+    const u = clamp01((t - c.start) / Math.max(0.1, c.end - c.start));
+    // 0 … 0,22: aus dem Vollbild herauszoomen; danach läuft der Streifen gebremst weiter
+    const zu = clamp01(u / 0.22), ez = zu * zu * (3 - 2 * zu);
+    const k = 0.58;
+    const fw = W * k, fh = H * k;
+    const gap = (vert ? fh : fw) * 0.06;
+    const side = (vert ? fw : fh) * 0.16;
+    const pitch = (vert ? fh : fw) + gap;
+    const n = st.items.length;
+    const su = clamp01((u - 0.12) / 0.88);
+    const scroll = (1 - Math.pow(1 - su, 2.2)) * pitch * Math.min(n - 1, 3.2);
+    const S = lerp(1 / k, 1, ez);
+    const rot = lerp(0, vert ? -0.07 : -0.05, ez);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    const bg = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.hypot(W, H) / 2);
+    bg.addColorStop(0, '#1a1712'); bg.addColorStop(1, '#07090d');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+    ctx.translate(W / 2, H / 2);
+    ctx.rotate(rot);
+    ctx.scale(S, S);
+    // Streifen: Bild 0 in der Mitte, frühere Bilder folgen (vertikal nach oben, quer nach links)
+    const len = pitch * (n + 2);
+    const base = '#15120e';
+    ctx.fillStyle = base;
+    if (vert) ctx.fillRect(-fw / 2 - side, -len + fh / 2 + scroll + pitch, fw + side * 2, len + pitch * 2);
+    else ctx.fillRect(-len + fw / 2 + scroll + pitch, -fh / 2 - side, len + pitch * 2, fh + side * 2);
+    // Perforation
+    const hole = side * 0.42, hr = hole * 0.22;
+    ctx.fillStyle = 'rgba(236,228,212,0.9)';
+    const holes = Math.ceil(len / (hole * 1.9));
+    for (let i = -2; i < holes; i++) {
+      const p = -i * hole * 1.9 + (scroll % (hole * 1.9)) + pitch;
+      for (const sd of [-1, 1]) {
+        const a = sd * (vert ? fw / 2 + side / 2 : fh / 2 + side / 2);
+        ctx.beginPath();
+        const rr = (ctx.roundRect || ctx.rect).bind(ctx);
+        if (vert) rr(a - hole * 0.35, p - hole / 2, hole * 0.7, hole, hr);
+        else rr(p - hole / 2, a - hole * 0.35, hole, hole * 0.7, hr);
+        ctx.fill();
+      }
+    }
+    // Einzelbilder mit Randbeschriftung
+    ctx.imageSmoothingQuality = 'high';
+    ctx.font = `600 ${side * 0.26}px ${OV_FONTS.mono}`;
+    ctx.textBaseline = 'middle';
+    for (let i = 0; i < n; i++) {
+      const off = -i * pitch + scroll;
+      const x = vert ? -fw / 2 : -fw / 2 + off, y = vert ? -fh / 2 + off : -fh / 2;
+      if (vert ? y > H / S + fh || y + fh < -H / S - fh : x > W / S + fw || x + fw < -W / S - fw) continue;
+      const src = s.strip[i];
+      ctx.save();
+      ctx.beginPath(); ctx.rect(x, y, fw, fh); ctx.clip();
+      if (src) {
+        const sw = src.videoWidth || src.width, sh = src.videoHeight || src.height;
+        const sc = Math.max(fw / sw, fh / sh);
+        const vw = fw / sc, vh = fh / sc;
+        const fo = st.items[i].focus || [0.5, 0.45];
+        const sx = Math.max(0, Math.min(sw - vw, fo[0] * sw - vw / 2)), sy = Math.max(0, Math.min(sh - vh, fo[1] * sh - vh / 2));
+        ctx.drawImage(src, sx, sy, vw, vh, x, y, fw, fh);
+      } else { ctx.fillStyle = '#10151e'; ctx.fillRect(x, y, fw, fh); }
+      ctx.restore();
+      ctx.fillStyle = 'rgba(255,150,60,0.85)';
+      const label = `${String(n - i).padStart(2, '0')}A  ▸`;
+      if (vert) { ctx.save(); ctx.translate(x - side * 0.12, y + fh * 0.12); ctx.rotate(-Math.PI / 2); ctx.textAlign = 'right'; ctx.fillText(label, 0, 0); ctx.restore(); }
+      else { ctx.textAlign = 'left'; ctx.fillText(label, x + fw * 0.04, y - side * 0.12); }
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     this.r.upload(s.tex, cv);
   }
 
@@ -428,10 +560,18 @@ class Engine {
       return { tex: slot.tex, xf: [fw / 1.15, fh / 1.15, 0.5, 0.5], box: [1, bw * s, bh * s], blur, geo, corr };
     }
     fw /= s; fh /= s;
-    const cx = 0.5 + (x * (1 - fw)) / 2 + (extra.shiftX || 0) * fw;
-    const cy = 0.5 + (y * (1 - fh)) / 2 + (extra.shiftY || 0) * fh;
+    let cx = 0.5 + (x * (1 - fw)) / 2 + (extra.shiftX || 0) * fw;
+    let cy = 0.5 + (y * (1 - fh)) / 2 + (extra.shiftY || 0) * fh;
+    const m = this.media[c.mediaIndex];
+    const mf = (m && m.focus) || [0.5, 0.45];
+    if (extra.pull) {
+      // Bild-aus-Bild: Ausschnitt wandert zum Motiv, bleibt aber im Bild
+      cx = Math.max(fw / 2, Math.min(1 - fw / 2, lerp(cx, mf[0], extra.pull)));
+      cy = Math.max(fh / 2, Math.min(1 - fh / 2, lerp(cy, mf[1], extra.pull)));
+    }
+    const foc = [Math.max(0.1, Math.min(0.9, (mf[0] - cx) / fw + 0.5)), Math.max(0.1, Math.min(0.9, (mf[1] - cy) / fh + 0.5))];
     if (extra.rot) geo[0] = extra.rot;
-    return { tex: slot.tex, xf: [fw, fh, cx, cy], box: [0, 1, 1], blur, geo, corr };
+    return { tex: slot.tex, xf: [fw, fh, cx, cy], box: [0, 1, 1], blur, geo, corr, foc };
   }
 
   /**
@@ -501,6 +641,7 @@ class Engine {
       const active = t >= c.visStart - 0.04 && t < c.visEnd;
       const frozen = c.freezeAt != null && t >= c.freezeAt;
       if (s.grid) { if (active) this.composeGrid(s, t); continue; }
+      if (s.strip) { if (active) this.composeStrip(s, t); continue; }
       if (s.panels) {
         let dirty = !playing;
         s.panels.forEach((p, k) => {
@@ -514,9 +655,12 @@ class Engine {
       }
       const v = s.video;
       if (!v) continue;
-      this._driveVideo(v, active, frozen, playing, c.rate, srcTimeOf(c, t), srcTimeOf(c, c.freezeAt || 0), s);
+      // Browser erlauben 0,0625–16; bei Tempo-Kurven folgt die Wiedergabe dem aktuellen Tempo
+      const rate = c.rp ? Math.round(rampRate(c.rp, t) * 20) / 20 : c.rate;
+      this._driveVideo(v, active, frozen, playing, rate, srcTimeOf(c, t), srcTimeOf(c, c.freezeAt || 0), s);
       if (active && v.readyState >= 2 && (v.currentTime !== s.lastUpload || !playing)) {
-        if (this.r.upload(s.tex, v)) s.lastUpload = v.currentTime;
+        // beim Abspielen ohne Mipmaps: spart pro Bild GPU-Arbeit, das Standbild bekommt sie wieder
+        if (this.r.upload(s.tex, v, !playing)) s.lastUpload = v.currentTime;
       }
     }
   }
@@ -528,7 +672,7 @@ class Engine {
     const L = layersAt(plan.clips, t);
     if (mode === 'play') this.updateVideos(t, true);
     else if (mode === 'still') this.updateVideos(t, false);
-    else if (mode === 'offline') for (const s of this.slots.values()) if (s.ready && !s.failed) { if (s.panels) this.composeSplit(s, t); else if (s.grid) this.composeGrid(s, t); }
+    else if (mode === 'offline') for (const s of this.slots.values()) if (s.ready && !s.failed) { if (s.panels) this.composeSplit(s, t); else if (s.grid) this.composeGrid(s, t); else if (s.strip) this.composeStrip(s, t); }
     const fx = this.fxState(t);
     let A = null, B = null, mix = 0, trans = 0, dir = 1;
     if (L) {
@@ -549,12 +693,19 @@ class Engine {
           ea.blur = [1, 0.2 * w * dir, 0]; eb.blur = [1, 0.2 * w * dir, 0];
         } else if (L.type === TR.PUSH) {
           ea.blur = [1, 0.08 * w, 0]; eb.blur = [1, 0.08 * w, 0];
+        } else if (L.type === TR.MORPH) {
+          // altes Bild fährt ins Motiv, das neue löst sich aus ihm heraus und kommt zur Ruhe
+          const e = p * p * (3 - 2 * p);
+          ea.zoom *= 1 + 0.22 * e; ea.pull = 0.6 * e;
+          eb.zoom *= 1 + 0.16 * (1 - e); eb.pull = 0.5 * (1 - e);
+        } else if (L.type === TR.INK || L.type === TR.DOUBLE) {
+          ea.zoom *= 1 + 0.06 * p; eb.zoom *= 1 + 0.06 * (1 - p);
         }
       }
       const mv = this.motionFx(t);
       if (mv) {
         for (const [ex, c] of [[ea, L.a], [eb, L.b]]) {
-          if (!c || c.grid || c.split || c.flightAnim) continue;
+          if (!c || c.grid || c.split || c.flightAnim || c.strip) continue;
           ex.zoom *= mv.zoom;
           ex.shiftX = (ex.shiftX || 0) + mv.dx;
           ex.shiftY = mv.dy;
@@ -729,8 +880,41 @@ class Engine {
     return t;
   }
 
+  /** Vorschau-Auflösung (Anteil der vollen Größe); Export und Standbild immer voll. */
+  _setScale(sc) {
+    if (sc === this.scale) return;
+    this.scale = sc;
+    const w = Math.max(2, Math.round(this.size.w * sc / 2) * 2), h = Math.max(2, Math.round(this.size.h * sc / 2) * 2);
+    this.r.resize(w, h);
+    this.painter.resize(w, h);
+  }
+
+  /**
+   * Passt die Vorschau an das Gerät an: Ruckelt es (Bilder fallen aus), wird die Auflösung
+   * stufenweise gesenkt, läuft es wieder flüssig, steigt sie. Spart Akku; der Export ist davon unberührt.
+   */
+  _adapt() {
+    if (this.exporting || this.exportMode) return;
+    const now = performance.now();
+    const last = this._lastFrame;
+    this._lastFrame = now;
+    if (!last) return;
+    const d = this._dts;
+    d.push(Math.min(250, now - last));
+    const sum = d.reduce((a, b) => a + b, 0);
+    // etwa jede Sekunde auswerten (bei sehr langsamen Geräten nach wenigen Bildern)
+    if (d.length < 45 && !(sum > 900 && d.length >= 6)) return;
+    // Bildwiederholrate des Displays (60, 120 oder im Stromsparmodus 30 Hz); gleichmäßig langsam zählt auch als Ruckeln
+    const base = Math.min(34, Math.max(7, Math.min(...d)));
+    const avg = sum / d.length;
+    this._dts = [];
+    if (avg > base * 1.45 && this.scale > 0.5) { this._setScale(Math.max(0.5, +(this.scale * 0.8).toFixed(2))); this._calm = 0; }
+    else if (avg < base * 1.12 && this.scale < 1 && ++this._calm >= 3) { this._setScale(Math.min(1, +(this.scale * 1.15).toFixed(2))); this._calm = 0; }
+  }
+
   _loop() {
     if (!this.playing) return;
+    this._adapt();
     const D = this.plan.duration;
     const t = Math.max(this._t0 || 0, this.clock());
     if (t >= D) {
@@ -769,6 +953,38 @@ class Engine {
   pause() {
     this._token++;
     this._stopPlayback();
+    this._lastFrame = 0;
+    // angehaltenes Bild in voller Schärfe
+    if (this.scale < 1 && this.plan && !this.exporting) { this._setScale(1); this.renderStill(this.t); }
+  }
+
+  /**
+   * Titelbild (Reel-Cover) in voller Exportgröße: stärkstes Bild des Films, Titel groß in der Mitte
+   * (im Bereich, den das Instagram-Raster zeigt). Liefert eine Leinwand.
+   */
+  async renderCover(size, cover) {
+    this.pause();
+    const plan = this.plan, prevSize = this.size, prevT = this.t;
+    const hook = plan.clips.find((c) => c.role === 'hook' && !c.grid && !c.split) || plan.clips.find((c) => !c.pre && !c.grid && !c.split && c.mediaIndex >= 0) || plan.clips[0];
+    const t = hook ? Math.min(hook.end - 0.05, hook.start + (hook.end - hook.start) * 0.6) : 0;
+    this.plan = { ...plan, fx: [], overlays: cover && cover.text ? [{ type: 'city', text: cover.text, sub: cover.sub || '', geo: null, start: t - 3, end: t + 60 }] : [] };
+    this.exporting = true;
+    try {
+      this.r.resize(size.w, size.h); this.painter.resize(size.w, size.h); this.size = size;
+      this.releaseAll();
+      await this.renderStill(t);
+      const out = document.createElement('canvas');
+      out.width = size.w; out.height = size.h;
+      out.getContext('2d').drawImage(this.canvas, 0, 0);
+      return out;
+    } finally {
+      this.plan = plan;
+      this.exporting = false;
+      this.size = prevSize;
+      this.r.resize(prevSize.w, prevSize.h); this.painter.resize(prevSize.w, prevSize.h);
+      this.releaseAll();
+      this.renderStill(prevT);
+    }
   }
 
   /* ---------- Offline-Export (Bild für Bild) ---------- */
@@ -780,10 +996,28 @@ class Engine {
       if (s.clip.visStart <= t + 1e-6 && s.clip.visEnd > t) vis.push(s);
     }
     await Promise.all(vis.map((s) => s.promise));
-    await Promise.all(vis.map((s) => this._seekSlot(s, t, fps)));
+    await Promise.all(vis.map((s) => (s.fr ? this._readSlot(s, t) : this._seekSlot(s, t, fps))));
     for (const s of vis) {
       if (s.panels || !s.video || s.failed || s.dead) continue;
       if (s.video.readyState >= 2) this.r.upload(s.tex, s.video);
+    }
+  }
+
+  async _readSlot(s, t) {
+    if (s.dead || s.failed) return;
+    try {
+      const cv = await s.fr.canvasAt(srcTimeOf(s.clip, t));
+      if (cv && cv._up !== s.fr.drawnTs) { this.r.upload(s.tex, cv); cv._up = s.fr.drawnTs; }
+    } catch (e) {
+      // Dekoder gescheitert: diesen Clip ab hier über das Video-Element weiterführen
+      console.warn(e);
+      const m = this.media[s.clip.mediaIndex];
+      m.fastBad = true;
+      s.fr.close(); s.fr = null;
+      const v = this.acquireVideo(m.url);
+      s.video = v;
+      if (!(await loadVideoSrc(v, m.url))) { s.failed = true; return; }
+      await this._seekSlot(s, t);
     }
   }
 
@@ -842,9 +1076,21 @@ class Engine {
     return !!(this.plan && (this.plan.voice || []).some((v) => this.media[v.mediaIndex] && this.media[v.mediaIndex].audio));
   }
 
-  async exportOffline({ size, fps, withAudio, withSong = true, support, onProgress, isCancelled }) {
-    this.pause();
+  async exportOffline(opts) {
+    this.offline = true;
+    try { return await this._exportOffline(opts); } finally {
+      this.offline = false;
+      this.exporting = false;
+      // Export-Slots (eigene Dekoder) nicht in die Vorschau übernehmen
+      this.releaseAll();
+      this.demuxCache.clear();
+    }
+  }
+
+  async _exportOffline({ size, fps, withAudio, withSong = true, support, onProgress, isCancelled }) {
     this.exporting = true;
+    this.pause();
+    this.scale = 1;
     const plan = this.plan;
     const D = plan.duration;
     this.r.resize(size.w, size.h);
@@ -913,7 +1159,9 @@ class Engine {
     const mime = pickRecorderMime();
     if (mime === null || !this.canvas.captureStream) throw new Error('Dieser Browser kann keine Videos erzeugen. Bitte iOS 16.4+ oder aktuelles Chrome verwenden.');
     this.ensureAudio();
+    this.exporting = true;
     this.pause();
+    this.scale = 1;
     this.r.resize(size.w, size.h);
     this.painter.resize(size.w, size.h);
     this.size = size;

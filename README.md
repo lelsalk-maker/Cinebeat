@@ -44,6 +44,14 @@ Reisefilme im Kino-Look, geschnitten nach dem Aufbau deines Songs: für Instagra
 - **Countdown** (Einstieg): 3 · 2 · 1 wie im alten Kino, mit umlaufendem Zeiger, Sepia, Kratzern und Flackern; darunter wechseln deine Bilder in Schwarzweiß, nach der 1 geht es in Farbe auf dem Drop los.
 - **Stil-Vorlage**: Stil eines Films speichern und mit einem Tipp auf alle Orte, Flüge und den Gesamtfilm übertragen; neue Orte übernehmen ihn automatisch.
 - **Kartenstile** für Flüge: Nacht, Papier, Schwarzweiß, Signal, Eis, Salbei; eigene Routenfarbe; Kontinente als Punkte, Fläche oder aus; Globus oder flache Karte. Die Küstenlinien sind vereinfacht (etwa 1° genau) und offline eingebettet.
+- **Vorspann + Einstieg kombinierbar**: *Countdown* oder *Rewind* laufen vor jedem Einstieg, z. B. Countdown und danach das 9er-Raster. Rewind zeigt kurz den besten Moment und spult dann wie eine Kassette (◀◀, Bildstörstreifen, rückwärts laufende Zeit) an den Anfang zurück.
+- **Im Film – beliebig kombinierbar**: Match-Cuts, Bild aus Bild, Split-Screens, Foto-Serie im Drop, Speed-Ramp, Datumsstempel. Jedes Element hat seinen festen Platz im Song (Split-Screens im Refrain, Foto-Serie und Speed-Ramp im Drop, Bild aus Bild in ruhigen Teilen), so ergänzen sie sich statt sich zu stören.
+- **Bewusste Reihenfolge**: grob chronologisch, innerhalb einer Szene folgt jedes Bild aus dem vorigen (Farbe, Helligkeit, Bildaufbau); Beinahe-Doppel stehen nie direkt hintereinander. Der Übergang richtet sich nach beiden Bildern: ähnlicher Aufbau → **Match-Cut** (die Kamerabewegung läuft weiter), Sprung ins Helle → Lichtblende, ins Dunkle → Schwarzblende.
+- **Bild aus Bild**: drei Übergänge, bei denen das nächste Motiv aus dem vorigen entsteht: *Bild aus Bild* (Formen wachsen vom Motiv aus), *Farbfluss* (breitet sich wie Tinte aus), *Doppelbelichtung*.
+- **Speed-Ramp**: Videos beschleunigen in den Drop hinein und landen auf dem Drop in Zeitlupe.
+- **Digicam-Look**: knackig und kühl wie eine Kamera der 2000er, kleiner Blitz auf Fotoschnitten und orangefarbener Datumsstempel aus dem Aufnahmedatum (Stempel auch einzeln schaltbar).
+- **Filmstreifen-Ende**: Das letzte Bild wird zum Einzelbild auf einem Filmstreifen mit Perforation, der rückwärts durch den Film läuft.
+- **Titelbild für Reels**: im Export-Dialog. Stärkstes Bild mit Titel in voller Größe als JPEG; der Titel sitzt im Bereich, den das Profilraster zeigt.
 - **Nichts ist fest**: Titel, Kapitel und Reise-Statistik lassen sich einzeln ausschalten; Koordinaten und Kilometer sind standardmäßig aus.
 
 ## Musik und Instagram
@@ -62,7 +70,9 @@ Songs aus Spotify, Apple Music oder YouTube lassen sich nicht übernehmen: Sie s
 | Maximal (Standard) | 1080 × 1920 | ca. 26 Mbit/s | beste Details, auch nach Instagrams Neukomprimierung |
 | 4K-Archiv | 2160 × 3840 | ca. 30 Mbit/s | Archiv, große Bildschirme (nur wenn das Gerät es kodieren kann) |
 
-Jedes Bild wird einzeln berechnet (ruckelfrei, auch bei 60 fps). Fotos werden so hoch aufgelöst geladen, dass auch der Ausschnitt (z. B. Querfoto in der Story) nie hochskaliert wird; dazu eine leichte Nachschärfung. Die Vorschau rendert in der Pixeldichte des Displays.
+Jedes Bild wird einzeln berechnet (ruckelfrei, auch bei 60 fps). Videos (MP4/MOV, auch HEVC vom iPhone) werden dafür direkt aus der Datei dekodiert (WebCodecs) statt im Videoelement zu springen: gleiches Bild, Bild für Bild geprüft, etwa 9× schneller im Videoteil. Wo ein Format nicht passt, nimmt die App automatisch den bisherigen Weg. Auch das Einlesen liest Videos so und bewertet Fotos aus einer einzigen verkleinerten Kopie.
+
+Die Vorschau passt sich an: Ruckelt das Gerät, sinkt beim Abspielen die Auflösung stufenweise, angehalten ist sie wieder voll scharf. Der Export ist davon nie betroffen. Fotos werden so hoch aufgelöst geladen, dass auch der Ausschnitt (z. B. Querfoto in der Story) nie hochskaliert wird; dazu eine leichte Nachschärfung. Die Vorschau rendert in der Pixeldichte des Displays.
 
 ## Aufbau
 

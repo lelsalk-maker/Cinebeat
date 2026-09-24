@@ -71,7 +71,7 @@ function imageMetrics(px) {
   const colorN = Math.max(0, Math.min(1, colorful / 85));
   let ar = 0, ag = 0, ab = 0;
   for (let i = 0; i < n; i++) { ar += data[i * 4]; ag += data[i * 4 + 1]; ab += data[i * 4 + 2]; }
-  return { sharp: sharpN, expo: expoN, color: colorN, luma: meanL, focus, gray: g, avg: [Math.round(ar / n), Math.round(ag / n), Math.round(ab / n)] };
+  return { sharp: sharpN, expo: expoN, color: colorN, luma: meanL, focus, gray: g, w, h, avg: [Math.round(ar / n), Math.round(ag / n), Math.round(ab / n)] };
 }
 
 /** 64-Bit-Differenzhash (9x8) als zwei 32-Bit-Zahlen */
@@ -105,7 +105,42 @@ function combineScore(m) {
 
 function scoreImage(src, sw, sh) {
   const m = imageMetrics(samplePixels(src, sw, sh));
-  return { score: combineScore(m), sharp: m.sharp, expo: m.expo, color: m.color, avg: m.avg, luma: +m.luma.toFixed(3), focus: m.focus.map((v) => +v.toFixed(3)), hash: dHash(src, sw, sh) };
+  return { score: combineScore(m), sharp: m.sharp, expo: m.expo, color: m.color, avg: m.avg, luma: +m.luma.toFixed(3), focus: m.focus.map((v) => +v.toFixed(3)), hash: dHash(src, sw, sh), layout: layoutSig(m) };
+}
+
+/**
+ * Bildaufbau als 6 × 6 Helligkeitsraster (0–15, normiert) plus Kantenrichtung.
+ * Grundlage für Match-Cuts: ähnlich aufgebaute Bilder schneiden unsichtbar ineinander.
+ */
+function layoutSig(m) {
+  const { gray: g, w, h } = m;
+  const N = 6, cells = new Float32Array(N * N), cnt = new Float32Array(N * N);
+  let gx = 0, gy = 0;
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x;
+      const k = Math.min(N - 1, Math.floor((y / h) * N)) * N + Math.min(N - 1, Math.floor((x / w) * N));
+      cells[k] += g[i]; cnt[k]++;
+      gx += Math.abs(g[i + 1] - g[i - 1]); gy += Math.abs(g[i + w] - g[i - w]);
+    }
+  }
+  let lo = 255, hi = 0;
+  for (let k = 0; k < cells.length; k++) { cells[k] /= Math.max(1, cnt[k]); lo = Math.min(lo, cells[k]); hi = Math.max(hi, cells[k]); }
+  const span = Math.max(12, hi - lo);
+  let str = '';
+  for (let k = 0; k < cells.length; k++) str += Math.round(((cells[k] - lo) / span) * 15).toString(16);
+  // Anteil waagrechter Strukturen (Horizont, Straßen) gegenüber senkrechten (Häuser, Bäume)
+  const dir = gx + gy > 0 ? +(gy / (gx + gy)).toFixed(2) : 0.5;
+  return { g: str, dir };
+}
+
+/** Ähnlichkeit zweier Bildaufbauten (0 … 1). */
+function layoutSim(a, b) {
+  if (!a || !b || !a.g || !b.g || a.g.length !== b.g.length) return 0;
+  let d = 0;
+  for (let i = 0; i < a.g.length; i++) d += Math.abs(parseInt(a.g[i], 16) - parseInt(b.g[i], 16));
+  const grid = 1 - d / (a.g.length * 7.5);
+  return Math.max(0, grid - Math.abs(a.dir - b.dir) * 0.8);
 }
 
 /**
@@ -113,33 +148,39 @@ function scoreImage(src, sw, sh) {
  * Liefert {score, hash, highlights:[{t, score}]} (Zeit = Mitte der besten Stelle).
  */
 async function scoreVideo(v, duration) {
-  const W = v.videoWidth, H = v.videoHeight;
+  const grab = async (t) => { await seekVideo(v, t); return v.readyState >= 2 ? v : null; };
+  return scoreFrames(grab, v.videoWidth, v.videoHeight, duration);
+}
+
+/** Bewertet ein Video über grab(t) → Bildquelle (Videoelement oder dekodiertes Bild). */
+async function scoreFrames(grab, W, H, duration) {
   const K = Math.max(3, Math.min(8, Math.round(duration / 1.5)));
   const pts = [];
   for (let k = 0; k < K; k++) pts.push(Math.min(duration - 0.3, ((k + 0.5) / K) * duration));
   const res = [];
-  let hash = null, avg = null, luma = 0.45;
+  let hash = null, avg = null, luma = 0.45, layout = null;
   for (const t of pts) {
     if (!(t >= 0)) continue;
-    await seekVideo(v, t);
-    if (v.readyState < 2) continue;
-    const a = imageMetrics(samplePixels(v, W, H));
-    if (!hash) { hash = dHash(v, W, H); avg = a.avg; luma = a.luma; }
-    await seekVideo(v, Math.min(duration - 0.05, t + 0.2));
+    let src = await grab(t);
+    if (!src) continue;
+    const a = imageMetrics(samplePixels(src, W, H));
+    if (!hash) { hash = dHash(src, W, H); avg = a.avg; luma = a.luma; }
+    src = await grab(Math.min(duration - 0.05, t + 0.2));
     let motion = 0;
-    if (v.readyState >= 2) {
-      const b = samplePixels(v, W, H);
-      const g2 = imageMetrics(b).gray;
+    if (src) {
+      const g2 = imageMetrics(samplePixels(src, W, H)).gray;
       let s = 0;
       for (let i = 0; i < g2.length; i++) s += Math.abs(g2[i] - a.gray[i]);
       motion = s / g2.length / 255;
     }
     // Moderate Bewegung ist spannend, extremes Wackeln nicht
     const motionN = Math.max(0, Math.min(1, motion / 0.06)) * (motion > 0.2 ? 0.5 : 1);
-    res.push({ t, score: 0.7 * combineScore(a) + 0.3 * motionN, motion });
+    res.push({ t, score: 0.7 * combineScore(a) + 0.3 * motionN, motion, a });
   }
   res.sort((x, y) => y.score - x.score);
-  return { score: res.length ? res[0].score : 0.3, hash: hash || [0, 0], avg, luma: +luma.toFixed(3), highlights: res.map((r) => ({ t: r.t, score: r.score })) };
+  if (res.length) layout = layoutSig(res[0].a);
+  const top = res[0] && res[0].a;
+  return { score: res.length ? res[0].score : 0.3, hash: hash || [0, 0], avg, luma: +luma.toFixed(3), focus: top ? top.focus.map((v, i) => +(0.5 * v + 0.5 * [0.5, 0.45][i]).toFixed(3)) : undefined, layout, highlights: res.map((r) => ({ t: r.t, score: r.score })) };
 }
 
 /** Markiert Beinahe-Duplikate (nur das beste Bild einer Serie bleibt aktiv). */

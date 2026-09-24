@@ -357,6 +357,8 @@ details.more[open] { display: grid; gap: 16px; }
 .style-text strong { font-weight: 600; font-size: 14px; }
 .style-text span { font-size: 12px; color: var(--muted); }
 .sheet-actions .btn { white-space: normal; text-align: center; line-height: 1.3; padding-block: 10px; }
+.cover-preview { width: min(100%, 220px); aspect-ratio: auto; border-radius: 12px; display: block; margin: 4px auto 8px; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+.field-label .muted { color: var(--muted); font-weight: 400; }
 </style>
 <div class="app">
   <!-- ================= Reise ================= -->
@@ -517,6 +519,15 @@ details.more[open] { display: grid; gap: 16px; }
             <span class="field-label">Look</span>
             <div class="looks" role="radiogroup" aria-label="Farblook" id="lookGrid"></div>
           </div>
+          <div class="field" id="preField">
+            <span class="field-label" id="preLabel">Vorspann</span>
+            <div class="chips" role="radiogroup" aria-labelledby="preLabel" id="preChips">
+              <button type="button" role="radio" data-v="off">Keiner</button>
+              <button type="button" role="radio" data-v="countdown">Countdown 3 · 2 · 1</button>
+              <button type="button" role="radio" data-v="rewind">Rewind</button>
+            </div>
+            <p class="hint small" id="preHint">Läuft vor dem Einstieg und lässt sich mit jedem Einstieg kombinieren, z. B. Countdown und danach das 9er-Raster.</p>
+          </div>
           <div class="field">
             <span class="field-label" id="introLabel">Einstieg</span>
             <div class="chips" role="radiogroup" aria-labelledby="introLabel" id="introChips">
@@ -525,8 +536,7 @@ details.more[open] { display: grid; gap: 16px; }
               <button type="button" role="radio" data-v="grid">9er-Raster</button>
               <button type="button" role="radio" data-v="knockout">Durch den Namen</button>
               <button type="button" role="radio" data-v="city">Ortsname</button>
-              <button type="button" role="radio" data-v="route">Route</button>
-              <button type="button" role="radio" data-v="cinema">Titelkarte</button>
+               <button type="button" role="radio" data-v="cinema">Titelkarte</button>
               <button type="button" role="radio" data-v="hook">Stärkstes Bild</button>
               <button type="button" role="radio" data-v="type">Wort für Wort</button>
               <button type="button" role="radio" data-v="split">Split-Screen</button>
@@ -539,6 +549,7 @@ details.more[open] { display: grid; gap: 16px; }
               <button type="button" role="radio" data-v="credits">Schlusstitel</button>
               <button type="button" role="radio" data-v="loop">Endlos-Loop</button>
               <button type="button" role="radio" data-v="freeze">Standbild</button>
+              <button type="button" role="radio" data-v="strip">Filmstreifen</button>
               <button type="button" role="radio" data-v="split">Split-Screen</button>
             </div>
           </div>
@@ -571,12 +582,16 @@ details.more[open] { display: grid; gap: 16px; }
             <p class="hint small" id="motionHint"></p>
           </div>
           <div class="field">
-            <span class="field-label" id="burstLabel">Foto-Serie im Drop</span>
-            <div class="chips" role="radiogroup" aria-labelledby="burstLabel" id="burstChips">
-              <button type="button" role="radio" data-v="off">Aus</button>
-              <button type="button" role="radio" data-v="drop">An</button>
+            <span class="field-label" id="fxLabel">Im Film <span class="muted">· beliebig kombinierbar</span></span>
+            <div class="chips" role="group" aria-labelledby="fxLabel" id="fxChips">
+              <button type="button" aria-pressed="false" data-fx="match">Match-Cuts</button>
+              <button type="button" aria-pressed="false" data-fx="morph">Bild aus Bild</button>
+              <button type="button" aria-pressed="false" data-fx="split">Split-Screens</button>
+              <button type="button" aria-pressed="false" data-fx="burst">Foto-Serie im Drop</button>
+              <button type="button" aria-pressed="false" data-fx="ramp">Speed-Ramp</button>
+              <button type="button" aria-pressed="false" data-fx="stamp">Datumsstempel</button>
             </div>
-            <p class="hint small">Beim ersten Drop wechselt einen Takt lang jeden halben Beat das Bild, wie ein Blitzlicht-Photo-Dump.</p>
+            <p class="hint small" id="fxHint"></p>
           </div>
           <div class="field" id="kmField">
             <span class="field-label" id="kmLabel">Unter dem Ortsnamen</span>
@@ -2030,7 +2045,7 @@ function imageMetrics(px) {
   const colorN = Math.max(0, Math.min(1, colorful / 85));
   let ar = 0, ag = 0, ab = 0;
   for (let i = 0; i < n; i++) { ar += data[i * 4]; ag += data[i * 4 + 1]; ab += data[i * 4 + 2]; }
-  return { sharp: sharpN, expo: expoN, color: colorN, luma: meanL, focus, gray: g, avg: [Math.round(ar / n), Math.round(ag / n), Math.round(ab / n)] };
+  return { sharp: sharpN, expo: expoN, color: colorN, luma: meanL, focus, gray: g, w, h, avg: [Math.round(ar / n), Math.round(ag / n), Math.round(ab / n)] };
 }
 
 /** 64-Bit-Differenzhash (9x8) als zwei 32-Bit-Zahlen */
@@ -2064,7 +2079,42 @@ function combineScore(m) {
 
 function scoreImage(src, sw, sh) {
   const m = imageMetrics(samplePixels(src, sw, sh));
-  return { score: combineScore(m), sharp: m.sharp, expo: m.expo, color: m.color, avg: m.avg, luma: +m.luma.toFixed(3), focus: m.focus.map((v) => +v.toFixed(3)), hash: dHash(src, sw, sh) };
+  return { score: combineScore(m), sharp: m.sharp, expo: m.expo, color: m.color, avg: m.avg, luma: +m.luma.toFixed(3), focus: m.focus.map((v) => +v.toFixed(3)), hash: dHash(src, sw, sh), layout: layoutSig(m) };
+}
+
+/**
+ * Bildaufbau als 6 × 6 Helligkeitsraster (0–15, normiert) plus Kantenrichtung.
+ * Grundlage für Match-Cuts: ähnlich aufgebaute Bilder schneiden unsichtbar ineinander.
+ */
+function layoutSig(m) {
+  const { gray: g, w, h } = m;
+  const N = 6, cells = new Float32Array(N * N), cnt = new Float32Array(N * N);
+  let gx = 0, gy = 0;
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x;
+      const k = Math.min(N - 1, Math.floor((y / h) * N)) * N + Math.min(N - 1, Math.floor((x / w) * N));
+      cells[k] += g[i]; cnt[k]++;
+      gx += Math.abs(g[i + 1] - g[i - 1]); gy += Math.abs(g[i + w] - g[i - w]);
+    }
+  }
+  let lo = 255, hi = 0;
+  for (let k = 0; k < cells.length; k++) { cells[k] /= Math.max(1, cnt[k]); lo = Math.min(lo, cells[k]); hi = Math.max(hi, cells[k]); }
+  const span = Math.max(12, hi - lo);
+  let str = '';
+  for (let k = 0; k < cells.length; k++) str += Math.round(((cells[k] - lo) / span) * 15).toString(16);
+  // Anteil waagrechter Strukturen (Horizont, Straßen) gegenüber senkrechten (Häuser, Bäume)
+  const dir = gx + gy > 0 ? +(gy / (gx + gy)).toFixed(2) : 0.5;
+  return { g: str, dir };
+}
+
+/** Ähnlichkeit zweier Bildaufbauten (0 … 1). */
+function layoutSim(a, b) {
+  if (!a || !b || !a.g || !b.g || a.g.length !== b.g.length) return 0;
+  let d = 0;
+  for (let i = 0; i < a.g.length; i++) d += Math.abs(parseInt(a.g[i], 16) - parseInt(b.g[i], 16));
+  const grid = 1 - d / (a.g.length * 7.5);
+  return Math.max(0, grid - Math.abs(a.dir - b.dir) * 0.8);
 }
 
 /**
@@ -2072,33 +2122,39 @@ function scoreImage(src, sw, sh) {
  * Liefert {score, hash, highlights:[{t, score}]} (Zeit = Mitte der besten Stelle).
  */
 async function scoreVideo(v, duration) {
-  const W = v.videoWidth, H = v.videoHeight;
+  const grab = async (t) => { await seekVideo(v, t); return v.readyState >= 2 ? v : null; };
+  return scoreFrames(grab, v.videoWidth, v.videoHeight, duration);
+}
+
+/** Bewertet ein Video über grab(t) → Bildquelle (Videoelement oder dekodiertes Bild). */
+async function scoreFrames(grab, W, H, duration) {
   const K = Math.max(3, Math.min(8, Math.round(duration / 1.5)));
   const pts = [];
   for (let k = 0; k < K; k++) pts.push(Math.min(duration - 0.3, ((k + 0.5) / K) * duration));
   const res = [];
-  let hash = null, avg = null, luma = 0.45;
+  let hash = null, avg = null, luma = 0.45, layout = null;
   for (const t of pts) {
     if (!(t >= 0)) continue;
-    await seekVideo(v, t);
-    if (v.readyState < 2) continue;
-    const a = imageMetrics(samplePixels(v, W, H));
-    if (!hash) { hash = dHash(v, W, H); avg = a.avg; luma = a.luma; }
-    await seekVideo(v, Math.min(duration - 0.05, t + 0.2));
+    let src = await grab(t);
+    if (!src) continue;
+    const a = imageMetrics(samplePixels(src, W, H));
+    if (!hash) { hash = dHash(src, W, H); avg = a.avg; luma = a.luma; }
+    src = await grab(Math.min(duration - 0.05, t + 0.2));
     let motion = 0;
-    if (v.readyState >= 2) {
-      const b = samplePixels(v, W, H);
-      const g2 = imageMetrics(b).gray;
+    if (src) {
+      const g2 = imageMetrics(samplePixels(src, W, H)).gray;
       let s = 0;
       for (let i = 0; i < g2.length; i++) s += Math.abs(g2[i] - a.gray[i]);
       motion = s / g2.length / 255;
     }
     // Moderate Bewegung ist spannend, extremes Wackeln nicht
     const motionN = Math.max(0, Math.min(1, motion / 0.06)) * (motion > 0.2 ? 0.5 : 1);
-    res.push({ t, score: 0.7 * combineScore(a) + 0.3 * motionN, motion });
+    res.push({ t, score: 0.7 * combineScore(a) + 0.3 * motionN, motion, a });
   }
   res.sort((x, y) => y.score - x.score);
-  return { score: res.length ? res[0].score : 0.3, hash: hash || [0, 0], avg, luma: +luma.toFixed(3), highlights: res.map((r) => ({ t: r.t, score: r.score })) };
+  if (res.length) layout = layoutSig(res[0].a);
+  const top = res[0] && res[0].a;
+  return { score: res.length ? res[0].score : 0.3, hash: hash || [0, 0], avg, luma: +luma.toFixed(3), focus: top ? top.focus.map((v, i) => +(0.5 * v + 0.5 * [0.5, 0.45][i]).toFixed(3)) : undefined, layout, highlights: res.map((r) => ({ t: r.t, score: r.score })) };
 }
 
 /** Markiert Beinahe-Duplikate (nur das beste Bild einer Serie bleibt aktiv). */
@@ -2135,8 +2191,8 @@ function hashStr(s) {
 }
 
 // Übergänge (müssen zum Shader passen)
-const TR = { CUT: 0, DISSOLVE: 1, DIP: 2, ZOOM: 4, WHIP: 5, LEAK: 6, LUMA: 7, PUSH: 9 };
-const TR_NAMES = { 0: 'Schnitt', 1: 'Blende', 2: 'Schwarzblende', 4: 'Zoom', 5: 'Wischer', 6: 'Lichtleck', 7: 'Lichtblende', 9: 'Schieben' };
+const TR = { CUT: 0, DISSOLVE: 1, DIP: 2, ZOOM: 4, WHIP: 5, LEAK: 6, LUMA: 7, PUSH: 9, INK: 10, MORPH: 11, DOUBLE: 12 };
+const TR_NAMES = { 0: 'Schnitt', 1: 'Blende', 2: 'Schwarzblende', 4: 'Zoom', 5: 'Wischer', 6: 'Lichtleck', 7: 'Lichtblende', 9: 'Schieben', 10: 'Farbfluss', 11: 'Bild aus Bild', 12: 'Doppelbelichtung' };
 
 const LOOKS = {
   natur: { label: 'Natürlich', blurb: 'Klare, echte Farben mit Tiefe', grade: { sat: 1.06, contrast: 0.22, temp: 0.03, split: 0.18, lift: 0.012, crush: 0.012, bw: 0, grain: 0.014, vig: 0.26, tint: [1, 1, 1], glow: 0.06, leak: 0 } },
@@ -2144,6 +2200,7 @@ const LOOKS = {
   kino: { label: 'Teal & Orange', blurb: 'Blockbuster-Kontrast', grade: { sat: 0.98, contrast: 0.36, temp: 0.08, split: 0.9, lift: 0.02, crush: 0.02, bw: 0, grain: 0.022, vig: 0.4, tint: [1, 1, 1], glow: 0.05, leak: 0 } },
   blau: { label: 'Blue Hour', blurb: 'Kühle Nacht, satte Tiefen', grade: { sat: 0.92, contrast: 0.34, temp: -0.22, split: 0.55, lift: 0.018, crush: 0.02, bw: 0, grain: 0.024, vig: 0.42, tint: [0.97, 1, 1.04], glow: 0.14, leak: 0 } },
   film: { label: 'Film 35', blurb: 'Analoges Korn, sanfte Farben', grade: { sat: 0.86, contrast: 0.16, temp: 0.22, split: 0.25, lift: 0.055, crush: 0.035, bw: 0, grain: 0.055, vig: 0.42, tint: [1.02, 0.99, 0.93], glow: 0.14, leak: 0.05 } },
+  digicam: { label: 'Digicam', blurb: '2000er-Kamera: knackig, kühl, mit Blitz', grade: { sat: 1.16, contrast: 0.44, temp: -0.1, split: 0.08, lift: 0.0, crush: 0.0, bw: 0, grain: 0.02, vig: 0.1, tint: [0.99, 1.01, 1.03], glow: 0, leak: 0 } },
   noir: { label: 'Noir', blurb: 'Schwarzweiß mit Charakter', grade: { sat: 0, contrast: 0.55, temp: 0, split: 0, lift: 0.02, crush: 0.02, bw: 1, grain: 0.05, vig: 0.5, tint: [1, 1, 1], glow: 0.05, leak: 0 } },
 };
 
@@ -2322,6 +2379,53 @@ function chooseTransition(ctx, rng) {
   return { type, dur, punch };
 }
 
+/**
+ * Verfeinert den Übergang anhand der beiden Bilder:
+ * ähnlicher Aufbau → Match-Cut (harter Schnitt, die Bewegung läuft weiter) oder „Bild aus Bild“,
+ * Sprung ins Helle → Lichtblende, Sprung ins Dunkle → Schwarzblende statt Blende.
+ */
+function refineTransition(tr, rel, ctx) {
+  if (!rel || tr.punch) return tr;
+  const { A, B, beatDur, s, peak, rng } = ctx;
+  const lenA = A.end - A.start, lenB = B.end - B.start;
+  const fit = (beats, max = 2.4) => Math.min(beats * beatDur, 0.45 * lenA, 0.45 * lenB, max);
+  if (s.morph === 'on' && !peak) {
+    // kreative Übergänge, bei denen ein Bild aus dem anderen entsteht (nicht in Drops: dort bleibt es knackig)
+    const d = fit(rel.sim > 0.55 ? 2 : 1.5);
+    if (d >= 0.3) {
+      const type = rel.sim > 0.55 ? TR.MORPH : rel.aLuma > 0.5 && rel.colorD > 45 ? TR.DOUBLE : rng() < 0.5 ? TR.INK : TR.MORPH;
+      return { type, dur: d, punch: false };
+    }
+  }
+  if (s.match !== 'off' && rel.sim > 0.78 && (tr.type === TR.CUT || tr.type === TR.DISSOLVE)) {
+    return { type: TR.CUT, dur: 0, punch: false, match: true };
+  }
+  if (tr.type === TR.DISSOLVE) {
+    if (rel.dl > 0.22) return { ...tr, type: TR.LUMA };
+    if (rel.dl < -0.3) return { ...tr, type: TR.DIP };
+  }
+  return tr;
+}
+
+/** Zurückgelegte Quellzeit einer Tempo-Kurve (Punkte [Zeit, Tempo], linear dazwischen) bis t. */
+function rampIntegral(pts, t) {
+  let acc = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [t0, r0] = pts[i], [t1, r1] = pts[i + 1];
+    if (t <= t0) break;
+    const te = Math.min(t, t1), f = (te - t0) / Math.max(1e-6, t1 - t0);
+    acc += (te - t0) * (r0 + (r0 + (r1 - r0) * f)) / 2;
+  }
+  const last = pts[pts.length - 1];
+  if (t > last[0]) acc += (t - last[0]) * last[1];
+  return acc;
+}
+function rampRate(pts, t) {
+  if (t <= pts[0][0]) return pts[0][1];
+  for (let i = 0; i < pts.length - 1; i++) if (t < pts[i + 1][0]) { const [t0, r0] = pts[i], [t1, r1] = pts[i + 1]; return r0 + (r1 - r0) * (t - t0) / Math.max(1e-6, t1 - t0); }
+  return pts[pts.length - 1][1];
+}
+
 function orderChrono(list) {
   return list.slice().sort((a, b) => (a.time || 0) - (b.time || 0) || String(a.name || '').localeCompare(String(b.name || ''), 'de', { numeric: true }));
 }
@@ -2338,6 +2442,58 @@ function selectMedia(pool, K, mustIds) {
   const must = clean.filter((m) => m.fav || mustIds.has(m.id));
   const rest = clean.filter((m) => !(m.fav || mustIds.has(m.id))).sort((a, b) => (b.score || 0) - (a.score || 0));
   return orderChrono(must.concat(rest.slice(0, Math.max(0, K - must.length))));
+}
+
+/**
+ * Bewusste Reihenfolge: grob chronologisch, innerhalb einer Szene (Aufnahmen kurz nacheinander)
+ * aber so, dass jedes Bild aus dem vorigen hervorgeht: ähnliche Farbe und Helligkeit fließen,
+ * ähnlicher Bildaufbau ergibt Match-Cuts, Beinahe-Doppel stehen nie direkt hintereinander.
+ */
+function flowOrder(list, wantMatch) {
+  if (list.length < 3) return list.slice();
+  const colorD = (a, b) => (a.avg && b.avg ? Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) : 60);
+  const twin = (a, b) => colorD(a, b) < 18 && a.hash && b.hash && hamming(a.hash, b.hash) < 14;
+  const flow = (a, b) => {
+    if (twin(a, b)) return -1;
+    let v = 0.45 * (1 - Math.min(1, colorD(a, b) / 160)) + 0.25 * (1 - Math.min(1, Math.abs((a.luma || 0.45) - (b.luma || 0.45)) / 0.4));
+    const sim = layoutSim(a.layout, b.layout);
+    if (wantMatch && sim > 0.72) v += 0.35 * sim;
+    if (a.kind !== b.kind) v += 0.05;
+    return v;
+  };
+  // Szenen: Lücke über 40 Minuten beginnt eine neue
+  const scenes = [];
+  for (const m of list) {
+    const last = scenes[scenes.length - 1];
+    const prev = last && last[last.length - 1];
+    if (!prev || !m.time || !prev.time || m.time - prev.time > 40 * 60 * 1000) scenes.push([m]); else last.push(m);
+  }
+  const out = [];
+  for (const sc of scenes) {
+    const rest = sc.slice();
+    let prev = out[out.length - 1] || null;
+    while (rest.length) {
+      let bi = 0;
+      if (prev) {
+        let bv = -Infinity;
+        // nur unter den nächsten vier Aufnahmen wählen: die Geschichte bleibt in ihrer Zeit
+        for (let k = 0; k < Math.min(4, rest.length); k++) {
+          const v = flow(prev, rest[k]) - k * 0.09;
+          if (v > bv) { bv = v; bi = k; }
+        }
+      }
+      prev = rest.splice(bi, 1)[0];
+      out.push(prev);
+    }
+  }
+  return out;
+}
+
+/** Beziehung zweier aufeinanderfolgender Aufnahmen für die Wahl des Übergangs. */
+function shotRelation(a, b) {
+  if (!a || !b) return null;
+  const colorD = a.avg && b.avg ? Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) : 60;
+  return { sim: layoutSim(a.layout, b.layout), colorD, dl: (b.luma || 0.45) - (a.luma || 0.45), aLuma: a.luma || 0.45 };
 }
 
 /** Ähnliche Bilder nicht direkt hintereinander (Farbe/Hash). */
@@ -2428,14 +2584,34 @@ function buildPlan(opts) {
   }
 
   // 9er-Raster: Kacheln werden im Takt farbig, dann Zoom ins Zielbild genau auf einen Beat
+  // Vorspann vor dem eigentlichen Einstieg (kombinierbar): Countdown oder Rewind
+  const bStep = beatDur < 0.42 ? 2 : 1;
+  const bts0 = an.beats.map((b) => b - win.start).filter((t) => t >= -0.02 && t < D);
+  const atB = (k) => (bts0[k] != null ? Math.max(0, bts0[k]) : k * beatDur);
+  let pre = null;
+  const preMode = !flight && s.pre && s.pre !== 'off' && intro !== 'split' && !(s.pre === 'countdown' && intro === 'countdown') ? s.pre : null;
+  if (preMode === 'countdown') {
+    const marks = [0, atB(bStep), atB(2 * bStep)], end = atB(3 * bStep);
+    pre = { kind: 'countdown', beats: 3 * bStep, end, marks, pieces: marks.map((m, i) => ({ start: m, end: i < 2 ? marks[i + 1] : end, f: { leader: true, pre: 'leader' } })) };
+  } else if (preMode === 'rewind') {
+    // kurzer Vorgeschmack auf den besten Moment, dann spult der Film im Zeitraffer zurück an den Anfang
+    const teaseEnd = atB(2 * bStep), end = atB(4 * bStep);
+    const sub = beatDur / 2 >= 0.2 ? beatDur / 2 : beatDur;
+    const pieces = [{ start: 0, end: teaseEnd, f: { pre: 'tease' } }];
+    for (let t0 = teaseEnd; t0 < end - 0.05; t0 += sub) pieces.push({ start: t0, end: Math.min(end, t0 + sub), f: { pre: 'rew' } });
+    pre = { kind: 'rewind', beats: 4 * bStep, end, teaseEnd, pieces };
+  }
+  if (pre && pre.end > D * 0.35) pre = null;
+  const pb = pre ? pre.beats : 0;
+  const T0 = pre ? pre.end : 0;
+
   let gridPlan = null;
   if (intro === 'grid') {
     const n = goodMedia(usable).length >= 9 ? 3 : 2;
-    const step = beatDur < 0.42 ? 2 : 1;
-    const bts = an.beats.map((b) => b - win.start).filter((t) => t >= -0.02 && t < D);
-    const at = (k) => (bts[k] != null ? Math.max(0, bts[k]) : k * beatDur);
+    const step = bStep;
+    const at = (k) => atB(k + pb);
     const tiles = n * n;
-    const times = Array.from({ length: tiles }, (_, k) => (k === 0 ? Math.min(0.12, at(0)) : at(k * step)));
+    const times = Array.from({ length: tiles }, (_, k) => (k === 0 ? (pb ? at(0) : Math.min(0.12, at(0))) : at(k * step)));
     const zoomEnd = at(tiles * step);
     if (zoomEnd < D * 0.7) gridPlan = { n, times, zoomStart: times[tiles - 1], zoomEnd };
   }
@@ -2443,9 +2619,8 @@ function buildPlan(opts) {
   // „Durch den Namen“: Ortsname als Fenster ins Bild, dann Zoom durch die Buchstaben auf einen Beat
   let knock = null;
   if (intro === 'knockout') {
-    const step = beatDur < 0.42 ? 2 : 1;
-    const bts = an.beats.map((b) => b - win.start).filter((t) => t >= -0.02 && t < D);
-    const at = (k) => (bts[k] != null ? Math.max(0, bts[k]) : k * beatDur);
+    const step = bStep;
+    const at = (k) => atB(k + pb);
     knock = { zoomStart: at(5 * step), end: at(6 * step) };
     if (knock.end > D * 0.6) knock = null;
   }
@@ -2453,37 +2628,41 @@ function buildPlan(opts) {
   // Countdown wie ein alter Filmvorspann: 3 · 2 · 1 auf den Beats, darunter wechseln Bilder in Schwarzweiß
   let leader = null;
   if (intro === 'countdown') {
-    const step = beatDur < 0.42 ? 2 : 1;
-    const bts = an.beats.map((b) => b - win.start).filter((t) => t >= -0.02 && t < D);
-    const at = (k) => (bts[k] != null ? Math.max(0, bts[k]) : k * beatDur);
-    leader = { marks: [0, at(step), at(2 * step)], end: at(3 * step) };
-    if (leader.end > D * 0.5 || leader.marks[1] < 0.2) leader = null;
+    const step = bStep;
+    const at = (k) => atB(k + pb);
+    leader = { marks: [pb ? at(0) : 0, at(step), at(2 * step)], end: at(3 * step) };
+    if (leader.end > D * 0.5 || leader.marks[1] - leader.marks[0] < 0.2) leader = null;
   }
 
   // Einstieg: Mindestdauer der ersten Einstellung
   const firstMin = knock || leader || intro === 'grid' ? 0 : intro === 'city' ? Math.min(D * 0.35, Math.max(2.4, barDur * 1.2)) : intro === 'cinema' ? Math.min(D * 0.35, Math.max(3.2, barDur * 1.6)) : intro === 'type' ? Math.min(D * 0.3, Math.max(1.8, barDur)) : intro === 'split' ? Math.min(D * 0.3, Math.max(2.2, barDur)) : Math.min(Math.max(1.3, barDur * 0.95), 2.8, D * 0.3);
-  if (!flight && segs.length > 1 && segs[0].end < firstMin) {
+  if (!flight && !pre && segs.length > 1 && segs[0].end < firstMin) {
     let k = 0;
     while (k < segs.length - 1 && segs[k].end < firstMin) k++;
     segs = [{ start: 0, end: segs[k].end, w: 0 }, ...segs.slice(k + 1)];
   }
   // Einstiege mit fester Länge: Schnitte genau auf die Beats legen, danach normal weiter
-  const forceStart = (bounds, mark) => {
-    const e = bounds[bounds.length - 1];
+  // Vorspann und Einstieg werden hintereinander gelegt (z. B. Countdown, dann 9er-Raster)
+  const forceStart = (pieces, postMin) => {
+    const e = pieces[pieces.length - 1].end;
     if (e >= D - 1) return false;
     let k = segs.findIndex((g) => g.end > e + 0.05);
     if (k < 0) k = segs.length - 1;
-    if (segs[k].end - e < Math.max(0.9, beatDur * 2) && k < segs.length - 1) k++;
-    const head = bounds.slice(0, -1).map((b, i) => ({ start: b, end: bounds[i + 1], w: 0, [mark]: true }));
+    while (segs[k].end - e < Math.max(0.9, beatDur * 2, postMin) && k < segs.length - 1) k++;
+    const head = pieces.map((p) => ({ start: p.start, end: p.end, w: 0, ...p.f }));
     segs = [...head, { start: e, end: Math.max(segs[k].end, e + 0.3), w: 10 }, ...segs.slice(k + 1)];
     return true;
   };
-  if (knock && !forceStart([0, knock.end], 'knock')) knock = null;
-  if (leader && !forceStart([...leader.marks, leader.end], 'leader')) leader = null;
-  if (gridPlan && !forceStart([0, gridPlan.zoomEnd], 'gridSeg')) gridPlan = null;
+  const mainPieces = knock ? [{ start: T0, end: knock.end, f: { knock: true } }]
+    : leader ? leader.marks.map((m, i) => ({ start: m, end: i < 2 ? leader.marks[i + 1] : leader.end, f: { leader: true } }))
+      : gridPlan ? [{ start: T0, end: gridPlan.zoomEnd, f: { gridSeg: true } }] : [];
+  if (pre || mainPieces.length) {
+    const ok = forceStart([...(pre ? pre.pieces : []), ...mainPieces], mainPieces.length ? 0 : firstMin);
+    if (!ok) { pre = null; knock = null; leader = null; gridPlan = null; }
+  }
   // Foto-Serie im Drop: ein Takt, jeder halbe Beat ein neues Bild
   // Einstiege mit fester Länge enden auf dem Drop: die Foto-Serie darf direkt dort beginnen
-  const forced = segs.filter((g) => g.knock || g.leader || g.gridSeg);
+  const forced = segs.filter((g) => g.knock || g.leader || g.gridSeg || g.pre);
   // nach Raster und „Durch den Namen“ behält das freigelegte Bild seine volle Einstellung
   const lastForced = forced[forced.length - 1];
   const introEnd = !lastForced ? segs[0].end : lastForced.leader ? lastForced.end : (segs[forced.length] || lastForced).end;
@@ -2508,7 +2687,7 @@ function buildPlan(opts) {
       // Reststücke unter 0,6 s an einen normalen Nachbarn hängen
       for (let i = 0; i < out.length; i++) {
         const g = out[i];
-        const fixed = (x) => x && (x.burst || x.leader || x.knock || x.gridSeg);
+        const fixed = (x) => x && (x.burst || x.leader || x.knock || x.gridSeg || x.pre);
         if (fixed(g) || g.end - g.start >= 0.6) continue;
         const prev = out[i - 1], next = out[i + 1];
         if (prev && !fixed(prev)) { prev.end = g.end; out.splice(i--, 1); } else if (next && !fixed(next)) { next.start = g.start; out.splice(i--, 1); }
@@ -2517,7 +2696,7 @@ function buildPlan(opts) {
     }
   }
   // Ende: letzte Einstellung lang genug für Schlusstitel/Standbild
-  const lastMin = outro === 'credits' ? Math.min(D * 0.3, Math.max(3.4, barDur * 1.5)) : outro === 'freeze' ? Math.min(D * 0.3, Math.max(2.6, barDur)) : outro === 'split' ? Math.min(D * 0.3, Math.max(2.2, barDur)) : 0;
+  const lastMin = outro === 'strip' ? Math.min(D * 0.32, Math.max(3.8, barDur * 2)) : outro === 'credits' ? Math.min(D * 0.3, Math.max(3.4, barDur * 1.5)) : outro === 'freeze' ? Math.min(D * 0.3, Math.max(2.6, barDur)) : outro === 'split' ? Math.min(D * 0.3, Math.max(2.2, barDur)) : 0;
   if (!flight && lastMin && segs.length > 2 && segs[segs.length - 1].end - segs[segs.length - 1].start < lastMin) {
     let k = segs.length - 1;
     while (k > 1 && D - segs[k].start < lastMin) k--;
@@ -2528,7 +2707,7 @@ function buildPlan(opts) {
     const abs = win.start + g.start;
     const sec = sectionAt(an, abs + 0.01);
     return {
-      i, start: g.start, end: g.end, label: sec.label, energy: sec.energy, weight: g.w, freezeAt: g.freezeAt, burst: !!g.burst, leader: !!g.leader,
+      i, start: g.start, end: g.end, label: sec.label, energy: sec.energy, weight: g.w, freezeAt: g.freezeAt, burst: !!g.burst, leader: !!g.leader, pre: g.pre || null,
       sectionChange: i > 0 && (an.sections || []).some((x) => Math.abs(x.start - abs) < 0.05),
       mediaId: null, role: 'normal',
     };
@@ -2538,15 +2717,17 @@ function buildPlan(opts) {
   const splitN = vertical ? (fmt.h / fmt.w > 1.5 ? 3 : 2) : 3;
   const splitFit = (m) => (vertical ? isLandscape(m) : isPortrait(m));
   const splitClips = [];
+  // P: erste Einstellung des eigentlichen Einstiegs (nach dem Vorspann)
+  const P = clips.filter((c) => c.pre).length;
   if (intro === 'split' && clips.length > 1) splitClips.push(0);
-  if (gridPlan) clips[0].grid = true;
+  if (gridPlan) clips[P].grid = true;
   if (outro === 'split' && clips.length > 2) splitClips.push(clips.length - 1);
   if (s.split !== 'off' && !flight) {
     const every = s.split === 'more' ? 3 : 5;
     let since = every;
     for (const c of clips) {
       since++;
-      if (c.i <= (gridPlan ? 1 : leader ? 3 : 0) || c.i === clips.length - 1 || splitClips.includes(c.i)) continue;
+      if (c.i <= P + (gridPlan ? 1 : leader ? 3 : 0) || c.i === clips.length - 1 || splitClips.includes(c.i)) continue;
       const peak = c.label === 'drop' || c.label === 'chorus';
       if (peak && c.end - c.start >= Math.max(1.4, beatDur * 3) && (c.sectionChange || since >= every)) { splitClips.push(c.i); since = 0; }
     }
@@ -2589,7 +2770,7 @@ function buildPlan(opts) {
     bounds.push(clips.length);
     for (let c = 0; c < chapters.length; c++) {
       const cnt = bounds[c + 1] - bounds[c];
-      const sel = spreadSimilar(selectMedia(chapters[c].media, cnt, new Set()));
+      const sel = spreadSimilar(flowOrder(selectMedia(chapters[c].media, cnt, new Set()), s.match !== 'off'));
       for (let k = 0; k < cnt; k++) {
         order.push(sel.length ? sel[k % sel.length] : null);
         if (k === 0) { clips[bounds[c]].chapter = chapters[c].title; clips[bounds[c]].chapterNo = c + 1; clips[bounds[c]].role = 'chapter'; }
@@ -2600,7 +2781,7 @@ function buildPlan(opts) {
   } else {
     const chosen = selectMedia(pool, clips.length - splitClips.length + 2, mustIds);
     hook = settings.hookId && byId.get(settings.hookId) ? byId.get(settings.hookId) : chosen.slice().sort((a, b) => (b.score || 0) - (a.score || 0))[0] || null;
-    const rest = spreadSimilar(chosen.filter((m) => m !== hook));
+    const rest = spreadSimilar(flowOrder(chosen.filter((m) => m !== hook), s.match !== 'off'));
     order = hook ? [hook, ...rest] : rest;
     // zweitbestes Motiv auf den ersten Drop/Refrain
     const dropIdx = clips.findIndex((c) => (c.label === 'drop' || c.label === 'chorus') && c.sectionChange);
@@ -2618,18 +2799,38 @@ function buildPlan(opts) {
       if (m && prevId === m.id && order.length > 1) { m = order[cur % order.length]; cur++; }
       clips[i].mediaId = m ? m.id : null;
     }
-    if (hook && intro !== 'split') { clips[0].mediaId = hook.id; clips[0].role = 'hook'; }
-    if (leader && hook && clips[3]) {
+    if (hook && intro !== 'split' && clips[P]) { clips[P].mediaId = hook.id; clips[P].role = 'hook'; }
+    if (leader && hook && clips[P + 3]) {
       // Nach dem Countdown kommt das stärkste Bild in Farbe; der Vorspann zeigt andere Motive
       const others = order.filter((m) => m && m !== hook);
-      for (let i = 0; i < 3; i++) { clips[i].mediaId = others.length ? others[i % others.length].id : hook.id; clips[i].role = 'leader'; }
-      clips[3].mediaId = hook.id; clips[3].role = 'hook';
+      for (let i = 0; i < 3; i++) { clips[P + i].mediaId = others.length ? others[i % others.length].id : hook.id; clips[P + i].role = 'leader'; }
+      clips[P + 3].mediaId = hook.id; clips[P + 3].role = 'hook';
     }
-    if (gridPlan && hook && clips[1]) {
+    if (gridPlan && hook && clips[P + 1]) {
       // Das Zielbild des Rasters läuft nach dem Zoom als erste Vollbild-Einstellung weiter
-      const was = clips[1].mediaId;
-      clips[1].mediaId = hook.id; clips[1].role = 'hook';
-      clips[0].mediaId = was && was !== hook.id ? was : clips[0].mediaId;
+      const was = clips[P + 1].mediaId;
+      clips[P + 1].mediaId = hook.id; clips[P + 1].role = 'hook';
+      clips[P].mediaId = was && was !== hook.id ? was : clips[P].mediaId;
+    }
+  }
+  if (pre && P) {
+    const main = clips.slice(P).map((c) => byId.get(c.mediaId)).filter(Boolean);
+    const first = byId.get(clips[P].mediaId);
+    if (pre.kind === 'countdown') {
+      const others = main.filter((m) => m !== first && m !== hook);
+      for (let i = 0; i < P; i++) { clips[i].mediaId = (others[i % Math.max(1, others.length)] || first || {}).id || null; clips[i].role = 'leader'; }
+    } else {
+      // Vorgeschmack: der spannendste Moment (gern ein Video), danach die Bilder des Films rückwärts
+      const cand = main.filter((m) => m !== first && m !== hook);
+      const tease = cand.filter((m) => m.kind === 'video').sort((a, b) => (b.score || 0) - (a.score || 0))[0] || cand.slice().sort((a, b) => (b.score || 0) - (a.score || 0))[0] || first;
+      clips[0].mediaId = tease ? tease.id : null; clips[0].role = 'tease';
+      const back = [];
+      for (let i = clips.length - 1; i >= P; i--) { const m = byId.get(clips[i].mediaId); if (m && m.kind === 'image' && !back.includes(m) && m !== tease) back.push(m); }
+      const n = P - 1;
+      for (let i = 0; i < n; i++) {
+        const m = back.length ? back[Math.min(back.length - 1, Math.floor((i * back.length) / n))] : tease;
+        clips[1 + i].mediaId = m ? m.id : null; clips[1 + i].role = 'rew';
+      }
     }
   }
 
@@ -2664,8 +2865,8 @@ function buildPlan(opts) {
 
   // Raster füllen: Zielbild in der Mitte (bzw. zuletzt), die übrigen nach Qualität, Fotos bevorzugt
   if (gridPlan && clips.length > 1) {
-    const c0 = clips[0];
-    const target = byId.get(clips[1].mediaId);
+    const c0 = clips[P];
+    const target = byId.get(clips[P + 1].mediaId);
     const tiles = gridPlan.n * gridPlan.n;
     const others = goodMedia(usable).filter((m) => m !== target && (m.kind === 'image' || m.poster))
       .sort((a, b) => (a.kind === 'image' ? 0 : 1) - (b.kind === 'image' ? 0 : 1) || (b.score || 0) - (a.score || 0)).slice(0, tiles - 1);
@@ -2681,10 +2882,22 @@ function buildPlan(opts) {
     orderIdx.forEach((cell, k) => { colorAt[cell] = gridPlan.times[k]; });
     c0.grid = { n: gridPlan.n, ids: cells, colorAt, target: center, zoomStart: gridPlan.zoomStart, zoomEnd: gridPlan.zoomEnd };
     c0.mediaId = target ? target.id : c0.mediaId;
-    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Einstieg im ${gridPlan.n === 3 ? '9er' : '4er'}-Raster: die Bilder werden Beat für Beat farbig, dann zoomt der Film ins ${gridPlan.n === 3 ? 'mittlere' : 'letzte'} Bild${Math.abs(clips[1].start - gridPlan.zoomEnd) < 0.01 && clips[1].label !== clips[0].label ? ` und landet genau auf dem ${SEC_DE[clips[1].label] || 'Einsatz'}` : ''}.`);
+    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Einstieg im ${gridPlan.n === 3 ? '9er' : '4er'}-Raster: die Bilder werden Beat für Beat farbig, dann zoomt der Film ins ${gridPlan.n === 3 ? 'mittlere' : 'letzte'} Bild${Math.abs(clips[P + 1].start - gridPlan.zoomEnd) < 0.01 && clips[P + 1].label !== clips[P].label ? ` und landet genau auf dem ${SEC_DE[clips[P + 1].label] || 'Einsatz'}` : ''}.`);
   }
 
-  // Übergänge
+  // Film-Strip-Ende: das letzte Bild wird zum Negativ auf einem Filmstreifen, der rückwärts durch den Film läuft
+  if (outro === 'strip' && !flight && clips.length > 3) {
+    const lastC = clips[clips.length - 1];
+    const ids = [];
+    for (let i = clips.length - 2; i >= 0 && ids.length < 10; i--) {
+      const c = clips[i];
+      for (const id of c.split ? c.split.ids : [c.mediaId]) if (id && !ids.includes(id) && byId.has(id)) ids.push(id);
+    }
+    if (ids.length >= 3) { lastC.strip = { ids }; lastC.mediaId = ids[0]; }
+  }
+
+  // Übergänge: aus dem Songaufbau und aus dem, was das vorige Bild zeigt
+  let matches = 0, morphs = 0;
   for (let i = 1; i < clips.length; i++) {
     const A = clips[i - 1], B = clips[i];
     const stopEnd = (an.stops || []).some((x) => Math.abs(x.end - (win.start + B.start)) < 0.06);
@@ -2693,17 +2906,27 @@ function buildPlan(opts) {
       peak: B.label === 'drop' || B.label === 'chorus', pace: s.pace, beatDur,
       lenA: A.end - A.start, lenB: B.end - B.start, stopEnd,
     }, rng);
-    if (A.split || B.split || A.grid || A.flightAnim || B.flightAnim || A.burst || B.burst || A.leader) tr = { type: TR.CUT, dur: 0, punch: false };
+    const fixedCut = A.split || B.split || A.grid || A.flightAnim || B.flightAnim || A.burst || B.burst || A.leader || A.pre || B.pre;
+    if (!fixedCut && B.role !== 'chapter') tr = refineTransition(tr, shotRelation(byId.get(A.mediaId), byId.get(B.mediaId)), {
+      B, A, beatDur, s, peak: B.label === 'drop' || B.label === 'chorus', rng, morphCount: morphs,
+    });
+    if (tr.match) { B.matchCut = true; matches++; }
+    if (tr.type === TR.MORPH || tr.type === TR.INK || tr.type === TR.DOUBLE) morphs++;
+    if (fixedCut) tr = { type: TR.CUT, dur: 0, punch: false };
+    if (B.strip) tr = { type: TR.DISSOLVE, dur: Math.min(0.35, 0.45 * (A.end - A.start)), punch: false };
     if (B.role === 'chapter') tr = { type: TR.DIP, dur: Math.min(beatDur * 1.5, 0.45 * (A.end - A.start), 0.45 * (B.end - B.start)), punch: false };
     const o = ov[B.i];
     if (o && o.trans != null) {
-      const dur = o.trans === TR.CUT ? 0 : Math.min(beatDur * (o.trans === TR.DISSOLVE || o.trans === TR.LUMA || o.trans === TR.DIP || o.trans === TR.LEAK ? 1 : 0.5), 0.45 * (A.end - A.start), 0.45 * (B.end - B.start));
+      const beats = o.trans === TR.MORPH || o.trans === TR.INK || o.trans === TR.DOUBLE ? 1.5 : o.trans === TR.DISSOLVE || o.trans === TR.LUMA || o.trans === TR.DIP || o.trans === TR.LEAK ? 1 : 0.5;
+      const dur = o.trans === TR.CUT ? 0 : Math.min(beatDur * beats, 0.45 * (A.end - A.start), 0.45 * (B.end - B.start));
       tr = { type: dur < 0.1 ? TR.CUT : o.trans, dur: dur < 0.1 ? 0 : dur, punch: false };
     }
     B.tin = { type: tr.type, dur: tr.dur };
     B.punch = tr.punch;
     A.tout = B.tin;
   }
+  if (matches) dir.notes.push(`${matches} Match-Cut${matches === 1 ? '' : 's'}: Bilder mit ähnlichem Aufbau schneiden unsichtbar ineinander, die Kamerabewegung läuft weiter.`);
+  if (morphs) dir.notes.push(`${morphs} ${morphs === 1 ? 'Übergang' : 'Übergänge'} „Bild aus Bild“: das nächste Motiv wächst aus dem vorigen heraus.`);
   if (clips.length) {
     clips[0].tin = { type: TR.CUT, dur: 0 };
     clips[clips.length - 1].tout = { type: TR.CUT, dur: 0 };
@@ -2711,11 +2934,13 @@ function buildPlan(opts) {
 
   // Loop-Ende: letzter Wischer läuft ins erste Bild
   let loopClip = null;
-  if (outro === 'loop' && clips.length > 1 && !clips[0].split) {
+  // mit Vorspann läuft der Loop in die erste Einstellung des Films (nicht in den Vorspann)
+  const loopTo = clips[P] && !clips[P].grid ? clips[P] : null;
+  if (outro === 'loop' && clips.length > P + 1 && loopTo && !loopTo.split) {
     const last = clips[clips.length - 1];
     const L = Math.min(beatDur * 0.5, (last.end - last.start) * 0.45);
     last.tout = { type: TR.WHIP, dur: L };
-    loopClip = { ...clips[0], i: clips.length, start: D, end: D + 1, tin: last.tout, tout: { type: TR.CUT, dur: 0 }, loop: true, punch: false };
+    loopClip = { ...loopTo, i: clips.length, pre: null, leader: false, start: D, end: D + 1, tin: last.tout, tout: { type: TR.CUT, dur: 0 }, loop: true, punch: false };
   }
 
   // Quellen, Tempo, Bewegung, Farbangleichung
@@ -2731,6 +2956,12 @@ function buildPlan(opts) {
     const m = byId.get(c.mediaId);
     c.mediaIndex = m ? media.indexOf(m) : -1;
     c.corr = m ? dir.corr.get(m.id) || [1, 1, 1] : [1, 1, 1];
+    if (c.strip) {
+      c.strip.items = c.strip.ids.map((id) => { const mm = byId.get(id); return { mediaIndex: media.indexOf(mm), focus: mm && mm.focus }; });
+      c.motion = { from: { s: 1, x: 0, y: 0 }, to: { s: 1, x: 0, y: 0 } };
+      c.srcOffset = 0; c.rate = 1; c.contain = false;
+      continue;
+    }
     if (c.grid) {
       c.grid.items = c.grid.ids.map((id) => {
         const mm = byId.get(id);
@@ -2771,6 +3002,17 @@ function buildPlan(opts) {
       else if ((c.label === 'intro' || c.label === 'outro' || s.pace === 'ruhig' || c.i === 0) && vd >= visDur * 0.75) rate = 0.75;
       let needS = visDur * rate;
       if (vd < needS) { rate = Math.max(0.5, vd / visDur); needS = visDur * rate; }
+      // Speed-Ramp: ins Drop hinein beschleunigen, auf dem Drop in Zeitlupe abbremsen
+      const nextC = clips[c.i + 1];
+      const rampOut = s.ramp === 'drop' && !o.speed && !withSound && nextC && nextC.sectionChange && (nextC.label === 'drop' || nextC.label === 'chorus') && visDur > 0.8;
+      const rampIn = s.ramp === 'drop' && !o.speed && !withSound && c.sectionChange && (c.label === 'drop' || c.label === 'chorus') && visDur > 0.8;
+      if (rampOut || rampIn) {
+        const pts = rampOut
+          ? [[c.visStart, 1], [c.visStart + visDur * 0.45, 1], [c.visEnd, 2.6]]
+          : [[c.visStart, 0.35], [c.visStart + visDur * 0.55, 0.35], [c.visEnd, 1]];
+        const need = rampIntegral(pts, c.visEnd);
+        if (vd >= need + 0.05) { c.rp = pts; rate = 1; needS = need; }
+      }
       let off;
       if (o.srcOffset != null) off = o.srcOffset;
       else if (c.role === 'takeoff') off = vd - needS - Math.min(1, vd * 0.05); // Abheben liegt meist gegen Ende
@@ -2784,7 +3026,7 @@ function buildPlan(opts) {
       }
       c.srcOffset = Math.max(0, Math.min(off, Math.max(0, vd - needS)));
       c.rate = rate;
-      if (withSound && Math.abs(rate - 1) < 0.01) {
+      if (withSound && Math.abs(rate - 1) < 0.01 && !c.rp) {
         const t1 = Math.min(c.freezeAt != null ? c.freezeAt : c.visEnd, c.visStart + (vd - c.srcOffset));
         if (t1 - c.visStart > 0.15) voice.push({ mediaIndex: media.indexOf(m), mediaId: m.id, t0: Math.max(0, c.visStart), t1: Math.min(D, t1), src: c.srcOffset + Math.max(0, -c.visStart), gain: m.sound });
       }
@@ -2799,17 +3041,32 @@ function buildPlan(opts) {
       prevDir = mo.dir;
       c.motion = mo.m;
       c.dir = mo.dir;
+      const pc = c.matchCut ? clips[c.i - 1] : null;
+      if (pc && pc.motion && !pc.contain && media[pc.mediaIndex] && media[pc.mediaIndex].kind === 'image') {
+        // Match-Cut: gleicher Ausschnitt wie am Ende des vorigen Bilds, die Kamerabewegung läuft weiter
+        const f = pc.motion.from, to = pc.motion.to, k = 0.7;
+        const cl = (v) => Math.max(-1, Math.min(1, v));
+        c.motion = { from: { ...to }, to: { s: Math.max(1, to.s + (to.s - f.s) * k), x: cl(to.x + (to.x - f.x) * k), y: cl(to.y + (to.y - f.y) * k) } };
+        c.dir = pc.dir;
+        prevDir = pc.dir;
+      }
+    }
+    if (c.pre === 'rew') {
+      // Zurückspulen: jedes Bild zieht sich schnell zusammen und rutscht gegen die Laufrichtung
+      const sg = c.i % 2 ? 1 : -1;
+      c.motion = { from: { s: 1.16, x: 0.35 * sg, y: 0 }, to: { s: 1.0, x: -0.35 * sg, y: 0 } };
+      if (m.kind === 'video') c.freezeAt = c.visStart;
     }
     if (c.tout && c.tout.type === TR.WHIP) c.tout.dirSign = c.dir === 'left' ? -1 : 1;
   }
   // nach dem Raster-Zoom: gleiches Bild, gleicher (zentrierter) Ausschnitt, dann sanfte Fahrt
-  if (clips[0] && clips[0].grid && clips[1] && clips[1].motion) {
-    const to = clips[1].motion.to;
-    clips[1].motion = { from: { s: 1, x: 0, y: 0 }, to: { s: Math.max(1.04, to.s || 1), x: (to.x || 0) * 0.5, y: (to.y || 0) * 0.5 } };
-    clips[1].contain = false;
+  if (clips[P] && clips[P].grid && clips[P + 1] && clips[P + 1].motion) {
+    const to = clips[P + 1].motion.to;
+    clips[P + 1].motion = { from: { s: 1, x: 0, y: 0 }, to: { s: Math.max(1.04, to.s || 1), x: (to.x || 0) * 0.5, y: (to.y || 0) * 0.5 } };
+    clips[P + 1].contain = false;
   }
   if (loopClip) {
-    const c0 = clips[0];
+    const c0 = loopTo;
     const L = loopClip.tin.dur;
     Object.assign(loopClip, {
       visStart: D - L, visEnd: D + 0.001, mediaIndex: c0.mediaIndex, contain: c0.contain, rate: c0.rate || 1, corr: c0.corr,
@@ -2843,28 +3100,42 @@ function buildPlan(opts) {
     if (t >= -0.01 && t <= D + 0.01) { beatsRel.push(t); downs.push(i % 4 === an.downPhase); beatEnergy.push(an.energy[i]); }
   }
   const beatsIn = (a, b) => beatsRel.filter((t) => t >= a - 0.01 && t < b);
-  const tEnd = Math.min(D * 0.45, Math.max(2.6, barDur * 1.4));
+  const tEnd = T0 + Math.min(D * 0.45, Math.max(2.6, barDur * 1.4));
+
+  // Vorspann
+  if (pre && pre.kind === 'countdown') {
+    fx.push({ type: 'desat', start: 0, end: pre.end, amp: 1 });
+    fx.push({ type: 'flash', start: pre.end, end: pre.end + 0.22, amp: 0.35 });
+    fx.push({ type: 'punch', start: pre.end, end: pre.end + 0.45, amp: 1 });
+    overlays.push({ type: 'leader', marks: pre.marks, start: 0, end: pre.end });
+  } else if (pre && pre.kind === 'rewind') {
+    fx.push({ type: 'desat', start: pre.teaseEnd, end: pre.end, amp: 0.45 });
+    fx.push({ type: 'flash', start: pre.end, end: pre.end + 0.18, amp: 0.3 });
+    overlays.push({ type: 'rewind', start: pre.teaseEnd - 0.12, end: pre.end, teaseEnd: pre.teaseEnd });
+    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, 'Vorspann Rewind: ein kurzer Blick auf den besten Moment, dann spult der Film zurück an den Anfang.');
+  }
+  if (pre && pre.kind === 'countdown') dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, 'Vorspann Countdown: 3 · 2 · 1 wie im alten Kino, danach beginnt dein Einstieg.');
 
   if (intro === 'cinema') {
-    const cardEnd = Math.min(clips[0].end - 1.0, Math.max(2.2, barDur * 1.1));
+    const cardEnd = Math.min(clips[P].end - 1.0, T0 + Math.max(2.2, barDur * 1.1));
     // Im Hochformat nie Schwarz: das Bild liegt abgedunkelt unter der Titelkarte
-    if (vertical) {
-      fx.push({ type: 'dim', start: 0, end: cardEnd + 0.9, amp: 0.62, fadeOut: 0.9 });
-      fx.push({ type: 'blur', start: 0, end: cardEnd + 0.9, amp: 1, fadeOut: 0.9 });
+    if (vertical || pre) {
+      fx.push({ type: 'dim', start: T0, end: cardEnd + 0.9, amp: 0.62, fadeOut: 0.9 });
+      fx.push({ type: 'blur', start: T0, end: cardEnd + 0.9, amp: 1, fadeOut: 0.9 });
     } else fx.push({ type: 'black', start: 0, end: cardEnd + 0.9, amp: 1, fadeOut: 0.9 });
-    overlays.push({ type: 'titlecard', text: title, sub: subtitle, geo, start: 0.15, end: cardEnd + 0.2 });
+    overlays.push({ type: 'titlecard', text: title, sub: subtitle, geo, start: T0 + 0.15, end: cardEnd + 0.2 });
   } else if (intro === 'city') {
-    fx.push({ type: 'focus', start: 0, end: Math.min(0.7, beatDur * 1.3), amp: 0.8 });
-    fx.push({ type: 'dim', start: 0, end: tEnd + 0.3, amp: 0.3, fadeOut: 0.6 });
-    if (title) overlays.push({ type: 'city', text: title, sub: subtitle, geo, start: 0, end: tEnd });
+    fx.push({ type: 'focus', start: T0, end: T0 + Math.min(0.7, beatDur * 1.3), amp: 0.8 });
+    fx.push({ type: 'dim', start: T0, end: tEnd + 0.3, amp: 0.3, fadeOut: 0.6 });
+    if (title) overlays.push({ type: 'city', text: title, sub: subtitle, geo, start: T0, end: tEnd });
   } else if (intro === 'hook') {
-    if (outro !== 'loop') fx.push({ type: 'focus', start: 0, end: Math.min(0.6, beatDur * 1.2), amp: 1 });
-    if (title) overlays.push({ type: 'lower', text: title, sub: subtitle, geo, start: Math.min(0.4, beatDur), end: tEnd });
+    if (outro !== 'loop' && !pre) fx.push({ type: 'focus', start: 0, end: Math.min(0.6, beatDur * 1.2), amp: 1 });
+    if (title) overlays.push({ type: 'lower', text: title, sub: subtitle, geo, start: T0 + Math.min(0.4, beatDur), end: tEnd });
   } else if (intro === 'type') {
-    const end = Math.min(clips[0].end + (clips[1] ? (clips[1].end - clips[1].start) * 0.5 : 0), tEnd + barDur * 0.5);
+    const end = Math.min(clips[P].end + (clips[P + 1] ? (clips[P + 1].end - clips[P + 1].start) * 0.5 : 0), tEnd + barDur * 0.5);
     if (title) {
-      overlays.push({ type: 'type', text: title, sub: subtitle, start: 0, end, beats: beatsIn(0, end - beatDur) });
-      fx.push({ type: 'dim', start: 0, end, amp: 0.45, fadeOut: 0.5 });
+      overlays.push({ type: 'type', text: title, sub: subtitle, start: T0, end, beats: beatsIn(T0, end - beatDur) });
+      fx.push({ type: 'dim', start: T0, end, amp: 0.45, fadeOut: 0.5 });
     }
   } else if (flight) {
     const an0 = clips.find((c) => c.flightAnim);
@@ -2873,15 +3144,15 @@ function buildPlan(opts) {
     if (title && tk && flight.from && flight.from.name) overlays.push({ type: 'lower', text: flight.from.name, sub: ['Abflug', flight.dep].filter(Boolean).join(' '), start: Math.min(0.4, beatDur), end: Math.min(tk.end - 0.5, Math.max(2.4, barDur * 1.2)) });
     if (title && ld && flight.to && flight.to.name) overlays.push({ type: 'lower', text: flight.to.name, sub: ['Ankunft', flight.arr].filter(Boolean).join(' '), start: ld.start + Math.min(0.8, beatDur * 1.5), end: Math.min(D - 0.3, ld.start + Math.max(2.6, barDur * 1.4)) });
   } else if (intro === 'countdown' && leader) {
-    fx.push({ type: 'desat', start: 0, end: leader.end, amp: 1 });
+    fx.push({ type: 'desat', start: leader.marks[0], end: leader.end, amp: 1 });
     fx.push({ type: 'flash', start: leader.end, end: leader.end + 0.22, amp: 0.35 });
     fx.push({ type: 'punch', start: leader.end, end: leader.end + 0.45, amp: 1 });
-    overlays.push({ type: 'leader', marks: leader.marks, start: 0, end: leader.end });
+    overlays.push({ type: 'leader', marks: leader.marks, start: leader.marks[0], end: leader.end });
     if (title) overlays.push({ type: 'lower', text: title, sub: subtitle, geo, start: leader.end + Math.min(0.3, beatDur * 0.5), end: Math.min(D - 0.5, leader.end + Math.max(2.6, barDur * 1.3)) });
   } else if (intro === 'knockout' && knock) {
-    if (title) overlays.push({ type: 'knockout', text: title, sub: subtitle, geo, start: 0, end: knock.end, zoomStart: knock.zoomStart });
-  } else if (intro === 'grid' && clips[0].grid) {
-    const g0 = clips[0].grid;
+    if (title) overlays.push({ type: 'knockout', text: title, sub: subtitle, geo, start: T0, end: knock.end, zoomStart: knock.zoomStart });
+  } else if (intro === 'grid' && clips[P] && clips[P].grid) {
+    const g0 = clips[P].grid;
     if (title) overlays.push({ type: 'lower', text: title, sub: subtitle, geo, start: g0.zoomEnd + Math.min(0.3, beatDur * 0.5), end: Math.min(D - 0.5, g0.zoomEnd + Math.max(2.4, barDur * 1.2)) });
   } else if (intro === 'split') {
     if (title) overlays.push({ type: 'lower', text: title, sub: subtitle, geo, start: Math.max(0.6, (clips[0].split ? clips[0].split.reveal.slice(-1)[0] : 0) + 0.2), end: Math.min(D * 0.45, clips[0].end + barDur * 0.5), center: true });
@@ -2889,6 +3160,7 @@ function buildPlan(opts) {
 
   // Kapitel (Gesamtfilm)
   const introOvEnd = Math.max(0, ...overlays.map((o) => o.end));
+  const introOvEnd0 = introOvEnd;
   let chapterCount = 0;
   for (const c of clips) if (c.chapter) chapterCount++;
   for (let ci = 0; ci < clips.length; ci++) {
@@ -2937,6 +3209,38 @@ function buildPlan(opts) {
   for (const c of clips) {
     if (c.punch) fx.push({ type: 'punch', start: c.start, end: c.start + 0.45, amp: 1 });
     if (c.freezeAt != null && !(outro === 'freeze' && c === last)) fx.push({ type: 'flash', start: c.freezeAt, end: c.freezeAt + 0.2, amp: 0.25 });
+  }
+
+  if (last && last.strip) {
+    const dur = last.end - last.start;
+    if (title) overlays.push({ type: 'lower', text: title, sub: subtitle, geo: null, start: last.start + dur * 0.4, end: D + 0.5, center: true });
+    dir.notes.push('Ende als Filmstreifen: das letzte Bild wird zum Einzelbild auf dem Streifen, der rückwärts durch deinen Film läuft.');
+  }
+
+  // Digicam: kleiner Blitz auf Fotoschnitten, Datumsstempel wie früher
+  const digicam = s.look === 'digicam';
+  if (digicam) {
+    let k = 0;
+    for (const c of clips) {
+      const m = byId.get(c.mediaId);
+      if (!m || m.kind !== 'image' || c.pre || c.grid || c.split || c.i === 0 || c.burst) continue;
+      if (k++ % 2 === 0) fx.push({ type: 'flash', start: c.start, end: c.start + 0.12, amp: 0.22 });
+    }
+  }
+  if (s.stamp === 'on' || (s.stamp !== 'off' && digicam)) {
+    const blackAt = Math.min(D, ...fx.filter((f) => f.type === 'black' && f.start > D * 0.5).map((f) => f.start));
+    const stampText = (ms) => { const d = new Date(ms); return `'${String(d.getFullYear() % 100).padStart(2, '0')} ${String(d.getMonth() + 1).padStart(2, ' ')} ${String(d.getDate()).padStart(2, '0')}`; };
+    let curOv = null;
+    for (const c of clips) {
+      const m = byId.get(c.mediaId);
+      const ok = m && m.time > 1e11 && !c.pre && !c.grid && !c.split && !c.flightAnim && !c.strip;
+      const st = Math.max(c.start, introOvEnd0), en = Math.min(c.end, blackAt);
+      if (!ok || en - st < 0.2) { curOv = null; continue; }
+      const text = stampText(m.time);
+      if (curOv && curOv.text === text && Math.abs(curOv.end - st) < 0.01) { curOv.end = en; continue; }
+      curOv = { type: 'datestamp', text, start: st, end: en };
+      overlays.push(curOv);
+    }
   }
 
   // Eigene Texte und Sticker
@@ -3178,7 +3482,8 @@ function direct(an, media, s, chapters, flight) {
     // Raster-Einstieg: der Zoom soll auf dem Drop/Refrain landen
     // Raster und Countdown: der Übergang ins erste Vollbild soll auf dem Drop/Refrain landen
     const step = an.beatPeriod < 0.42 ? 2 : 1;
-    const lead = s.intro === 'grid' && list.length >= 4 ? (list.length >= 9 ? 9 : 4) * step * an.beatPeriod : s.intro === 'countdown' ? 3 * step * an.beatPeriod : 0;
+    const preLead = s.pre === 'countdown' && s.intro !== 'countdown' ? 3 : s.pre === 'rewind' ? 4 : 0;
+    const lead = (s.intro === 'grid' && list.length >= 4 ? (list.length >= 9 ? 9 : 4) * step * an.beatPeriod : s.intro === 'countdown' ? 3 * step * an.beatPeriod : 0) + (flight || s.intro === 'split' ? 0 : preLead * step * an.beatPeriod);
     win = smartWindow(an, T, lead);
   } else {
     win = pickWindow(an, { length: T, songStart: s.songStart });
@@ -3245,7 +3550,7 @@ function direct(an, media, s, chapters, flight) {
   if (rs.outro === 'split' && splitPool < 3) rs.outro = 'credits';
 
   const INTRO_DE = { countdown: 'Countdown wie im alten Kino, darunter blitzen deine Bilder in Schwarzweiß auf, auf dem Einsatz geht es in Farbe los', knockout: 'der Ortsname ist ein Fenster ins Bild, dann zoomt der Film durch die Buchstaben', flight: 'Abflug-Video, dann zeichnet sich deine Flugroute über dem Globus, danach die Landung', grid: 'neun Bilder in Schwarzweiß werden im Takt farbig, dann zoomt der Film ins mittlere Bild', city: 'dein stärkstes Bild mit dem Ortsnamen groß im Bild', cinema: fr.kind === 'film' ? 'Titelkarte auf Schwarz, dann blendet das erste Bild auf' : 'Titelkarte über dem abgedunkelten ersten Bild', hook: 'dein stärkstes Bild eröffnet, der Titel steht dezent unten', type: 'der Titel läuft Wort für Wort im Takt', split: 'drei Bilder öffnen den Film nacheinander im Split-Screen' };
-  const OUTRO_DE = { credits: 'Abblende und Schlusstitel', loop: 'nahtloser Übergang zurück zum Anfang (Endlos-Loop)', freeze: 'Standbild, das in Schwarzweiß ausläuft', split: 'Split-Screen und harter Schnitt auf Schwarz' };
+  const OUTRO_DE = { strip: 'Filmstreifen, der rückwärts durch deinen Film läuft', credits: 'Abblende und Schlusstitel', loop: 'nahtloser Übergang zurück zum Anfang (Endlos-Loop)', freeze: 'Standbild, das in Schwarzweiß ausläuft', split: 'Split-Screen und harter Schnitt auf Schwarz' };
   if (s.intro === 'auto' || s.outro === 'auto') notes.push(`Einstieg: ${INTRO_DE[rs.intro]}. Ende: ${OUTRO_DE[rs.outro]}.`);
 
   const cm = colorMatch(all);
@@ -3301,9 +3606,21 @@ uniform float uGlow, uLeak, uFlash, uBars, uBlack, uDim, uDesat;
 uniform float uHasOvTop;
 uniform float uLod;
 uniform float uSharp;   // leichte Unscharfmaskierung über die Mipmap-Stufe
+uniform vec2 uFocA;     // Bildschwerpunkt im Ausgabebild (für Bild-aus-Bild-Übergänge)
+uniform vec2 uFocB;
 
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+float fbm(vec2 p) {
+  float v = 0.0, a = 0.5;
+  for (int i = 0; i < 4; i++) { v += a * vnoise(p); p = p * 2.03 + 7.1; a *= 0.5; }
+  return v;
+}
 vec2 rot2(vec2 p, float a) { float c = cos(a), s = sin(a); return vec2(c * p.x - s * p.y, s * p.x + c * p.y); }
 
 vec3 sampleSrc(sampler2D tex, vec4 xf, vec3 box, vec4 geo, vec2 uv) {
@@ -3394,6 +3711,31 @@ vec3 composite(vec2 uv) {
     else if (uTrans == 7) {
       float thr = mix(-0.25, 1.25, p);
       c = mix(a, b, smoothstep(1.0 - thr - 0.18, 1.0 - thr + 0.18, luma(b)));
+    }
+    else if (uTrans >= 10) {
+      vec2 asp2 = vec2(uRes.x / (uRes.y * uBand.y), 1.0);
+      // Abstand zum Motiv, auf die entfernteste Bildecke normiert (gleiches Tempo in jedem Format)
+      float d = length((uv - uFocB) * asp2) / length(max(uFocB, 1.0 - uFocB) * asp2);
+      if (uTrans == 10) {
+        // Farbfluss: das neue Bild breitet sich wie Tinte vom Motiv aus
+        float field = d * 0.8 + (fbm(uv * asp2 * 3.2 + uDir * 1.7) - 0.5) * 0.5;
+        float thr = mix(-0.32, 1.1, p);
+        float m = smoothstep(thr - 0.05, thr + 0.05, field);
+        float rim = smoothstep(0.1, 0.0, abs(field - thr)) * (1.0 - m);
+        c = mix(b, a, m) + rim * 0.1 * vec3(1.0, 0.93, 0.82);
+      } else if (uTrans == 11) {
+        // Bild aus Bild: helle Formen und das Motiv des neuen Bilds wachsen aus dem alten heraus
+        float field = 0.55 * (1.0 - luma(b)) + 0.45 * d + (fbm(uv * asp2 * 5.0) - 0.5) * 0.12;
+        float thr = mix(-0.3, 1.3, p);
+        float m = smoothstep(thr - 0.2, thr + 0.2, field);
+        c = mix(b, a, m);
+        c += (1.0 - m) * m * 0.35 * sin(3.14159265 * p) * vec3(1.0, 0.95, 0.88);
+      } else {
+        // Doppelbelichtung: das neue Bild erscheint in den hellen Flächen des alten
+        vec3 scr = 1.0 - (1.0 - a) * (1.0 - b);
+        vec3 dbl = mix(a * 0.85 + b * 0.15, scr * 0.94, clamp(luma(a) * 1.3, 0.0, 1.0) * 0.8);
+        c = p < 0.5 ? mix(a, dbl, smoothstep(0.0, 0.5, p)) : mix(dbl, b, smoothstep(0.5, 1.0, p));
+      }
     }
     else c = p < 0.5 ? a : b;
   }
@@ -3508,7 +3850,7 @@ class Renderer {
   }
 
   /** Lädt Bild/Video/Canvas in eine Textur (mit Mipmaps unter WebGL2). */
-  upload(tex, source) {
+  upload(tex, source, mip = true) {
     const gl = this.gl;
     gl.bindTexture(gl.TEXTURE_2D, tex);
     try {
@@ -3516,10 +3858,10 @@ class Renderer {
     } catch (e) {
       return false;
     }
-    if (this.isGL2) {
+    if (this.isGL2 && mip) {
       gl.generateMipmap(gl.TEXTURE_2D);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-    }
+    } else if (this.isGL2) gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     return true;
   }
 
@@ -3563,6 +3905,8 @@ class Renderer {
     gl.uniform2fv(u.uOffB, L(f.B, 'off', [0, 0]));
     gl.uniform3fv(u.uCorrA, L(f.A, 'corr', [1, 1, 1]));
     gl.uniform3fv(u.uCorrB, L(f.B, 'corr', [1, 1, 1]));
+    gl.uniform2fv(u.uFocA, L(f.A, 'foc', [0.5, 0.45]));
+    gl.uniform2fv(u.uFocB, L(f.B, 'foc', [0.5, 0.45]));
     gl.uniform2fv(u.uBand, f.band || [0, 1]);
     gl.uniform1f(u.uHasA, f.A ? 1 : 0);
     gl.uniform1f(u.uHasB, f.B ? 1 : 0);
@@ -3747,6 +4091,8 @@ class OverlayPainter {
         else if (o.type === 'flight') this.drawFlight(ctx, o, t, geo);
         else if (o.type === 'knockout') this.drawKnockout(ctx, o, t, geo);
         else if (o.type === 'leader') this.drawLeader(ctx, o, t, geo);
+        else if (o.type === 'rewind') this.drawRewind(ctx, o, t, geo);
+        else if (o.type === 'datestamp') this.drawDateStamp(ctx, o, t, geo);
         else if (o.type === 'usertext') this.drawUserText(ctx, o, t, geo, o.id === selectedId);
         else if (o.type === 'sticker') this.drawSticker(ctx, o, t, geo, o.id === selectedId);
         ctx.restore();
@@ -4055,6 +4401,89 @@ class OverlayPainter {
    * Countdown wie ein alter Filmvorspann: Kreise, Fadenkreuz, umlaufender Zeiger, große Ziffer.
    * Darunter laufen deine Bilder in Schwarzweiß (nie ein schwarzes Bild), dazu Sepia, Flackern, Kratzer.
    */
+  /** Zurückspulen wie auf einer alten Kassette: Bildstörstreifen, Zeilen, ◀◀ und rückwärts laufende Zeit. */
+  drawRewind(ctx, o, t, g) {
+    const W = g.W, top = g.by, bh = g.bh;
+    const short = Math.min(W, bh);
+    const local = t - o.start, dur = Math.max(0.1, o.end - o.start);
+    const u = cl01(local / dur);
+    const frame = Math.floor(t * 30);
+    const rnd = (n) => { const x = Math.sin(n * 12.9898 + 78.233) * 43758.5453; return x - Math.floor(x); };
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, top, W, bh); ctx.clip();
+    // kühler Videoton
+    ctx.fillStyle = 'rgba(30,48,96,0.14)';
+    ctx.fillRect(0, top, W, bh);
+    // Zeilenstruktur
+    ctx.fillStyle = 'rgba(0,0,0,0.13)';
+    const step = Math.max(2, Math.round(bh / 260));
+    for (let y = top; y < top + bh; y += step * 2) ctx.fillRect(0, y, W, step);
+    // Bildstörstreifen, die schnell nach oben laufen
+    for (let k = 0; k < 2; k++) {
+      const yb = top + bh * (1 - ((t * (1.7 + k * 0.9) + k * 0.37) % 1));
+      const hb = bh * (0.035 + 0.02 * k);
+      for (let i = 0; i < 14; i++) {
+        const yy = yb + (i / 14) * hb;
+        const x0 = rnd(frame * 31 + i + k * 7) * W * 0.6;
+        ctx.fillStyle = `rgba(245,242,235,${(0.1 + rnd(frame + i * 3 + k) * 0.28).toFixed(3)})`;
+        ctx.fillRect(x0, yy, W * (0.2 + rnd(i + frame) * 0.8), Math.max(1, hb / 16));
+      }
+    }
+    // kurzes Aufflackern beim Einlegen des Rückspulens
+    if (t < o.teaseEnd + 0.1) {
+      ctx.fillStyle = 'rgba(255,255,255,0.35)';
+      for (let i = 0; i < 6; i++) ctx.fillRect(0, top + rnd(frame + i * 11) * bh, W, Math.max(2, bh * 0.012));
+    }
+    ctx.restore();
+    // Anzeige
+    const m = g.margin;
+    const fs = short * 0.06;
+    ctx.font = `600 ${fs}px ${OV_FONTS.mono}`;
+    ctx.textBaseline = 'top';
+    ctx.shadowColor = 'rgba(0,0,0,0.45)';
+    ctx.shadowBlur = fs * 0.2;
+    ctx.fillStyle = 'rgba(246,242,232,0.95)';
+    const y = top + m * 0.8;
+    if (frame % 16 < 12) {
+      // ◀◀ als zwei Dreiecke (unabhängig von der Schrift)
+      const tw = fs * 0.62, th = fs * 0.72;
+      for (let k = 0; k < 2; k++) {
+        const x = m + k * tw * 0.95;
+        ctx.beginPath(); ctx.moveTo(x, y + th / 2); ctx.lineTo(x + tw, y); ctx.lineTo(x + tw, y + th); ctx.closePath(); ctx.fill();
+      }
+      ctx.fillText('REW', m + tw * 2.3, y - fs * 0.04);
+    }
+    // Zeit läuft rückwärts auf 0:00:00 zu
+    const secs = Math.max(0, Math.round((1 - u) * (o.span || 754)));
+    const tc = `0:${String(Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(tc, W - m, top + bh - m * 0.9);
+    ctx.textAlign = 'left';
+  }
+
+  /** Datumsstempel wie auf einer Digitalkamera der 2000er: orange Ziffern unten rechts. */
+  drawDateStamp(ctx, o, t, g) {
+    const W = g.W, short = Math.min(W, g.bh);
+    const fs = short * 0.045;
+    ctx.font = `600 ${fs}px ${OV_FONTS.mono}`;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'bottom';
+    const a = cl01((t - o.start) / 0.15) * cl01((o.end - t) / 0.15);
+    ctx.globalAlpha = a;
+    const x = W - g.margin * 0.9, y = g.by + g.bh - g.margin * (g.vertical ? 1.6 : 0.8);
+    // weiches Leuchten wie bei eingebrannten LED-Ziffern
+    ctx.shadowColor = 'rgba(255,120,30,0.75)';
+    ctx.shadowBlur = fs * 0.5;
+    ctx.fillStyle = '#ffa23a';
+    ctx.fillText(o.text, x, y);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(255,196,120,0.9)';
+    ctx.fillText(o.text, x, y);
+    ctx.globalAlpha = 1;
+    ctx.textAlign = 'left';
+  }
+
   drawLeader(ctx, o, t, g) {
     const W = g.W, H = g.H, cx = g.cx, cy = g.cy;
     const m = o.marks;
@@ -4699,12 +5128,359 @@ class Mp4Muxer {
 }
 
 /* ============================================================
+ * Video-Einleser für den Export: liest MP4/MOV-Dateien (auch vom
+ * iPhone: H.264, HEVC, Drehung, Schnittlisten) und dekodiert die
+ * Bilder mit WebCodecs der Reihe nach, in voller Originalqualität.
+ * Viel schneller als für jedes Filmbild im Video zu springen.
+ * Wird ein Format nicht unterstützt, nutzt der Export das Videoelement.
+ * ============================================================ */
+
+const hex2 = (n) => n.toString(16).padStart(2, '0');
+
+/** WebCodecs-Codec-Kennung aus dem Sample-Eintrag und seiner Konfiguration. */
+function codecString(type, cfg) {
+  if (!cfg) return null;
+  if (type === 'avc1' || type === 'avc3') return `${type}.${hex2(cfg[1])}${hex2(cfg[2])}${hex2(cfg[3])}`;
+  if (type === 'hvc1' || type === 'hev1') {
+    const space = cfg[1] >> 6, tier = (cfg[1] >> 5) & 1, profile = cfg[1] & 31;
+    let compat = ((cfg[2] << 24) | (cfg[3] << 16) | (cfg[4] << 8) | cfg[5]) >>> 0;
+    let rev = 0;
+    for (let i = 0; i < 32; i++) { rev = ((rev << 1) | (compat & 1)) >>> 0; compat >>>= 1; }
+    const cons = Array.from(cfg.subarray(6, 12));
+    while (cons.length && cons[cons.length - 1] === 0) cons.pop();
+    return [`${type}.${['', 'A', 'B', 'C'][space]}${profile}`, rev.toString(16), `${tier ? 'H' : 'L'}${cfg[12]}`, ...cons.map((c) => c.toString(16).toUpperCase())].join('.');
+  }
+  if (type === 'vp09') {
+    // vpcC ist eine FullBox: 4 Byte Version/Flags, dann Profil, Level, Bittiefe (obere 4 Bit)
+    return `vp09.${String(cfg[4]).padStart(2, '0')}.${String(cfg[5]).padStart(2, '0')}.${String(cfg[6] >> 4).padStart(2, '0')}`;
+  }
+  if (type === 'av01') {
+    const profile = cfg[1] >> 5, level = cfg[1] & 31, tier = cfg[2] >> 7, hbd = (cfg[2] >> 6) & 1, twelve = (cfg[2] >> 5) & 1;
+    return `av01.${profile}.${String(level).padStart(2, '0')}${tier ? 'H' : 'M'}.${hbd ? (twelve ? '12' : '10') : '08'}`;
+  }
+  return null;
+}
+
+/** Liest nur die Kopfdaten (moov) einer MP4/MOV-Datei und baut die Bildtabelle der Videospur. */
+async function demuxVideo(file) {
+  const size = file.size;
+  const read = async (pos, len) => new DataView(await file.slice(pos, pos + len).arrayBuffer());
+  // oberste Ebene nach moov durchsuchen
+  let pos = 0, moov = null;
+  for (let guard = 0; pos + 8 <= size && guard < 64; guard++) {
+    const h = await read(pos, 16);
+    let len = h.getUint32(0);
+    const type = String.fromCharCode(h.getUint8(4), h.getUint8(5), h.getUint8(6), h.getUint8(7));
+    if (len === 1) len = h.getUint32(8) * 4294967296 + h.getUint32(12);
+    else if (len === 0) len = size - pos;
+    if (len < 8) return null;
+    if (type === 'moov') { if (len > 64e6) return null; moov = await read(pos, len); break; }
+    pos += len;
+  }
+  if (!moov) return null;
+  const u8 = new Uint8Array(moov.buffer, moov.byteOffset, moov.byteLength);
+  const boxes = (start, end) => {
+    const out = [];
+    let p = start;
+    while (p + 8 <= end) {
+      let len = moov.getUint32(p);
+      const type = String.fromCharCode(u8[p + 4], u8[p + 5], u8[p + 6], u8[p + 7]);
+      let hdr = 8;
+      if (len === 1) { len = moov.getUint32(p + 8) * 4294967296 + moov.getUint32(p + 12); hdr = 16; } else if (len === 0) len = end - p;
+      if (len < hdr || p + len > end) break;
+      out.push({ type, start: p + hdr, end: p + len });
+      p += len;
+    }
+    return out;
+  };
+  const child = (b, type) => boxes(b.start, b.end).find((x) => x.type === type);
+  const top = boxes(0, u8.length)[0];
+  for (const trak of boxes(top.start, top.end).filter((b) => b.type === 'trak')) {
+    const mdia = child(trak, 'mdia');
+    const hdlr = mdia && child(mdia, 'hdlr');
+    if (!hdlr || String.fromCharCode(u8[hdlr.start + 8], u8[hdlr.start + 9], u8[hdlr.start + 10], u8[hdlr.start + 11]) !== 'vide') continue;
+    // Drehung aus der Matrix der Spur (iPhone speichert Hochkant oft quer + 90°)
+    const tkhd = child(trak, 'tkhd');
+    const tv = u8[tkhd.start];
+    const mOff = tkhd.start + (tv === 1 ? 52 : 40);
+    const a = moov.getInt32(mOff) / 65536, bb = moov.getInt32(mOff + 4) / 65536;
+    const rotation = ((Math.round(Math.atan2(bb, a) * 180 / Math.PI / 90) * 90) % 360 + 360) % 360;
+    const mdhd = child(mdia, 'mdhd');
+    const timescale = moov.getUint32(mdhd.start + (u8[mdhd.start] === 1 ? 20 : 12));
+    // Schnittliste: Beginn der sichtbaren Medienzeit
+    let editShift = 0;
+    const edts = child(trak, 'edts'), elst = edts && child(edts, 'elst');
+    if (elst) {
+      const v = u8[elst.start], n = moov.getUint32(elst.start + 4);
+      let p = elst.start + 8, emptyDur = 0;
+      for (let i = 0; i < n; i++) {
+        const mt = v === 1 ? moov.getInt32(p + 8) * 4294967296 + moov.getUint32(p + 12) : moov.getInt32(p + 4);
+        if (mt === -1) { emptyDur += v === 1 ? moov.getUint32(p + 4) : moov.getUint32(p); p += v === 1 ? 20 : 12; continue; }
+        editShift = mt; break;
+      }
+      if (emptyDur) return null; // leere Vorlaufstrecken: selten, lieber sicher über das Videoelement
+    }
+    const stbl = child(child(mdia, 'minf'), 'stbl');
+    const get = (t) => child(stbl, t);
+    const stsd = get('stsd');
+    const entry = boxes(stsd.start + 8, stsd.end)[0];
+    const width = moov.getUint16(entry.start + 24), height = moov.getUint16(entry.start + 26);
+    const cfgBox = boxes(entry.start + 78, entry.end).find((x) => ['avcC', 'hvcC', 'vpcC', 'av1C'].includes(x.type));
+    const cfg = cfgBox ? u8.slice(cfgBox.start, cfgBox.end) : null;
+    const codec = codecString(entry.type, cfg);
+    if (!codec) return null;
+    // Bildtabelle
+    const stsz = get('stsz');
+    const fixed = moov.getUint32(stsz.start + 4), count = moov.getUint32(stsz.start + 8);
+    const sizes = new Uint32Array(count);
+    for (let i = 0; i < count; i++) sizes[i] = fixed || moov.getUint32(stsz.start + 12 + i * 4);
+    const stco = get('stco'), co64 = get('co64');
+    const chunkOffsets = [];
+    if (stco) { const n = moov.getUint32(stco.start + 4); for (let i = 0; i < n; i++) chunkOffsets.push(moov.getUint32(stco.start + 8 + i * 4)); }
+    else if (co64) { const n = moov.getUint32(co64.start + 4); for (let i = 0; i < n; i++) chunkOffsets.push(moov.getUint32(co64.start + 8 + i * 8) * 4294967296 + moov.getUint32(co64.start + 12 + i * 8)); }
+    const stsc = get('stsc');
+    const scN = moov.getUint32(stsc.start + 4);
+    const sc = [];
+    for (let i = 0; i < scN; i++) sc.push([moov.getUint32(stsc.start + 8 + i * 12), moov.getUint32(stsc.start + 12 + i * 12)]);
+    const offsets = new Float64Array(count);
+    let si = 0;
+    for (let c = 0; c < chunkOffsets.length && si < count; c++) {
+      let per = sc[0][1];
+      for (const [first, n] of sc) if (c + 1 >= first) per = n;
+      let off = chunkOffsets[c];
+      for (let k = 0; k < per && si < count; k++) { offsets[si] = off; off += sizes[si]; si++; }
+    }
+    const dts = new Float64Array(count);
+    const stts = get('stts');
+    let t = 0, i = 0;
+    for (let e = 0, n = moov.getUint32(stts.start + 4); e < n; e++) {
+      const cnt = moov.getUint32(stts.start + 8 + e * 8), d = moov.getUint32(stts.start + 12 + e * 8);
+      for (let k = 0; k < cnt && i < count; k++) { dts[i++] = t; t += d; }
+    }
+    const cts = Float64Array.from(dts);
+    const ctts = get('ctts');
+    if (ctts) {
+      const v = u8[ctts.start];
+      let j = 0;
+      for (let e = 0, n = moov.getUint32(ctts.start + 4); e < n; e++) {
+        const cnt = moov.getUint32(ctts.start + 8 + e * 8);
+        const off = v === 1 ? moov.getInt32(ctts.start + 12 + e * 8) : moov.getUint32(ctts.start + 12 + e * 8);
+        for (let k = 0; k < cnt && j < count; k++) cts[j] += off, j++;
+      }
+    }
+    const key = new Uint8Array(count);
+    const stss = get('stss');
+    if (stss) { for (let e = 0, n = moov.getUint32(stss.start + 4); e < n; e++) key[moov.getUint32(stss.start + 8 + e * 4) - 1] = 1; } else key.fill(1);
+    // Zeiten in Mikrosekunden der Wiedergabe (nach Schnittliste)
+    const us = (v) => Math.round(((v - editShift) / timescale) * 1e6);
+    const samples = [];
+    for (let k = 0; k < count; k++) samples.push({ off: offsets[k], size: sizes[k], dts: us(dts[k]), cts: us(cts[k]), key: !!key[k], dur: k + 1 < count ? us(dts[k + 1]) - us(dts[k]) : 33333 });
+    return { codec, description: entry.type === 'avc1' || entry.type === 'avc3' || entry.type === 'hvc1' || entry.type === 'hev1' || entry.type === 'av01' ? cfg : undefined, width, height, rotation, samples, file };
+  }
+  return null;
+}
+
+/**
+ * Liefert Bilder zu aufsteigenden Zeitpunkten. Dekodiert fortlaufend ab dem passenden Schlüsselbild
+ * und hält immer das Bild, das zum gewünschten Zeitpunkt zu sehen ist.
+ */
+class FrameReader {
+  constructor(track, maxDim = Infinity, cpu = false) {
+    this.t = track;
+    this.dec = null;
+    this.queue = [];
+    this.cur = null;
+    this.next = 0;
+    this.flushed = false;
+    this.failed = null;
+    this.waiters = [];
+    const rot = track.rotation % 180 !== 0;
+    this.canvas = document.createElement('canvas');
+    const dw = rot ? track.height : track.width, dh = rot ? track.width : track.height;
+    const sc = Math.min(1, maxDim / Math.max(dw, dh));
+    this.canvas.width = Math.max(2, Math.round(dw * sc));
+    this.canvas.height = Math.max(2, Math.round(dh * sc));
+    // zum Auslesen der Pixel (Bewertung) im Arbeitsspeicher halten
+    if (cpu) this.canvas.getContext('2d', { willReadFrequently: true });
+    this.drawnTs = null;
+  }
+
+  static async open(track, maxDim, cpu) {
+    if (typeof VideoDecoder === 'undefined' || !track) return null;
+    const cfg = { codec: track.codec, codedWidth: track.width, codedHeight: track.height, hardwareAcceleration: 'no-preference' };
+    if (track.description) cfg.description = track.description;
+    try { if (!(await VideoDecoder.isConfigSupported(cfg)).supported) return null; } catch (e) { return null; }
+    const r = new FrameReader(track, maxDim, cpu);
+    r.cfg = cfg;
+    return r;
+  }
+
+  _makeDecoder() {
+    if (this.dec) { try { this.dec.close(); } catch (e) { /* ignore */ } }
+    this.dec = new VideoDecoder({
+      output: (f) => { this.queue.push(f); this.queue.sort((x, y) => x.timestamp - y.timestamp); this._wake(); },
+      error: (e) => { this.failed = e; this._wake(); },
+    });
+    this.dec.configure(this.cfg);
+  }
+
+  _wake() { const w = this.waiters; this.waiters = []; for (const f of w) f(); }
+  _wait(ms) { return new Promise((r) => { this.waiters.push(r); setTimeout(r, ms); }); }
+
+  _reset(us) {
+    for (const f of this.queue) f.close();
+    this.queue = [];
+    if (this.cur) { this.cur.close(); this.cur = null; }
+    this.drawnTs = null;
+    const s = this.t.samples;
+    // letztes Schlüsselbild, dessen Anzeigezeit nicht nach dem Ziel liegt
+    let k = 0;
+    for (let i = 0; i < s.length; i++) if (s[i].key && s[i].cts <= us) k = i;
+    this.next = k;
+    this.flushed = false;
+    this._makeDecoder();
+  }
+
+  /** Liest Dateibereiche blockweise (bis 4 MB) statt Bild für Bild: deutlich weniger Dateizugriffe. */
+  async _bytes(s) {
+    const b = this.buf;
+    if (b && s.off >= b.start && s.off + s.size <= b.end) return b.data.subarray(s.off - b.start, s.off - b.start + s.size);
+    const smp = this.t.samples;
+    let end = s.off + s.size;
+    for (let i = this.next; i < smp.length && i < this.next + 90; i++) {
+      const e = smp[i].off + smp[i].size;
+      if (smp[i].off < s.off || e - s.off > 4 << 20) break;
+      end = Math.max(end, e);
+    }
+    const data = new Uint8Array(await this.t.file.slice(s.off, end).arrayBuffer());
+    this.buf = { start: s.off, end: s.off + data.length, data };
+    return data.subarray(0, s.size);
+  }
+
+  async _feed() {
+    const s = this.t.samples[this.next++];
+    const data = await this._bytes(s);
+    this.dec.decode(new EncodedVideoChunk({ type: s.key ? 'key' : 'delta', timestamp: s.cts, duration: s.dur, data }));
+  }
+
+  /** Bild zum Zeitpunkt (Sekunden, Wiedergabezeit der Datei). */
+  async frameAt(sec) {
+    const us = Math.round(sec * 1e6);
+    const tol = 500;
+    if (!this.dec || (this.cur && us + tol < this.cur.timestamp) || (this.queue.length && this.cur && us + tol < this.cur.timestamp)) this._reset(us);
+    // weit voraus gesprungen: vom nächsten Schlüsselbild neu anfangen statt alles dazwischen zu dekodieren
+    const s = this.t.samples;
+    // Liegt vor dem Ziel noch ein Schlüsselbild, das deutlich weiter vorne ist: dort neu ansetzen
+    if (this.dec && !(this.cur && us <= this.cur.timestamp + tol)) {
+      let k = -1;
+      for (let i = this.next; i < s.length && s[i].cts <= us + 1e6; i++) if (s[i].key && s[i].cts <= us) k = i;
+      if (k - this.next > 8) this._reset(us);
+    }
+    for (let guard = 0; guard < 100000; guard++) {
+      if (this.failed) throw this.failed;
+      while (this.queue.length && this.queue[0].timestamp <= us + tol) {
+        const f = this.queue.shift();
+        if (this.cur) this.cur.close();
+        this.cur = f;
+      }
+      if (this.queue.length || (this.flushed && this.dec.decodeQueueSize === 0)) break;
+      if (this.next < s.length) {
+        if (this.dec.decodeQueueSize < 6) { await this._feed(); continue; }
+        await this._wait(20);
+      } else if (!this.flushed) {
+        this.flushed = true;
+        await this.dec.flush();
+      } else await this._wait(20);
+    }
+    if (!this.cur && this.queue.length) { this.cur = this.queue.shift(); }
+    return this.cur;
+  }
+
+  /** Zeichnet das Bild (mit Drehung) in die eigene Leinwand, nur wenn es sich geändert hat. */
+  async canvasAt(sec) {
+    const f = await this.frameAt(sec);
+    if (!f) return null;
+    if (this.drawnTs === f.timestamp) return this.canvas;
+    this.drawTo(this.canvas, f);
+    this.drawnTs = f.timestamp;
+    return this.canvas;
+  }
+
+  /** Aktuelles Bild mit Drehung in eine beliebige Leinwand zeichnen (füllt sie ganz). */
+  drawTo(c, f = this.cur) {
+    if (!f) return false;
+    const x = c.getContext('2d');
+    const rot = this.t.rotation;
+    const sw = rot % 180 ? c.height : c.width, sh = rot % 180 ? c.width : c.height;
+    x.setTransform(1, 0, 0, 1, 0, 0);
+    if (rot === 90) x.setTransform(0, 1, -1, 0, c.width, 0);
+    else if (rot === 180) x.setTransform(-1, 0, 0, -1, c.width, c.height);
+    else if (rot === 270) x.setTransform(0, -1, 1, 0, 0, c.height);
+    if (sw !== this.t.width) x.imageSmoothingQuality = 'high';
+    x.drawImage(f, 0, 0, sw, sh);
+    x.setTransform(1, 0, 0, 1, 0, 0);
+    return true;
+  }
+
+  close() {
+    for (const f of this.queue) f.close();
+    this.queue = [];
+    this.buf = null;
+    if (this.cur) this.cur.close();
+    this.cur = null;
+    if (this.dec) { try { this.dec.close(); } catch (e) { /* ignore */ } }
+    this.dec = null;
+    this._wake();
+  }
+}
+
+/** Dauer der Videospur in Sekunden. */
+function trackDuration(track) {
+  let end = 0;
+  for (const s of track.samples) end = Math.max(end, s.cts + s.dur);
+  return end / 1e6;
+}
+
+/**
+ * Schnelles Einlesen eines Videos: dekodiert nur die Stellen, die für Bewertung und Vorschaubild
+ * gebraucht werden, direkt aus der Datei (ohne Videoelement). null, wenn das Format nicht passt.
+ */
+async function probeVideoFast(file) {
+  if (typeof VideoDecoder === 'undefined' || !/\.(mp4|mov|m4v)$/i.test(file.name || '') && !/mp4|quicktime/.test(file.type || '')) return null;
+  let track = null;
+  try { track = await demuxVideo(file); } catch (e) { return null; }
+  if (!track || track.samples.length < 2) return null;
+  // Bewertung auf kleinem Bild im Arbeitsspeicher; nur das Vorschaubild wird größer gezeichnet
+  const fr = await FrameReader.open(track, SCORE_SIZE, true);
+  if (!fr) return null;
+  try {
+    const duration = trackDuration(track);
+    const c = fr.canvas;
+    const w = track.rotation % 180 ? track.height : track.width, h = track.rotation % 180 ? track.width : track.height;
+    const grab = async (t) => fr.canvasAt(Math.max(0, Math.min(duration - 0.02, t)));
+    const sc = await scoreFrames(grab, c.width, c.height, duration);
+    const best = sc.highlights && sc.highlights[0] ? sc.highlights[0].t : Math.min(1, duration * 0.2);
+    if (!(await grab(best))) return null;
+    const ps = Math.min(1, 720 / Math.max(w, h));
+    const poster = document.createElement('canvas');
+    poster.width = Math.max(2, Math.round(w * ps)); poster.height = Math.max(2, Math.round(h * ps));
+    fr.drawTo(poster);
+    return { duration, w, h, poster, ...sc };
+  } catch (e) {
+    return null;
+  } finally {
+    fr.close();
+  }
+}
+
+/* ============================================================
  * Engine: Vorschau (Audio-Uhr als Master), Standbild,
  * Split-Screens, exakter Offline-Export (WebCodecs), Echtzeit-Rückfall
  * ============================================================ */
 
 function srcTimeOf(c, t) {
   const tt = c.freezeAt != null ? Math.min(t, c.freezeAt) : t;
+  if (c.rp) return (c.srcOffset || 0) + rampIntegral(c.rp, Math.max(c.visStart, tt)) - rampIntegral(c.rp, c.visStart);
   return (c.srcOffset || 0) + Math.max(0, tt - c.visStart) * (c.rate || 1);
 }
 function panelTime(c, k, t) {
@@ -4729,6 +5505,7 @@ class Engine {
     this.painter = new OverlayPainter();
     this.slots = new Map();
     this.videos = [];
+    this.demuxCache = new Map();
     this.imgCache = new Map();
     this.playing = false;
     this.t = 0;
@@ -4769,6 +5546,8 @@ class Engine {
     this.media = media;
     this.audioBuffer = audioBuffer;
     this.size = size;
+    this.scale = 1;
+    this._dts = [];
     this.r.resize(size.w, size.h);
     this.painter.resize(size.w, size.h);
     this.releaseAll();
@@ -4856,6 +5635,7 @@ class Engine {
     s.dead = true;
     this.r.deleteTexture(s.tex);
     this.releaseVideo(s.video);
+    if (s.fr) { s.fr.close(); s.fr = null; }
     if (s.panels) for (const p of s.panels) this.releaseVideo(p.video);
     this.slots.delete(k);
   }
@@ -4869,7 +5649,7 @@ class Engine {
     if (s) return s;
     s = { clip, tex: null, video: null, ready: false, dead: false, failed: false, lastUpload: -1, frozen: false };
     this.slots.set(clip.i, s);
-    s.promise = (clip.grid ? this._prepareGrid(s) : clip.split ? this._prepareSplit(s, t) : this._prepare(s, t)).catch((e) => {
+    s.promise = (clip.grid ? this._prepareGrid(s) : clip.strip ? this._prepareStrip(s) : clip.split ? this._prepareSplit(s, t) : this._prepare(s, t)).catch((e) => {
       s.failed = true;
       s.ready = true;
       if (!s.dead) console.warn(e);
@@ -4890,6 +5670,8 @@ class Engine {
       s.ready = true;
       return;
     }
+    if (this.offline && m.file && await this._openReader(s, m)) return;
+    if (s.dead) return;
     const v = this.acquireVideo(m.url);
     s.video = v;
     const ok = await loadVideoSrc(v, m.url);
@@ -4903,6 +5685,32 @@ class Engine {
     s.srcW = v.videoWidth || m.w; s.srcH = v.videoHeight || m.h;
     if (v.readyState >= 2) this.r.upload(s.tex, v);
     s.ready = true;
+  }
+
+  /** Export: Bilder direkt aus der Datei dekodieren (WebCodecs) statt das Video-Element zu spulen. */
+  async _openReader(s, m) {
+    if (typeof VideoDecoder === 'undefined' || m.fastBad) return false;
+    try {
+      if (!this.demuxCache.has(m.id)) this.demuxCache.set(m.id, demuxVideo(m.file).catch(() => null));
+      const track = await this.demuxCache.get(m.id);
+      if (!track || s.dead) return false;
+      const fr = await FrameReader.open(track);
+      if (!fr) return false;
+      if (s.dead) { fr.close(); return false; }
+      const cv = await fr.canvasAt(srcTimeOf(s.clip, s.clip.visStart));
+      if (!cv || s.dead) { fr.close(); return false; }
+      s.fr = fr;
+      s.tex = this.r.createTexture();
+      this.r.upload(s.tex, cv);
+      s.srcW = cv.width; s.srcH = cv.height;
+      s.ready = true;
+      return true;
+    } catch (e) {
+      console.warn('Schneller Export nicht möglich, nutze Video-Element', e);
+      m.fastBad = true;
+      if (s.fr) { s.fr.close(); s.fr = null; }
+      return false;
+    }
   }
 
   /* ---------- 9er-Raster ---------- */
@@ -4989,6 +5797,105 @@ class Engine {
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = 1;
+    this.r.upload(s.tex, cv);
+  }
+
+  /* ---------- Film-Strip-Ende ---------- */
+  async _prepareStrip(s) {
+    const st = s.clip.strip;
+    const bp = this.bandPx;
+    s.canvas = document.createElement('canvas');
+    s.canvas.width = bp.w; s.canvas.height = bp.h;
+    s.srcW = bp.w; s.srcH = bp.h;
+    s.strip = new Array(st.items.length);
+    const small = Math.min(1600, Math.round(Math.max(bp.w, bp.h) * 0.8));
+    await Promise.all(st.items.map(async (it, k) => {
+      const m = this.media[it.mediaIndex];
+      if (!m) return;
+      if (m.kind === 'image') s.strip[k] = await this.getImage(m, k === 0 ? undefined : small);
+      else s.strip[k] = m.poster || null;
+    }));
+    if (s.dead) return;
+    s.tex = this.r.createTexture();
+    this.composeStrip(s, s.clip.visStart);
+    s.ready = true;
+  }
+
+  composeStrip(s, t) {
+    const c = s.clip, st = c.strip, cv = s.canvas;
+    const ctx = cv.getContext('2d');
+    const W = cv.width, H = cv.height;
+    const vert = H >= W;
+    const u = clamp01((t - c.start) / Math.max(0.1, c.end - c.start));
+    // 0 … 0,22: aus dem Vollbild herauszoomen; danach läuft der Streifen gebremst weiter
+    const zu = clamp01(u / 0.22), ez = zu * zu * (3 - 2 * zu);
+    const k = 0.58;
+    const fw = W * k, fh = H * k;
+    const gap = (vert ? fh : fw) * 0.06;
+    const side = (vert ? fw : fh) * 0.16;
+    const pitch = (vert ? fh : fw) + gap;
+    const n = st.items.length;
+    const su = clamp01((u - 0.12) / 0.88);
+    const scroll = (1 - Math.pow(1 - su, 2.2)) * pitch * Math.min(n - 1, 3.2);
+    const S = lerp(1 / k, 1, ez);
+    const rot = lerp(0, vert ? -0.07 : -0.05, ez);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    const bg = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.hypot(W, H) / 2);
+    bg.addColorStop(0, '#1a1712'); bg.addColorStop(1, '#07090d');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+    ctx.translate(W / 2, H / 2);
+    ctx.rotate(rot);
+    ctx.scale(S, S);
+    // Streifen: Bild 0 in der Mitte, frühere Bilder folgen (vertikal nach oben, quer nach links)
+    const len = pitch * (n + 2);
+    const base = '#15120e';
+    ctx.fillStyle = base;
+    if (vert) ctx.fillRect(-fw / 2 - side, -len + fh / 2 + scroll + pitch, fw + side * 2, len + pitch * 2);
+    else ctx.fillRect(-len + fw / 2 + scroll + pitch, -fh / 2 - side, len + pitch * 2, fh + side * 2);
+    // Perforation
+    const hole = side * 0.42, hr = hole * 0.22;
+    ctx.fillStyle = 'rgba(236,228,212,0.9)';
+    const holes = Math.ceil(len / (hole * 1.9));
+    for (let i = -2; i < holes; i++) {
+      const p = -i * hole * 1.9 + (scroll % (hole * 1.9)) + pitch;
+      for (const sd of [-1, 1]) {
+        const a = sd * (vert ? fw / 2 + side / 2 : fh / 2 + side / 2);
+        ctx.beginPath();
+        const rr = (ctx.roundRect || ctx.rect).bind(ctx);
+        if (vert) rr(a - hole * 0.35, p - hole / 2, hole * 0.7, hole, hr);
+        else rr(p - hole / 2, a - hole * 0.35, hole, hole * 0.7, hr);
+        ctx.fill();
+      }
+    }
+    // Einzelbilder mit Randbeschriftung
+    ctx.imageSmoothingQuality = 'high';
+    ctx.font = `600 ${side * 0.26}px ${OV_FONTS.mono}`;
+    ctx.textBaseline = 'middle';
+    for (let i = 0; i < n; i++) {
+      const off = -i * pitch + scroll;
+      const x = vert ? -fw / 2 : -fw / 2 + off, y = vert ? -fh / 2 + off : -fh / 2;
+      if (vert ? y > H / S + fh || y + fh < -H / S - fh : x > W / S + fw || x + fw < -W / S - fw) continue;
+      const src = s.strip[i];
+      ctx.save();
+      ctx.beginPath(); ctx.rect(x, y, fw, fh); ctx.clip();
+      if (src) {
+        const sw = src.videoWidth || src.width, sh = src.videoHeight || src.height;
+        const sc = Math.max(fw / sw, fh / sh);
+        const vw = fw / sc, vh = fh / sc;
+        const fo = st.items[i].focus || [0.5, 0.45];
+        const sx = Math.max(0, Math.min(sw - vw, fo[0] * sw - vw / 2)), sy = Math.max(0, Math.min(sh - vh, fo[1] * sh - vh / 2));
+        ctx.drawImage(src, sx, sy, vw, vh, x, y, fw, fh);
+      } else { ctx.fillStyle = '#10151e'; ctx.fillRect(x, y, fw, fh); }
+      ctx.restore();
+      ctx.fillStyle = 'rgba(255,150,60,0.85)';
+      const label = `${String(n - i).padStart(2, '0')}A  ▸`;
+      if (vert) { ctx.save(); ctx.translate(x - side * 0.12, y + fh * 0.12); ctx.rotate(-Math.PI / 2); ctx.textAlign = 'right'; ctx.fillText(label, 0, 0); ctx.restore(); }
+      else { ctx.textAlign = 'left'; ctx.fillText(label, x + fw * 0.04, y - side * 0.12); }
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     this.r.upload(s.tex, cv);
   }
 
@@ -5128,10 +6035,18 @@ class Engine {
       return { tex: slot.tex, xf: [fw / 1.15, fh / 1.15, 0.5, 0.5], box: [1, bw * s, bh * s], blur, geo, corr };
     }
     fw /= s; fh /= s;
-    const cx = 0.5 + (x * (1 - fw)) / 2 + (extra.shiftX || 0) * fw;
-    const cy = 0.5 + (y * (1 - fh)) / 2 + (extra.shiftY || 0) * fh;
+    let cx = 0.5 + (x * (1 - fw)) / 2 + (extra.shiftX || 0) * fw;
+    let cy = 0.5 + (y * (1 - fh)) / 2 + (extra.shiftY || 0) * fh;
+    const m = this.media[c.mediaIndex];
+    const mf = (m && m.focus) || [0.5, 0.45];
+    if (extra.pull) {
+      // Bild-aus-Bild: Ausschnitt wandert zum Motiv, bleibt aber im Bild
+      cx = Math.max(fw / 2, Math.min(1 - fw / 2, lerp(cx, mf[0], extra.pull)));
+      cy = Math.max(fh / 2, Math.min(1 - fh / 2, lerp(cy, mf[1], extra.pull)));
+    }
+    const foc = [Math.max(0.1, Math.min(0.9, (mf[0] - cx) / fw + 0.5)), Math.max(0.1, Math.min(0.9, (mf[1] - cy) / fh + 0.5))];
     if (extra.rot) geo[0] = extra.rot;
-    return { tex: slot.tex, xf: [fw, fh, cx, cy], box: [0, 1, 1], blur, geo, corr };
+    return { tex: slot.tex, xf: [fw, fh, cx, cy], box: [0, 1, 1], blur, geo, corr, foc };
   }
 
   /**
@@ -5201,6 +6116,7 @@ class Engine {
       const active = t >= c.visStart - 0.04 && t < c.visEnd;
       const frozen = c.freezeAt != null && t >= c.freezeAt;
       if (s.grid) { if (active) this.composeGrid(s, t); continue; }
+      if (s.strip) { if (active) this.composeStrip(s, t); continue; }
       if (s.panels) {
         let dirty = !playing;
         s.panels.forEach((p, k) => {
@@ -5214,9 +6130,12 @@ class Engine {
       }
       const v = s.video;
       if (!v) continue;
-      this._driveVideo(v, active, frozen, playing, c.rate, srcTimeOf(c, t), srcTimeOf(c, c.freezeAt || 0), s);
+      // Browser erlauben 0,0625–16; bei Tempo-Kurven folgt die Wiedergabe dem aktuellen Tempo
+      const rate = c.rp ? Math.round(rampRate(c.rp, t) * 20) / 20 : c.rate;
+      this._driveVideo(v, active, frozen, playing, rate, srcTimeOf(c, t), srcTimeOf(c, c.freezeAt || 0), s);
       if (active && v.readyState >= 2 && (v.currentTime !== s.lastUpload || !playing)) {
-        if (this.r.upload(s.tex, v)) s.lastUpload = v.currentTime;
+        // beim Abspielen ohne Mipmaps: spart pro Bild GPU-Arbeit, das Standbild bekommt sie wieder
+        if (this.r.upload(s.tex, v, !playing)) s.lastUpload = v.currentTime;
       }
     }
   }
@@ -5228,7 +6147,7 @@ class Engine {
     const L = layersAt(plan.clips, t);
     if (mode === 'play') this.updateVideos(t, true);
     else if (mode === 'still') this.updateVideos(t, false);
-    else if (mode === 'offline') for (const s of this.slots.values()) if (s.ready && !s.failed) { if (s.panels) this.composeSplit(s, t); else if (s.grid) this.composeGrid(s, t); }
+    else if (mode === 'offline') for (const s of this.slots.values()) if (s.ready && !s.failed) { if (s.panels) this.composeSplit(s, t); else if (s.grid) this.composeGrid(s, t); else if (s.strip) this.composeStrip(s, t); }
     const fx = this.fxState(t);
     let A = null, B = null, mix = 0, trans = 0, dir = 1;
     if (L) {
@@ -5249,12 +6168,19 @@ class Engine {
           ea.blur = [1, 0.2 * w * dir, 0]; eb.blur = [1, 0.2 * w * dir, 0];
         } else if (L.type === TR.PUSH) {
           ea.blur = [1, 0.08 * w, 0]; eb.blur = [1, 0.08 * w, 0];
+        } else if (L.type === TR.MORPH) {
+          // altes Bild fährt ins Motiv, das neue löst sich aus ihm heraus und kommt zur Ruhe
+          const e = p * p * (3 - 2 * p);
+          ea.zoom *= 1 + 0.22 * e; ea.pull = 0.6 * e;
+          eb.zoom *= 1 + 0.16 * (1 - e); eb.pull = 0.5 * (1 - e);
+        } else if (L.type === TR.INK || L.type === TR.DOUBLE) {
+          ea.zoom *= 1 + 0.06 * p; eb.zoom *= 1 + 0.06 * (1 - p);
         }
       }
       const mv = this.motionFx(t);
       if (mv) {
         for (const [ex, c] of [[ea, L.a], [eb, L.b]]) {
-          if (!c || c.grid || c.split || c.flightAnim) continue;
+          if (!c || c.grid || c.split || c.flightAnim || c.strip) continue;
           ex.zoom *= mv.zoom;
           ex.shiftX = (ex.shiftX || 0) + mv.dx;
           ex.shiftY = mv.dy;
@@ -5429,8 +6355,41 @@ class Engine {
     return t;
   }
 
+  /** Vorschau-Auflösung (Anteil der vollen Größe); Export und Standbild immer voll. */
+  _setScale(sc) {
+    if (sc === this.scale) return;
+    this.scale = sc;
+    const w = Math.max(2, Math.round(this.size.w * sc / 2) * 2), h = Math.max(2, Math.round(this.size.h * sc / 2) * 2);
+    this.r.resize(w, h);
+    this.painter.resize(w, h);
+  }
+
+  /**
+   * Passt die Vorschau an das Gerät an: Ruckelt es (Bilder fallen aus), wird die Auflösung
+   * stufenweise gesenkt, läuft es wieder flüssig, steigt sie. Spart Akku; der Export ist davon unberührt.
+   */
+  _adapt() {
+    if (this.exporting || this.exportMode) return;
+    const now = performance.now();
+    const last = this._lastFrame;
+    this._lastFrame = now;
+    if (!last) return;
+    const d = this._dts;
+    d.push(Math.min(250, now - last));
+    const sum = d.reduce((a, b) => a + b, 0);
+    // etwa jede Sekunde auswerten (bei sehr langsamen Geräten nach wenigen Bildern)
+    if (d.length < 45 && !(sum > 900 && d.length >= 6)) return;
+    // Bildwiederholrate des Displays (60, 120 oder im Stromsparmodus 30 Hz); gleichmäßig langsam zählt auch als Ruckeln
+    const base = Math.min(34, Math.max(7, Math.min(...d)));
+    const avg = sum / d.length;
+    this._dts = [];
+    if (avg > base * 1.45 && this.scale > 0.5) { this._setScale(Math.max(0.5, +(this.scale * 0.8).toFixed(2))); this._calm = 0; }
+    else if (avg < base * 1.12 && this.scale < 1 && ++this._calm >= 3) { this._setScale(Math.min(1, +(this.scale * 1.15).toFixed(2))); this._calm = 0; }
+  }
+
   _loop() {
     if (!this.playing) return;
+    this._adapt();
     const D = this.plan.duration;
     const t = Math.max(this._t0 || 0, this.clock());
     if (t >= D) {
@@ -5469,6 +6428,38 @@ class Engine {
   pause() {
     this._token++;
     this._stopPlayback();
+    this._lastFrame = 0;
+    // angehaltenes Bild in voller Schärfe
+    if (this.scale < 1 && this.plan && !this.exporting) { this._setScale(1); this.renderStill(this.t); }
+  }
+
+  /**
+   * Titelbild (Reel-Cover) in voller Exportgröße: stärkstes Bild des Films, Titel groß in der Mitte
+   * (im Bereich, den das Instagram-Raster zeigt). Liefert eine Leinwand.
+   */
+  async renderCover(size, cover) {
+    this.pause();
+    const plan = this.plan, prevSize = this.size, prevT = this.t;
+    const hook = plan.clips.find((c) => c.role === 'hook' && !c.grid && !c.split) || plan.clips.find((c) => !c.pre && !c.grid && !c.split && c.mediaIndex >= 0) || plan.clips[0];
+    const t = hook ? Math.min(hook.end - 0.05, hook.start + (hook.end - hook.start) * 0.6) : 0;
+    this.plan = { ...plan, fx: [], overlays: cover && cover.text ? [{ type: 'city', text: cover.text, sub: cover.sub || '', geo: null, start: t - 3, end: t + 60 }] : [] };
+    this.exporting = true;
+    try {
+      this.r.resize(size.w, size.h); this.painter.resize(size.w, size.h); this.size = size;
+      this.releaseAll();
+      await this.renderStill(t);
+      const out = document.createElement('canvas');
+      out.width = size.w; out.height = size.h;
+      out.getContext('2d').drawImage(this.canvas, 0, 0);
+      return out;
+    } finally {
+      this.plan = plan;
+      this.exporting = false;
+      this.size = prevSize;
+      this.r.resize(prevSize.w, prevSize.h); this.painter.resize(prevSize.w, prevSize.h);
+      this.releaseAll();
+      this.renderStill(prevT);
+    }
   }
 
   /* ---------- Offline-Export (Bild für Bild) ---------- */
@@ -5480,10 +6471,28 @@ class Engine {
       if (s.clip.visStart <= t + 1e-6 && s.clip.visEnd > t) vis.push(s);
     }
     await Promise.all(vis.map((s) => s.promise));
-    await Promise.all(vis.map((s) => this._seekSlot(s, t, fps)));
+    await Promise.all(vis.map((s) => (s.fr ? this._readSlot(s, t) : this._seekSlot(s, t, fps))));
     for (const s of vis) {
       if (s.panels || !s.video || s.failed || s.dead) continue;
       if (s.video.readyState >= 2) this.r.upload(s.tex, s.video);
+    }
+  }
+
+  async _readSlot(s, t) {
+    if (s.dead || s.failed) return;
+    try {
+      const cv = await s.fr.canvasAt(srcTimeOf(s.clip, t));
+      if (cv && cv._up !== s.fr.drawnTs) { this.r.upload(s.tex, cv); cv._up = s.fr.drawnTs; }
+    } catch (e) {
+      // Dekoder gescheitert: diesen Clip ab hier über das Video-Element weiterführen
+      console.warn(e);
+      const m = this.media[s.clip.mediaIndex];
+      m.fastBad = true;
+      s.fr.close(); s.fr = null;
+      const v = this.acquireVideo(m.url);
+      s.video = v;
+      if (!(await loadVideoSrc(v, m.url))) { s.failed = true; return; }
+      await this._seekSlot(s, t);
     }
   }
 
@@ -5542,9 +6551,21 @@ class Engine {
     return !!(this.plan && (this.plan.voice || []).some((v) => this.media[v.mediaIndex] && this.media[v.mediaIndex].audio));
   }
 
-  async exportOffline({ size, fps, withAudio, withSong = true, support, onProgress, isCancelled }) {
-    this.pause();
+  async exportOffline(opts) {
+    this.offline = true;
+    try { return await this._exportOffline(opts); } finally {
+      this.offline = false;
+      this.exporting = false;
+      // Export-Slots (eigene Dekoder) nicht in die Vorschau übernehmen
+      this.releaseAll();
+      this.demuxCache.clear();
+    }
+  }
+
+  async _exportOffline({ size, fps, withAudio, withSong = true, support, onProgress, isCancelled }) {
     this.exporting = true;
+    this.pause();
+    this.scale = 1;
     const plan = this.plan;
     const D = plan.duration;
     this.r.resize(size.w, size.h);
@@ -5613,7 +6634,9 @@ class Engine {
     const mime = pickRecorderMime();
     if (mime === null || !this.canvas.captureStream) throw new Error('Dieser Browser kann keine Videos erzeugen. Bitte iOS 16.4+ oder aktuelles Chrome verwenden.');
     this.ensureAudio();
+    this.exporting = true;
     this.pause();
+    this.scale = 1;
     this.r.resize(size.w, size.h);
     this.painter.resize(size.w, size.h);
     this.size = size;
@@ -5960,6 +6983,7 @@ const LOOK_SWATCH = {
   kino: 'linear-gradient(120deg,#0c3440,#1f6f78 40%,#d98a45 75%,#f1c27f)',
   blau: 'linear-gradient(120deg,#060d1c,#1c3560 55%,#7ea3d6)',
   film: 'linear-gradient(120deg,#4f3a2a,#a98563 50%,#e6d3b0)',
+  digicam: 'linear-gradient(120deg,#0e1f33,#3b7fa8 50%,#ffa23a 88%)',
   noir: 'linear-gradient(120deg,#050505,#4d4d4d 55%,#e6e6e6)',
 };
 const TEXT_COLORS = ['#efe6d2', '#ffffff', '#0b0d12', '#c7b48f', '#9fb8dc'];
@@ -5975,7 +6999,12 @@ function normalizeSettings(st, defaults) {
     look: s.look === 'auto' || LOOKS[s.look] ? s.look : 'auto',
     pace: pick1(s.pace, ['auto', 'ruhig', 'mittel', 'schnell'], 'auto'),
     intro: pick1(s.intro, ['auto', 'countdown', 'grid', 'knockout', 'cinema', 'city', 'hook', 'type', 'split'], 'auto'),
-    outro: pick1(s.outro, ['auto', 'credits', 'loop', 'freeze', 'split'], 'auto'),
+    outro: pick1(s.outro, ['auto', 'credits', 'loop', 'freeze', 'split', 'strip'], 'auto'),
+    pre: pick1(s.pre, ['off', 'countdown', 'rewind'], 'off'),
+    match: pick1(s.match, ['auto', 'off'], 'auto'),
+    morph: pick1(s.morph, ['off', 'on'], 'off'),
+    ramp: pick1(s.ramp, ['off', 'drop'], 'off'),
+    stamp: pick1(s.stamp, ['auto', 'on', 'off'], 'auto'),
     length: s.length === 'auto' || s.length === 'full' || (+s.length > 0 && +s.length <= 600) ? s.length : 'auto',
     songStart: s.songStart == null ? 'auto' : s.songStart,
     frame: pick1(s.frame, ['auto', 'full', 'band'], 'auto'),
@@ -5997,7 +7026,7 @@ function normalizeSettings(st, defaults) {
 }
 
 /* ---------- Stil-Vorlage: ein Stil für alle Filme der Reise ---------- */
-const STYLE_KEYS = ['look', 'font', 'motion', 'motionAmt', 'intro', 'outro', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
+const STYLE_KEYS = ['look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
 const styleOf = (st) => Object.fromEntries(STYLE_KEYS.map((k) => [k, st[k]]));
 /** Einstellungen für neue Filme: Standard, darüber die Vorlage der Reise */
 function baseSettings(defaults) {
@@ -6006,7 +7035,7 @@ function baseSettings(defaults) {
 function styleSummary(st) {
   const names = { sway: 'Pendeln', pulse: 'Puls', handheld: 'Handkamera' };
   const intros = { countdown: 'Countdown', grid: '9er-Raster', knockout: 'Durch den Namen', cinema: 'Titelkarte', city: 'Ortsname', hook: 'Stärkstes Bild', type: 'Wort für Wort', split: 'Split-Screen' };
-  return [st.look === 'auto' ? 'Look automatisch' : `Look ${LOOKS[st.look].label}`, `Schrift ${FONT_SETS[st.font].label}`, names[st.motion], intros[st.intro], st.burst === 'drop' ? 'Foto-Serie' : '', st.km !== 'off' ? 'Koordinaten' : ''].filter(Boolean).join(' · ');
+  return [st.look === 'auto' ? 'Look automatisch' : `Look ${LOOKS[st.look].label}`, `Schrift ${FONT_SETS[st.font].label}`, names[st.motion], st.pre !== 'off' ? (st.pre === 'rewind' ? 'Rewind' : 'Countdown') + ' +' : '', intros[st.intro], st.morph === 'on' ? 'Bild aus Bild' : '', st.burst === 'drop' ? 'Foto-Serie' : '', st.ramp === 'drop' ? 'Speed-Ramp' : '', st.km !== 'off' ? 'Koordinaten' : ''].filter(Boolean).join(' · ');
 }
 
 function openStyleSheet() {
@@ -6421,7 +7450,8 @@ async function restoreWork() {
     if (!last || now - Math.max(last, r.savedAt || 0) > maxAge) { try { await S.store.del('work', r.id); } catch (e) { /* egal */ } continue; }
     if (r.type !== 'media' || S.pool.has(r.id) || !r.file) continue;
     const it = { ...r.meta, id: r.id, file: r.file, url: URL.createObjectURL(r.file), loading: false };
-    if (r.poster) { try { it.poster = await createImageBitmap(r.poster); } catch (e) { /* ohne Vorschaubild */ } }
+    // Vorschaubild im Hintergrund dekodieren, der Start wartet nicht darauf
+    if (r.poster) createImageBitmap(r.poster).then((b) => { it.poster = b; }, () => { /* ohne Vorschaubild */ });
     S.pool.set(r.id, it);
   }
 }
@@ -6475,10 +7505,27 @@ async function loadImageEl(url) {
 
 async function probeAndScore(item) {
   if (item.kind === 'image') {
-    const img = await loadImageEl(item.url);
+    let img = await loadImageEl(item.url);
     item.w = img.naturalWidth; item.h = img.naturalHeight;
-    item.thumb = thumbFrom(img, item.w, item.h, 160);
-    Object.assign(item, scoreImage(img, item.w, item.h));
+    // Einmal auf Arbeitsgröße verkleinern, alles Weitere (Bewertung, Vorschaubild) daraus: spart Rechenzeit und Akku
+    const sc = Math.min(1, 480 / Math.max(item.w, item.h));
+    const c = document.createElement('canvas');
+    c.width = Math.max(2, Math.round(item.w * sc)); c.height = Math.max(2, Math.round(item.h * sc));
+    const x = c.getContext('2d');
+    x.imageSmoothingQuality = 'high';
+    x.drawImage(img, 0, 0, c.width, c.height);
+    img.src = ''; img = null;
+    item.thumb = thumbFrom(c, c.width, c.height, 160);
+    Object.assign(item, scoreImage(c, c.width, c.height));
+    return;
+  }
+  // Schnell: benötigte Stellen direkt aus der Datei dekodieren (MP4/MOV, WebCodecs)
+  const fast = item.file ? await probeVideoFast(item.file) : null;
+  if (fast && fast.duration > 0) {
+    const { poster, ...rest } = fast;
+    Object.assign(item, rest);
+    item.poster = poster;
+    item.thumb = thumbFrom(poster, poster.width, poster.height, 160);
     return;
   }
   const v = makeVideoEl();
@@ -6522,6 +7569,15 @@ const IMAGE_EXT = /\.(jpe?g|png|webp|gif|heic|heif|avif|bmp)$/i;
 // Wiedererkennung ohne Dateinamen zu speichern: nur eine Prüfsumme aus Name, Größe und Datum
 const fingerprint = (f) => 'f' + hashStr(`${f.name}|${f.size}|${f.lastModified || 0}`).toString(36) + (f.size % 1e6).toString(36);
 
+/** Einfache Zählsperre: await acquire() liefert die Freigabe-Funktion. */
+function semaphore(n) {
+  const wait = [];
+  return () => new Promise((res) => {
+    const take = () => { n--; res(() => { n++; if (wait.length) wait.shift()(); }); };
+    if (n > 0) take(); else wait.push(take);
+  });
+}
+
 /** Führt fn für alle Elemente mit begrenzter Parallelität aus. */
 async function mapLimit(list, limit, fn) {
   let next = 0;
@@ -6547,16 +7603,23 @@ async function ingestFiles(fileList, onProgress) {
     all.push(it);
   }
   let done = 0, bad = 0;
-  await mapLimit(fresh, 3, async (it) => {
+  // Parallel nach Gerät: Fotos breit, Videos höchstens zwei gleichzeitig (Hardware-Dekoder sind knapp)
+  const cores = navigator.hardwareConcurrency || 4;
+  const vids = semaphore(2);
+  await mapLimit(fresh, Math.max(2, Math.min(6, cores - 1)), async (it) => {
+    const release = it.kind === 'video' ? await vids() : null;
+    try { await ingestOne(it); } finally { release && release(); }
+    done++;
+    onProgress && onProgress(done, fresh.length);
+  });
+  async function ingestOne(it) {
     const meta = await readMediaMeta(it.file, it.kind);
     if (meta.time) it.time = meta.time;
     if (meta.pos) it.pos = meta.pos;
     try { await probeAndScore(it); } catch (e) { it.bad = true; bad++; }
     it.loading = false;
     if (!it.bad) saveWork(it);
-    done++;
-    onProgress && onProgress(done, fresh.length);
-  });
+  }
   return { items: all, fresh, bad, skipped: Array.from(fileList || []).length - files.length };
 }
 
@@ -7569,7 +8632,12 @@ function renderStyle() {
   setRadio($('motionAmtChips'), st.motionAmt);
   $('motionAmtChips').hidden = st.motion === 'ken';
   $('motionHint').textContent = { ken: 'Ruhige Fahrten und Zooms, passend zum Songteil.', sway: 'Die Bilder pendeln sanft von links nach rechts, der Wendepunkt sitzt genau auf dem Beat. Im Drop etwas stärker.', pulse: 'Jeder Beat gibt dem Bild einen kurzen Zoom-Impuls.', handheld: 'Ruhiges, organisches Schweben wie aus der Hand gefilmt.' }[st.motion];
-  setRadio($('burstChips'), st.burst);
+  setRadio($('preChips'), st.pre);
+  $('preField').hidden = isFlight(S.ctx.rec);
+  const introR = st.intro === 'auto' && r ? r.intro : st.intro;
+  for (const b of $('preChips').querySelectorAll('[data-v]')) b.disabled = (b.dataset.v !== 'off' && introR === 'split') || (b.dataset.v === 'countdown' && introR === 'countdown');
+  $('preHint').textContent = introR === 'split' ? 'Der Split-Screen-Einstieg steht für sich, ohne Vorspann.' : st.pre === 'rewind' ? 'Ein kurzer Blick auf den besten Moment, dann spult der Film wie eine Kassette zurück an den Anfang.' : st.pre === 'countdown' ? 'Countdown wie im alten Kino, danach dein Einstieg.' : 'Läuft vor dem Einstieg und lässt sich mit jedem Einstieg kombinieren, z. B. Countdown und danach das 9er-Raster.';
+  renderFx(st, r);
   const mt = $('mapThemeChips');
   if (!mt.children.length) mt.innerHTML = Object.entries(MAP_THEMES).map(([k, th]) => `<button type="button" role="radio" data-v="${k}"><i class="map-sw" style="background:radial-gradient(circle at 35% 35%, ${th.body0}, ${th.bg1});box-shadow:inset 0 0 0 2px ${th.ink}"></i>${th.label}</button>`).join('');
   setRadio(mt, st.mapTheme);
@@ -7592,13 +8660,33 @@ function renderStyle() {
     if (b) b.textContent = st[val] === 'auto' && r && names[r[val]] ? `Auto · ${names[r[val]]}` : 'Auto';
   };
   autoLabel('introChips', 'intro', { countdown: 'Countdown', grid: '9er-Raster', knockout: 'Durch den Namen', cinema: 'Titelkarte', city: 'Ortsname', hook: 'Stärkstes Bild', type: 'Wort für Wort', split: 'Split' });
-  autoLabel('outroChips', 'outro', { credits: 'Schlusstitel', loop: 'Loop', freeze: 'Standbild', split: 'Split' });
+  autoLabel('outroChips', 'outro', { credits: 'Schlusstitel', loop: 'Loop', freeze: 'Standbild', split: 'Split', strip: 'Filmstreifen' });
   autoLabel('frameChips', 'frame', { full: 'Vollbild', band: 'Kinoband' });
   autoLabel('paceChips', 'pace', { ruhig: 'ruhig', mittel: 'mittel', schnell: 'schnell' });
   const g = $('lookGrid');
   const autoBlurb = st.look === 'auto' && r && LOOKS[r.look] ? LOOKS[r.look].label : 'passend zum Material';
   g.innerHTML = [['auto', { label: 'Auto', blurb: autoBlurb }], ...Object.entries(LOOKS)].map(([k, l]) => `<button class="look-card" type="button" role="radio" data-v="${k}" aria-checked="${k === st.look}"><span class="sw" style="background:${LOOK_SWATCH[k]}"></span><span class="tx"><strong>${l.label}</strong><span>${esc(l.blurb)}</span></span></button>`).join('');
   setRadio(g, st.look);
+}
+
+/** „Im Film“: mehrere Elemente gleichzeitig; jedes hat seinen festen Platz, damit sie sich ergänzen statt stören. */
+const FX_KEYS = {
+  match: { on: 'auto', off: 'off', is: (st) => st.match !== 'off' },
+  morph: { on: 'on', off: 'off', is: (st) => st.morph === 'on' },
+  split: { on: 'auto', off: 'off', is: (st) => st.split !== 'off' },
+  burst: { on: 'drop', off: 'off', is: (st) => st.burst === 'drop' },
+  ramp: { on: 'drop', off: 'off', is: (st) => st.ramp === 'drop' },
+  stamp: { on: 'on', off: 'off', is: (st, r) => st.stamp === 'on' || (st.stamp !== 'off' && ((r && r.look) || st.look) === 'digicam') },
+};
+function renderFx(st, r) {
+  for (const b of $('fxChips').querySelectorAll('[data-fx]')) b.setAttribute('aria-pressed', String(FX_KEYS[b.dataset.fx].is(st, r)));
+  const on = (k) => FX_KEYS[k].is(st, r);
+  const parts = [];
+  if (on('match') || on('morph')) parts.push(`Übergänge: ${[on('match') ? 'Match-Cuts bei ähnlichem Bildaufbau' : '', on('morph') ? 'Bild aus Bild in ruhigen Teilen' : ''].filter(Boolean).join(', ')}`);
+  if (on('split')) parts.push('Refrain: Split-Screens');
+  if (on('burst') || on('ramp')) parts.push(`Drop: ${[on('burst') ? 'Foto-Serie' : '', on('ramp') ? 'Videos beschleunigen hinein und landen in Zeitlupe' : ''].filter(Boolean).join(', ')}`);
+  if (on('stamp')) parts.push('Datum wie bei einer alten Digicam unten rechts');
+  $('fxHint').textContent = parts.length ? parts.join(' · ') + '.' : 'Tippe an, was im Film vorkommen soll. Die Regie setzt jedes Element an die Stelle im Song, wo es am besten wirkt.';
 }
 
 function renderRegie() {
@@ -7651,7 +8739,7 @@ function openClipSheet(i) {
   const ov = (ctx.rec.overrides.clips[i] = ctx.rec.overrides.clips[i] || {});
   const m = ctx.media.find((x) => x.id === c.mediaId);
   const usable = ctx.media.filter((x) => !x.bad && !x.loading);
-  const trOpts = [['', 'Automatisch'], [String(TR.CUT), 'Schnitt'], [String(TR.DISSOLVE), 'Blende'], [String(TR.DIP), 'Schwarzblende'], [String(TR.WHIP), 'Wischer'], [String(TR.ZOOM), 'Zoom'], [String(TR.PUSH), 'Schieben'], [String(TR.LUMA), 'Lichtblende'], [String(TR.LEAK), 'Lichtleck']];
+  const trOpts = [['', 'Automatisch'], [String(TR.CUT), 'Schnitt'], [String(TR.DISSOLVE), 'Blende'], [String(TR.DIP), 'Schwarzblende'], [String(TR.WHIP), 'Wischer'], [String(TR.ZOOM), 'Zoom'], [String(TR.PUSH), 'Schieben'], [String(TR.LUMA), 'Lichtblende'], [String(TR.LEAK), 'Lichtleck'], [String(TR.MORPH), 'Bild aus Bild'], [String(TR.INK), 'Farbfluss'], [String(TR.DOUBLE), 'Doppelbelichtung']];
   const isVideo = m && m.kind === 'video';
   const visDur = c.visEnd - c.visStart;
   const maxOff = isVideo ? Math.max(0, (m.duration || 0) - visDur * (c.rate || 1)) : 0;
@@ -7910,6 +8998,7 @@ function openExportSheet() {
     <div class="field"><span class="field-label">Song im Video</span><div id="audPick">${radioHTML('Song', [['without', 'Ohne Song, für Instagram'], ['with', 'Mit Song']], audio)}</div>
       <p class="hint small" id="audHint"></p></div>
     <button class="btn primary big" id="startExport" type="button"><i class="rec-dot" aria-hidden="true"></i>Export starten</button>
+    <button class="btn ghost" id="coverExport" type="button">Titelbild für Reels erstellen</button>
     <div class="progress" id="expProgress" hidden>
       <div class="progress-bar"><span id="expBar"></span></div>
       <div class="progress-meta"><span id="expStage">Bereite vor …</span><span id="expPct">0 %</span></div>
@@ -7948,6 +9037,7 @@ function openExportSheet() {
       info();
     }
     if (e.target.closest('#cancelExport')) cancel = true;
+    if (e.target.closest('#coverExport')) await makeCover(body, sizeOf());
     if (e.target.closest('#startExport')) {
       try { localStorage.setItem('cinebeat.export', JSON.stringify({ fps, audio, quality })); } catch (err) { /* egal */ }
       await runExport(body, { size: sizeOf(), fps, bpp: QUALITY[quality].bpp, withSong: audio === 'with', withAudio: audio === 'with' || engine.hasVoice, isCancelled: () => cancel });
@@ -8042,6 +9132,43 @@ function showExportResult(body, res, size, fps, withAudio, withSong) {
     if (a.dataset.act === 'save') saveBlob(res.blob, name, url);
   });
   toast('Dein Film ist fertig.');
+}
+
+/** Reel-Titelbild: stärkstes Bild mit Titel, als JPEG in Exportgröße (bleibt auf dem Gerät). */
+async function makeCover(body, size) {
+  const btn = body.querySelector('#coverExport');
+  btn.disabled = true;
+  busy('Erstelle Titelbild …');
+  try {
+    const rec = S.ctx.rec;
+    const best = S.ctx.kind === 'bestof';
+    const title = best ? S.trip.name : rec.name, sub = ctxSub();
+    const cv = await engine.renderCover(size, { text: rec.settings.showTitle === false ? '' : title || '', sub });
+    const blob = await new Promise((r) => cv.toBlob(r, 'image/jpeg', 0.95));
+    const url = URL.createObjectURL(blob);
+    const name = `${(title || 'CineBeat').replace(/[^\p{L}\p{N} _-]/gu, '').trim().replace(/\s+/g, '_') || 'CineBeat'}_Titelbild.jpg`;
+    const file = new File([blob], name, { type: 'image/jpeg' });
+    const canShare = (() => { try { return !!(navigator.canShare && navigator.canShare({ files: [file] })); } catch (e) { return false; } })();
+    let box = body.querySelector('#coverResult');
+    if (!box) { box = document.createElement('div'); box.id = 'coverResult'; box.className = 'result'; btn.after(box); }
+    box.innerHTML = `<img src="${url}" alt="Titelbild" class="cover-preview">
+      <p class="hint small">${size.w} × ${size.h} · JPEG · ${fmtBytes(blob.size)}. In Instagram beim Reel unter „Titelbild bearbeiten“ → „Aus Aufnahmen hinzufügen“ wählen. Der Titel sitzt im Bereich, den das Profilraster zeigt.</p>
+      <div class="sheet-actions">
+        ${canShare ? '<button class="btn primary" data-cover="share" type="button">In Fotos sichern oder teilen</button>' : ''}
+        <button class="btn" data-cover="save" type="button">Als Datei laden</button>
+      </div>`;
+    box.onclick = async (e) => {
+      const a = e.target.closest('[data-cover]');
+      if (!a) return;
+      if (a.dataset.cover === 'share') { try { await navigator.share({ files: [file], title: name }); } catch (err) { /* abgebrochen */ } }
+      else saveBlob(blob, name, url);
+    };
+  } catch (e) {
+    toast('Titelbild konnte nicht erstellt werden: ' + e.message, true);
+  } finally {
+    busy(null);
+    btn.disabled = false;
+  }
 }
 
 async function saveBlob(blob, name, url) {
@@ -8206,7 +9333,16 @@ async function init() {
   bindSetting('kmChips', 'km');
   bindSetting('motionChips', 'motion');
   bindSetting('motionAmtChips', 'motionAmt');
-  bindSetting('burstChips', 'burst');
+  bindSetting('preChips', 'pre');
+  $('fxChips').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-fx]');
+    if (!b) return;
+    const st = S.ctx.rec.settings;
+    const k = b.dataset.fx, d = FX_KEYS[k];
+    st[k] = d.is(st, S.plan && S.plan.resolved) ? d.off : d.on;
+    renderFx(st, S.plan && S.plan.resolved);
+    commit(); savePlaceSoon(); engine && (engine.t = 0); scheduleRebuild(0);
+  });
   bindSetting('mapThemeChips', 'mapTheme');
   bindSetting('mapInkChips', 'mapInk');
   bindSetting('mapLandChips', 'mapLand');

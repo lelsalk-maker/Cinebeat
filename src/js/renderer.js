@@ -43,9 +43,21 @@ uniform float uGlow, uLeak, uFlash, uBars, uBlack, uDim, uDesat;
 uniform float uHasOvTop;
 uniform float uLod;
 uniform float uSharp;   // leichte Unscharfmaskierung über die Mipmap-Stufe
+uniform vec2 uFocA;     // Bildschwerpunkt im Ausgabebild (für Bild-aus-Bild-Übergänge)
+uniform vec2 uFocB;
 
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+float fbm(vec2 p) {
+  float v = 0.0, a = 0.5;
+  for (int i = 0; i < 4; i++) { v += a * vnoise(p); p = p * 2.03 + 7.1; a *= 0.5; }
+  return v;
+}
 vec2 rot2(vec2 p, float a) { float c = cos(a), s = sin(a); return vec2(c * p.x - s * p.y, s * p.x + c * p.y); }
 
 vec3 sampleSrc(sampler2D tex, vec4 xf, vec3 box, vec4 geo, vec2 uv) {
@@ -136,6 +148,31 @@ vec3 composite(vec2 uv) {
     else if (uTrans == 7) {
       float thr = mix(-0.25, 1.25, p);
       c = mix(a, b, smoothstep(1.0 - thr - 0.18, 1.0 - thr + 0.18, luma(b)));
+    }
+    else if (uTrans >= 10) {
+      vec2 asp2 = vec2(uRes.x / (uRes.y * uBand.y), 1.0);
+      // Abstand zum Motiv, auf die entfernteste Bildecke normiert (gleiches Tempo in jedem Format)
+      float d = length((uv - uFocB) * asp2) / length(max(uFocB, 1.0 - uFocB) * asp2);
+      if (uTrans == 10) {
+        // Farbfluss: das neue Bild breitet sich wie Tinte vom Motiv aus
+        float field = d * 0.8 + (fbm(uv * asp2 * 3.2 + uDir * 1.7) - 0.5) * 0.5;
+        float thr = mix(-0.32, 1.1, p);
+        float m = smoothstep(thr - 0.05, thr + 0.05, field);
+        float rim = smoothstep(0.1, 0.0, abs(field - thr)) * (1.0 - m);
+        c = mix(b, a, m) + rim * 0.1 * vec3(1.0, 0.93, 0.82);
+      } else if (uTrans == 11) {
+        // Bild aus Bild: helle Formen und das Motiv des neuen Bilds wachsen aus dem alten heraus
+        float field = 0.55 * (1.0 - luma(b)) + 0.45 * d + (fbm(uv * asp2 * 5.0) - 0.5) * 0.12;
+        float thr = mix(-0.3, 1.3, p);
+        float m = smoothstep(thr - 0.2, thr + 0.2, field);
+        c = mix(b, a, m);
+        c += (1.0 - m) * m * 0.35 * sin(3.14159265 * p) * vec3(1.0, 0.95, 0.88);
+      } else {
+        // Doppelbelichtung: das neue Bild erscheint in den hellen Flächen des alten
+        vec3 scr = 1.0 - (1.0 - a) * (1.0 - b);
+        vec3 dbl = mix(a * 0.85 + b * 0.15, scr * 0.94, clamp(luma(a) * 1.3, 0.0, 1.0) * 0.8);
+        c = p < 0.5 ? mix(a, dbl, smoothstep(0.0, 0.5, p)) : mix(dbl, b, smoothstep(0.5, 1.0, p));
+      }
     }
     else c = p < 0.5 ? a : b;
   }
@@ -250,7 +287,7 @@ class Renderer {
   }
 
   /** Lädt Bild/Video/Canvas in eine Textur (mit Mipmaps unter WebGL2). */
-  upload(tex, source) {
+  upload(tex, source, mip = true) {
     const gl = this.gl;
     gl.bindTexture(gl.TEXTURE_2D, tex);
     try {
@@ -258,10 +295,10 @@ class Renderer {
     } catch (e) {
       return false;
     }
-    if (this.isGL2) {
+    if (this.isGL2 && mip) {
       gl.generateMipmap(gl.TEXTURE_2D);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-    }
+    } else if (this.isGL2) gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     return true;
   }
 
@@ -305,6 +342,8 @@ class Renderer {
     gl.uniform2fv(u.uOffB, L(f.B, 'off', [0, 0]));
     gl.uniform3fv(u.uCorrA, L(f.A, 'corr', [1, 1, 1]));
     gl.uniform3fv(u.uCorrB, L(f.B, 'corr', [1, 1, 1]));
+    gl.uniform2fv(u.uFocA, L(f.A, 'foc', [0.5, 0.45]));
+    gl.uniform2fv(u.uFocB, L(f.B, 'foc', [0.5, 0.45]));
     gl.uniform2fv(u.uBand, f.band || [0, 1]);
     gl.uniform1f(u.uHasA, f.A ? 1 : 0);
     gl.uniform1f(u.uHasB, f.B ? 1 : 0);

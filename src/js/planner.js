@@ -19,8 +19,8 @@ function hashStr(s) {
 }
 
 // Übergänge (müssen zum Shader passen)
-const TR = { CUT: 0, DISSOLVE: 1, DIP: 2, ZOOM: 4, WHIP: 5, LEAK: 6, LUMA: 7, PUSH: 9 };
-const TR_NAMES = { 0: 'Schnitt', 1: 'Blende', 2: 'Schwarzblende', 4: 'Zoom', 5: 'Wischer', 6: 'Lichtleck', 7: 'Lichtblende', 9: 'Schieben' };
+const TR = { CUT: 0, DISSOLVE: 1, DIP: 2, ZOOM: 4, WHIP: 5, LEAK: 6, LUMA: 7, PUSH: 9, INK: 10, MORPH: 11, DOUBLE: 12 };
+const TR_NAMES = { 0: 'Schnitt', 1: 'Blende', 2: 'Schwarzblende', 4: 'Zoom', 5: 'Wischer', 6: 'Lichtleck', 7: 'Lichtblende', 9: 'Schieben', 10: 'Farbfluss', 11: 'Bild aus Bild', 12: 'Doppelbelichtung' };
 
 const LOOKS = {
   natur: { label: 'Natürlich', blurb: 'Klare, echte Farben mit Tiefe', grade: { sat: 1.06, contrast: 0.22, temp: 0.03, split: 0.18, lift: 0.012, crush: 0.012, bw: 0, grain: 0.014, vig: 0.26, tint: [1, 1, 1], glow: 0.06, leak: 0 } },
@@ -28,6 +28,7 @@ const LOOKS = {
   kino: { label: 'Teal & Orange', blurb: 'Blockbuster-Kontrast', grade: { sat: 0.98, contrast: 0.36, temp: 0.08, split: 0.9, lift: 0.02, crush: 0.02, bw: 0, grain: 0.022, vig: 0.4, tint: [1, 1, 1], glow: 0.05, leak: 0 } },
   blau: { label: 'Blue Hour', blurb: 'Kühle Nacht, satte Tiefen', grade: { sat: 0.92, contrast: 0.34, temp: -0.22, split: 0.55, lift: 0.018, crush: 0.02, bw: 0, grain: 0.024, vig: 0.42, tint: [0.97, 1, 1.04], glow: 0.14, leak: 0 } },
   film: { label: 'Film 35', blurb: 'Analoges Korn, sanfte Farben', grade: { sat: 0.86, contrast: 0.16, temp: 0.22, split: 0.25, lift: 0.055, crush: 0.035, bw: 0, grain: 0.055, vig: 0.42, tint: [1.02, 0.99, 0.93], glow: 0.14, leak: 0.05 } },
+  digicam: { label: 'Digicam', blurb: '2000er-Kamera: knackig, kühl, mit Blitz', grade: { sat: 1.16, contrast: 0.44, temp: -0.1, split: 0.08, lift: 0.0, crush: 0.0, bw: 0, grain: 0.02, vig: 0.1, tint: [0.99, 1.01, 1.03], glow: 0, leak: 0 } },
   noir: { label: 'Noir', blurb: 'Schwarzweiß mit Charakter', grade: { sat: 0, contrast: 0.55, temp: 0, split: 0, lift: 0.02, crush: 0.02, bw: 1, grain: 0.05, vig: 0.5, tint: [1, 1, 1], glow: 0.05, leak: 0 } },
 };
 
@@ -206,6 +207,53 @@ function chooseTransition(ctx, rng) {
   return { type, dur, punch };
 }
 
+/**
+ * Verfeinert den Übergang anhand der beiden Bilder:
+ * ähnlicher Aufbau → Match-Cut (harter Schnitt, die Bewegung läuft weiter) oder „Bild aus Bild“,
+ * Sprung ins Helle → Lichtblende, Sprung ins Dunkle → Schwarzblende statt Blende.
+ */
+function refineTransition(tr, rel, ctx) {
+  if (!rel || tr.punch) return tr;
+  const { A, B, beatDur, s, peak, rng } = ctx;
+  const lenA = A.end - A.start, lenB = B.end - B.start;
+  const fit = (beats, max = 2.4) => Math.min(beats * beatDur, 0.45 * lenA, 0.45 * lenB, max);
+  if (s.morph === 'on' && !peak) {
+    // kreative Übergänge, bei denen ein Bild aus dem anderen entsteht (nicht in Drops: dort bleibt es knackig)
+    const d = fit(rel.sim > 0.55 ? 2 : 1.5);
+    if (d >= 0.3) {
+      const type = rel.sim > 0.55 ? TR.MORPH : rel.aLuma > 0.5 && rel.colorD > 45 ? TR.DOUBLE : rng() < 0.5 ? TR.INK : TR.MORPH;
+      return { type, dur: d, punch: false };
+    }
+  }
+  if (s.match !== 'off' && rel.sim > 0.78 && (tr.type === TR.CUT || tr.type === TR.DISSOLVE)) {
+    return { type: TR.CUT, dur: 0, punch: false, match: true };
+  }
+  if (tr.type === TR.DISSOLVE) {
+    if (rel.dl > 0.22) return { ...tr, type: TR.LUMA };
+    if (rel.dl < -0.3) return { ...tr, type: TR.DIP };
+  }
+  return tr;
+}
+
+/** Zurückgelegte Quellzeit einer Tempo-Kurve (Punkte [Zeit, Tempo], linear dazwischen) bis t. */
+function rampIntegral(pts, t) {
+  let acc = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [t0, r0] = pts[i], [t1, r1] = pts[i + 1];
+    if (t <= t0) break;
+    const te = Math.min(t, t1), f = (te - t0) / Math.max(1e-6, t1 - t0);
+    acc += (te - t0) * (r0 + (r0 + (r1 - r0) * f)) / 2;
+  }
+  const last = pts[pts.length - 1];
+  if (t > last[0]) acc += (t - last[0]) * last[1];
+  return acc;
+}
+function rampRate(pts, t) {
+  if (t <= pts[0][0]) return pts[0][1];
+  for (let i = 0; i < pts.length - 1; i++) if (t < pts[i + 1][0]) { const [t0, r0] = pts[i], [t1, r1] = pts[i + 1]; return r0 + (r1 - r0) * (t - t0) / Math.max(1e-6, t1 - t0); }
+  return pts[pts.length - 1][1];
+}
+
 function orderChrono(list) {
   return list.slice().sort((a, b) => (a.time || 0) - (b.time || 0) || String(a.name || '').localeCompare(String(b.name || ''), 'de', { numeric: true }));
 }
@@ -222,6 +270,58 @@ function selectMedia(pool, K, mustIds) {
   const must = clean.filter((m) => m.fav || mustIds.has(m.id));
   const rest = clean.filter((m) => !(m.fav || mustIds.has(m.id))).sort((a, b) => (b.score || 0) - (a.score || 0));
   return orderChrono(must.concat(rest.slice(0, Math.max(0, K - must.length))));
+}
+
+/**
+ * Bewusste Reihenfolge: grob chronologisch, innerhalb einer Szene (Aufnahmen kurz nacheinander)
+ * aber so, dass jedes Bild aus dem vorigen hervorgeht: ähnliche Farbe und Helligkeit fließen,
+ * ähnlicher Bildaufbau ergibt Match-Cuts, Beinahe-Doppel stehen nie direkt hintereinander.
+ */
+function flowOrder(list, wantMatch) {
+  if (list.length < 3) return list.slice();
+  const colorD = (a, b) => (a.avg && b.avg ? Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) : 60);
+  const twin = (a, b) => colorD(a, b) < 18 && a.hash && b.hash && hamming(a.hash, b.hash) < 14;
+  const flow = (a, b) => {
+    if (twin(a, b)) return -1;
+    let v = 0.45 * (1 - Math.min(1, colorD(a, b) / 160)) + 0.25 * (1 - Math.min(1, Math.abs((a.luma || 0.45) - (b.luma || 0.45)) / 0.4));
+    const sim = layoutSim(a.layout, b.layout);
+    if (wantMatch && sim > 0.72) v += 0.35 * sim;
+    if (a.kind !== b.kind) v += 0.05;
+    return v;
+  };
+  // Szenen: Lücke über 40 Minuten beginnt eine neue
+  const scenes = [];
+  for (const m of list) {
+    const last = scenes[scenes.length - 1];
+    const prev = last && last[last.length - 1];
+    if (!prev || !m.time || !prev.time || m.time - prev.time > 40 * 60 * 1000) scenes.push([m]); else last.push(m);
+  }
+  const out = [];
+  for (const sc of scenes) {
+    const rest = sc.slice();
+    let prev = out[out.length - 1] || null;
+    while (rest.length) {
+      let bi = 0;
+      if (prev) {
+        let bv = -Infinity;
+        // nur unter den nächsten vier Aufnahmen wählen: die Geschichte bleibt in ihrer Zeit
+        for (let k = 0; k < Math.min(4, rest.length); k++) {
+          const v = flow(prev, rest[k]) - k * 0.09;
+          if (v > bv) { bv = v; bi = k; }
+        }
+      }
+      prev = rest.splice(bi, 1)[0];
+      out.push(prev);
+    }
+  }
+  return out;
+}
+
+/** Beziehung zweier aufeinanderfolgender Aufnahmen für die Wahl des Übergangs. */
+function shotRelation(a, b) {
+  if (!a || !b) return null;
+  const colorD = a.avg && b.avg ? Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) : 60;
+  return { sim: layoutSim(a.layout, b.layout), colorD, dl: (b.luma || 0.45) - (a.luma || 0.45), aLuma: a.luma || 0.45 };
 }
 
 /** Ähnliche Bilder nicht direkt hintereinander (Farbe/Hash). */
@@ -312,14 +412,34 @@ function buildPlan(opts) {
   }
 
   // 9er-Raster: Kacheln werden im Takt farbig, dann Zoom ins Zielbild genau auf einen Beat
+  // Vorspann vor dem eigentlichen Einstieg (kombinierbar): Countdown oder Rewind
+  const bStep = beatDur < 0.42 ? 2 : 1;
+  const bts0 = an.beats.map((b) => b - win.start).filter((t) => t >= -0.02 && t < D);
+  const atB = (k) => (bts0[k] != null ? Math.max(0, bts0[k]) : k * beatDur);
+  let pre = null;
+  const preMode = !flight && s.pre && s.pre !== 'off' && intro !== 'split' && !(s.pre === 'countdown' && intro === 'countdown') ? s.pre : null;
+  if (preMode === 'countdown') {
+    const marks = [0, atB(bStep), atB(2 * bStep)], end = atB(3 * bStep);
+    pre = { kind: 'countdown', beats: 3 * bStep, end, marks, pieces: marks.map((m, i) => ({ start: m, end: i < 2 ? marks[i + 1] : end, f: { leader: true, pre: 'leader' } })) };
+  } else if (preMode === 'rewind') {
+    // kurzer Vorgeschmack auf den besten Moment, dann spult der Film im Zeitraffer zurück an den Anfang
+    const teaseEnd = atB(2 * bStep), end = atB(4 * bStep);
+    const sub = beatDur / 2 >= 0.2 ? beatDur / 2 : beatDur;
+    const pieces = [{ start: 0, end: teaseEnd, f: { pre: 'tease' } }];
+    for (let t0 = teaseEnd; t0 < end - 0.05; t0 += sub) pieces.push({ start: t0, end: Math.min(end, t0 + sub), f: { pre: 'rew' } });
+    pre = { kind: 'rewind', beats: 4 * bStep, end, teaseEnd, pieces };
+  }
+  if (pre && pre.end > D * 0.35) pre = null;
+  const pb = pre ? pre.beats : 0;
+  const T0 = pre ? pre.end : 0;
+
   let gridPlan = null;
   if (intro === 'grid') {
     const n = goodMedia(usable).length >= 9 ? 3 : 2;
-    const step = beatDur < 0.42 ? 2 : 1;
-    const bts = an.beats.map((b) => b - win.start).filter((t) => t >= -0.02 && t < D);
-    const at = (k) => (bts[k] != null ? Math.max(0, bts[k]) : k * beatDur);
+    const step = bStep;
+    const at = (k) => atB(k + pb);
     const tiles = n * n;
-    const times = Array.from({ length: tiles }, (_, k) => (k === 0 ? Math.min(0.12, at(0)) : at(k * step)));
+    const times = Array.from({ length: tiles }, (_, k) => (k === 0 ? (pb ? at(0) : Math.min(0.12, at(0))) : at(k * step)));
     const zoomEnd = at(tiles * step);
     if (zoomEnd < D * 0.7) gridPlan = { n, times, zoomStart: times[tiles - 1], zoomEnd };
   }
@@ -327,9 +447,8 @@ function buildPlan(opts) {
   // „Durch den Namen“: Ortsname als Fenster ins Bild, dann Zoom durch die Buchstaben auf einen Beat
   let knock = null;
   if (intro === 'knockout') {
-    const step = beatDur < 0.42 ? 2 : 1;
-    const bts = an.beats.map((b) => b - win.start).filter((t) => t >= -0.02 && t < D);
-    const at = (k) => (bts[k] != null ? Math.max(0, bts[k]) : k * beatDur);
+    const step = bStep;
+    const at = (k) => atB(k + pb);
     knock = { zoomStart: at(5 * step), end: at(6 * step) };
     if (knock.end > D * 0.6) knock = null;
   }
@@ -337,37 +456,41 @@ function buildPlan(opts) {
   // Countdown wie ein alter Filmvorspann: 3 · 2 · 1 auf den Beats, darunter wechseln Bilder in Schwarzweiß
   let leader = null;
   if (intro === 'countdown') {
-    const step = beatDur < 0.42 ? 2 : 1;
-    const bts = an.beats.map((b) => b - win.start).filter((t) => t >= -0.02 && t < D);
-    const at = (k) => (bts[k] != null ? Math.max(0, bts[k]) : k * beatDur);
-    leader = { marks: [0, at(step), at(2 * step)], end: at(3 * step) };
-    if (leader.end > D * 0.5 || leader.marks[1] < 0.2) leader = null;
+    const step = bStep;
+    const at = (k) => atB(k + pb);
+    leader = { marks: [pb ? at(0) : 0, at(step), at(2 * step)], end: at(3 * step) };
+    if (leader.end > D * 0.5 || leader.marks[1] - leader.marks[0] < 0.2) leader = null;
   }
 
   // Einstieg: Mindestdauer der ersten Einstellung
   const firstMin = knock || leader || intro === 'grid' ? 0 : intro === 'city' ? Math.min(D * 0.35, Math.max(2.4, barDur * 1.2)) : intro === 'cinema' ? Math.min(D * 0.35, Math.max(3.2, barDur * 1.6)) : intro === 'type' ? Math.min(D * 0.3, Math.max(1.8, barDur)) : intro === 'split' ? Math.min(D * 0.3, Math.max(2.2, barDur)) : Math.min(Math.max(1.3, barDur * 0.95), 2.8, D * 0.3);
-  if (!flight && segs.length > 1 && segs[0].end < firstMin) {
+  if (!flight && !pre && segs.length > 1 && segs[0].end < firstMin) {
     let k = 0;
     while (k < segs.length - 1 && segs[k].end < firstMin) k++;
     segs = [{ start: 0, end: segs[k].end, w: 0 }, ...segs.slice(k + 1)];
   }
   // Einstiege mit fester Länge: Schnitte genau auf die Beats legen, danach normal weiter
-  const forceStart = (bounds, mark) => {
-    const e = bounds[bounds.length - 1];
+  // Vorspann und Einstieg werden hintereinander gelegt (z. B. Countdown, dann 9er-Raster)
+  const forceStart = (pieces, postMin) => {
+    const e = pieces[pieces.length - 1].end;
     if (e >= D - 1) return false;
     let k = segs.findIndex((g) => g.end > e + 0.05);
     if (k < 0) k = segs.length - 1;
-    if (segs[k].end - e < Math.max(0.9, beatDur * 2) && k < segs.length - 1) k++;
-    const head = bounds.slice(0, -1).map((b, i) => ({ start: b, end: bounds[i + 1], w: 0, [mark]: true }));
+    while (segs[k].end - e < Math.max(0.9, beatDur * 2, postMin) && k < segs.length - 1) k++;
+    const head = pieces.map((p) => ({ start: p.start, end: p.end, w: 0, ...p.f }));
     segs = [...head, { start: e, end: Math.max(segs[k].end, e + 0.3), w: 10 }, ...segs.slice(k + 1)];
     return true;
   };
-  if (knock && !forceStart([0, knock.end], 'knock')) knock = null;
-  if (leader && !forceStart([...leader.marks, leader.end], 'leader')) leader = null;
-  if (gridPlan && !forceStart([0, gridPlan.zoomEnd], 'gridSeg')) gridPlan = null;
+  const mainPieces = knock ? [{ start: T0, end: knock.end, f: { knock: true } }]
+    : leader ? leader.marks.map((m, i) => ({ start: m, end: i < 2 ? leader.marks[i + 1] : leader.end, f: { leader: true } }))
+      : gridPlan ? [{ start: T0, end: gridPlan.zoomEnd, f: { gridSeg: true } }] : [];
+  if (pre || mainPieces.length) {
+    const ok = forceStart([...(pre ? pre.pieces : []), ...mainPieces], mainPieces.length ? 0 : firstMin);
+    if (!ok) { pre = null; knock = null; leader = null; gridPlan = null; }
+  }
   // Foto-Serie im Drop: ein Takt, jeder halbe Beat ein neues Bild
   // Einstiege mit fester Länge enden auf dem Drop: die Foto-Serie darf direkt dort beginnen
-  const forced = segs.filter((g) => g.knock || g.leader || g.gridSeg);
+  const forced = segs.filter((g) => g.knock || g.leader || g.gridSeg || g.pre);
   // nach Raster und „Durch den Namen“ behält das freigelegte Bild seine volle Einstellung
   const lastForced = forced[forced.length - 1];
   const introEnd = !lastForced ? segs[0].end : lastForced.leader ? lastForced.end : (segs[forced.length] || lastForced).end;
@@ -392,7 +515,7 @@ function buildPlan(opts) {
       // Reststücke unter 0,6 s an einen normalen Nachbarn hängen
       for (let i = 0; i < out.length; i++) {
         const g = out[i];
-        const fixed = (x) => x && (x.burst || x.leader || x.knock || x.gridSeg);
+        const fixed = (x) => x && (x.burst || x.leader || x.knock || x.gridSeg || x.pre);
         if (fixed(g) || g.end - g.start >= 0.6) continue;
         const prev = out[i - 1], next = out[i + 1];
         if (prev && !fixed(prev)) { prev.end = g.end; out.splice(i--, 1); } else if (next && !fixed(next)) { next.start = g.start; out.splice(i--, 1); }
@@ -401,7 +524,7 @@ function buildPlan(opts) {
     }
   }
   // Ende: letzte Einstellung lang genug für Schlusstitel/Standbild
-  const lastMin = outro === 'credits' ? Math.min(D * 0.3, Math.max(3.4, barDur * 1.5)) : outro === 'freeze' ? Math.min(D * 0.3, Math.max(2.6, barDur)) : outro === 'split' ? Math.min(D * 0.3, Math.max(2.2, barDur)) : 0;
+  const lastMin = outro === 'strip' ? Math.min(D * 0.32, Math.max(3.8, barDur * 2)) : outro === 'credits' ? Math.min(D * 0.3, Math.max(3.4, barDur * 1.5)) : outro === 'freeze' ? Math.min(D * 0.3, Math.max(2.6, barDur)) : outro === 'split' ? Math.min(D * 0.3, Math.max(2.2, barDur)) : 0;
   if (!flight && lastMin && segs.length > 2 && segs[segs.length - 1].end - segs[segs.length - 1].start < lastMin) {
     let k = segs.length - 1;
     while (k > 1 && D - segs[k].start < lastMin) k--;
@@ -412,7 +535,7 @@ function buildPlan(opts) {
     const abs = win.start + g.start;
     const sec = sectionAt(an, abs + 0.01);
     return {
-      i, start: g.start, end: g.end, label: sec.label, energy: sec.energy, weight: g.w, freezeAt: g.freezeAt, burst: !!g.burst, leader: !!g.leader,
+      i, start: g.start, end: g.end, label: sec.label, energy: sec.energy, weight: g.w, freezeAt: g.freezeAt, burst: !!g.burst, leader: !!g.leader, pre: g.pre || null,
       sectionChange: i > 0 && (an.sections || []).some((x) => Math.abs(x.start - abs) < 0.05),
       mediaId: null, role: 'normal',
     };
@@ -422,15 +545,17 @@ function buildPlan(opts) {
   const splitN = vertical ? (fmt.h / fmt.w > 1.5 ? 3 : 2) : 3;
   const splitFit = (m) => (vertical ? isLandscape(m) : isPortrait(m));
   const splitClips = [];
+  // P: erste Einstellung des eigentlichen Einstiegs (nach dem Vorspann)
+  const P = clips.filter((c) => c.pre).length;
   if (intro === 'split' && clips.length > 1) splitClips.push(0);
-  if (gridPlan) clips[0].grid = true;
+  if (gridPlan) clips[P].grid = true;
   if (outro === 'split' && clips.length > 2) splitClips.push(clips.length - 1);
   if (s.split !== 'off' && !flight) {
     const every = s.split === 'more' ? 3 : 5;
     let since = every;
     for (const c of clips) {
       since++;
-      if (c.i <= (gridPlan ? 1 : leader ? 3 : 0) || c.i === clips.length - 1 || splitClips.includes(c.i)) continue;
+      if (c.i <= P + (gridPlan ? 1 : leader ? 3 : 0) || c.i === clips.length - 1 || splitClips.includes(c.i)) continue;
       const peak = c.label === 'drop' || c.label === 'chorus';
       if (peak && c.end - c.start >= Math.max(1.4, beatDur * 3) && (c.sectionChange || since >= every)) { splitClips.push(c.i); since = 0; }
     }
@@ -473,7 +598,7 @@ function buildPlan(opts) {
     bounds.push(clips.length);
     for (let c = 0; c < chapters.length; c++) {
       const cnt = bounds[c + 1] - bounds[c];
-      const sel = spreadSimilar(selectMedia(chapters[c].media, cnt, new Set()));
+      const sel = spreadSimilar(flowOrder(selectMedia(chapters[c].media, cnt, new Set()), s.match !== 'off'));
       for (let k = 0; k < cnt; k++) {
         order.push(sel.length ? sel[k % sel.length] : null);
         if (k === 0) { clips[bounds[c]].chapter = chapters[c].title; clips[bounds[c]].chapterNo = c + 1; clips[bounds[c]].role = 'chapter'; }
@@ -484,7 +609,7 @@ function buildPlan(opts) {
   } else {
     const chosen = selectMedia(pool, clips.length - splitClips.length + 2, mustIds);
     hook = settings.hookId && byId.get(settings.hookId) ? byId.get(settings.hookId) : chosen.slice().sort((a, b) => (b.score || 0) - (a.score || 0))[0] || null;
-    const rest = spreadSimilar(chosen.filter((m) => m !== hook));
+    const rest = spreadSimilar(flowOrder(chosen.filter((m) => m !== hook), s.match !== 'off'));
     order = hook ? [hook, ...rest] : rest;
     // zweitbestes Motiv auf den ersten Drop/Refrain
     const dropIdx = clips.findIndex((c) => (c.label === 'drop' || c.label === 'chorus') && c.sectionChange);
@@ -502,18 +627,38 @@ function buildPlan(opts) {
       if (m && prevId === m.id && order.length > 1) { m = order[cur % order.length]; cur++; }
       clips[i].mediaId = m ? m.id : null;
     }
-    if (hook && intro !== 'split') { clips[0].mediaId = hook.id; clips[0].role = 'hook'; }
-    if (leader && hook && clips[3]) {
+    if (hook && intro !== 'split' && clips[P]) { clips[P].mediaId = hook.id; clips[P].role = 'hook'; }
+    if (leader && hook && clips[P + 3]) {
       // Nach dem Countdown kommt das stärkste Bild in Farbe; der Vorspann zeigt andere Motive
       const others = order.filter((m) => m && m !== hook);
-      for (let i = 0; i < 3; i++) { clips[i].mediaId = others.length ? others[i % others.length].id : hook.id; clips[i].role = 'leader'; }
-      clips[3].mediaId = hook.id; clips[3].role = 'hook';
+      for (let i = 0; i < 3; i++) { clips[P + i].mediaId = others.length ? others[i % others.length].id : hook.id; clips[P + i].role = 'leader'; }
+      clips[P + 3].mediaId = hook.id; clips[P + 3].role = 'hook';
     }
-    if (gridPlan && hook && clips[1]) {
+    if (gridPlan && hook && clips[P + 1]) {
       // Das Zielbild des Rasters läuft nach dem Zoom als erste Vollbild-Einstellung weiter
-      const was = clips[1].mediaId;
-      clips[1].mediaId = hook.id; clips[1].role = 'hook';
-      clips[0].mediaId = was && was !== hook.id ? was : clips[0].mediaId;
+      const was = clips[P + 1].mediaId;
+      clips[P + 1].mediaId = hook.id; clips[P + 1].role = 'hook';
+      clips[P].mediaId = was && was !== hook.id ? was : clips[P].mediaId;
+    }
+  }
+  if (pre && P) {
+    const main = clips.slice(P).map((c) => byId.get(c.mediaId)).filter(Boolean);
+    const first = byId.get(clips[P].mediaId);
+    if (pre.kind === 'countdown') {
+      const others = main.filter((m) => m !== first && m !== hook);
+      for (let i = 0; i < P; i++) { clips[i].mediaId = (others[i % Math.max(1, others.length)] || first || {}).id || null; clips[i].role = 'leader'; }
+    } else {
+      // Vorgeschmack: der spannendste Moment (gern ein Video), danach die Bilder des Films rückwärts
+      const cand = main.filter((m) => m !== first && m !== hook);
+      const tease = cand.filter((m) => m.kind === 'video').sort((a, b) => (b.score || 0) - (a.score || 0))[0] || cand.slice().sort((a, b) => (b.score || 0) - (a.score || 0))[0] || first;
+      clips[0].mediaId = tease ? tease.id : null; clips[0].role = 'tease';
+      const back = [];
+      for (let i = clips.length - 1; i >= P; i--) { const m = byId.get(clips[i].mediaId); if (m && m.kind === 'image' && !back.includes(m) && m !== tease) back.push(m); }
+      const n = P - 1;
+      for (let i = 0; i < n; i++) {
+        const m = back.length ? back[Math.min(back.length - 1, Math.floor((i * back.length) / n))] : tease;
+        clips[1 + i].mediaId = m ? m.id : null; clips[1 + i].role = 'rew';
+      }
     }
   }
 
@@ -548,8 +693,8 @@ function buildPlan(opts) {
 
   // Raster füllen: Zielbild in der Mitte (bzw. zuletzt), die übrigen nach Qualität, Fotos bevorzugt
   if (gridPlan && clips.length > 1) {
-    const c0 = clips[0];
-    const target = byId.get(clips[1].mediaId);
+    const c0 = clips[P];
+    const target = byId.get(clips[P + 1].mediaId);
     const tiles = gridPlan.n * gridPlan.n;
     const others = goodMedia(usable).filter((m) => m !== target && (m.kind === 'image' || m.poster))
       .sort((a, b) => (a.kind === 'image' ? 0 : 1) - (b.kind === 'image' ? 0 : 1) || (b.score || 0) - (a.score || 0)).slice(0, tiles - 1);
@@ -565,10 +710,22 @@ function buildPlan(opts) {
     orderIdx.forEach((cell, k) => { colorAt[cell] = gridPlan.times[k]; });
     c0.grid = { n: gridPlan.n, ids: cells, colorAt, target: center, zoomStart: gridPlan.zoomStart, zoomEnd: gridPlan.zoomEnd };
     c0.mediaId = target ? target.id : c0.mediaId;
-    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Einstieg im ${gridPlan.n === 3 ? '9er' : '4er'}-Raster: die Bilder werden Beat für Beat farbig, dann zoomt der Film ins ${gridPlan.n === 3 ? 'mittlere' : 'letzte'} Bild${Math.abs(clips[1].start - gridPlan.zoomEnd) < 0.01 && clips[1].label !== clips[0].label ? ` und landet genau auf dem ${SEC_DE[clips[1].label] || 'Einsatz'}` : ''}.`);
+    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Einstieg im ${gridPlan.n === 3 ? '9er' : '4er'}-Raster: die Bilder werden Beat für Beat farbig, dann zoomt der Film ins ${gridPlan.n === 3 ? 'mittlere' : 'letzte'} Bild${Math.abs(clips[P + 1].start - gridPlan.zoomEnd) < 0.01 && clips[P + 1].label !== clips[P].label ? ` und landet genau auf dem ${SEC_DE[clips[P + 1].label] || 'Einsatz'}` : ''}.`);
   }
 
-  // Übergänge
+  // Film-Strip-Ende: das letzte Bild wird zum Negativ auf einem Filmstreifen, der rückwärts durch den Film läuft
+  if (outro === 'strip' && !flight && clips.length > 3) {
+    const lastC = clips[clips.length - 1];
+    const ids = [];
+    for (let i = clips.length - 2; i >= 0 && ids.length < 10; i--) {
+      const c = clips[i];
+      for (const id of c.split ? c.split.ids : [c.mediaId]) if (id && !ids.includes(id) && byId.has(id)) ids.push(id);
+    }
+    if (ids.length >= 3) { lastC.strip = { ids }; lastC.mediaId = ids[0]; }
+  }
+
+  // Übergänge: aus dem Songaufbau und aus dem, was das vorige Bild zeigt
+  let matches = 0, morphs = 0;
   for (let i = 1; i < clips.length; i++) {
     const A = clips[i - 1], B = clips[i];
     const stopEnd = (an.stops || []).some((x) => Math.abs(x.end - (win.start + B.start)) < 0.06);
@@ -577,17 +734,27 @@ function buildPlan(opts) {
       peak: B.label === 'drop' || B.label === 'chorus', pace: s.pace, beatDur,
       lenA: A.end - A.start, lenB: B.end - B.start, stopEnd,
     }, rng);
-    if (A.split || B.split || A.grid || A.flightAnim || B.flightAnim || A.burst || B.burst || A.leader) tr = { type: TR.CUT, dur: 0, punch: false };
+    const fixedCut = A.split || B.split || A.grid || A.flightAnim || B.flightAnim || A.burst || B.burst || A.leader || A.pre || B.pre;
+    if (!fixedCut && B.role !== 'chapter') tr = refineTransition(tr, shotRelation(byId.get(A.mediaId), byId.get(B.mediaId)), {
+      B, A, beatDur, s, peak: B.label === 'drop' || B.label === 'chorus', rng, morphCount: morphs,
+    });
+    if (tr.match) { B.matchCut = true; matches++; }
+    if (tr.type === TR.MORPH || tr.type === TR.INK || tr.type === TR.DOUBLE) morphs++;
+    if (fixedCut) tr = { type: TR.CUT, dur: 0, punch: false };
+    if (B.strip) tr = { type: TR.DISSOLVE, dur: Math.min(0.35, 0.45 * (A.end - A.start)), punch: false };
     if (B.role === 'chapter') tr = { type: TR.DIP, dur: Math.min(beatDur * 1.5, 0.45 * (A.end - A.start), 0.45 * (B.end - B.start)), punch: false };
     const o = ov[B.i];
     if (o && o.trans != null) {
-      const dur = o.trans === TR.CUT ? 0 : Math.min(beatDur * (o.trans === TR.DISSOLVE || o.trans === TR.LUMA || o.trans === TR.DIP || o.trans === TR.LEAK ? 1 : 0.5), 0.45 * (A.end - A.start), 0.45 * (B.end - B.start));
+      const beats = o.trans === TR.MORPH || o.trans === TR.INK || o.trans === TR.DOUBLE ? 1.5 : o.trans === TR.DISSOLVE || o.trans === TR.LUMA || o.trans === TR.DIP || o.trans === TR.LEAK ? 1 : 0.5;
+      const dur = o.trans === TR.CUT ? 0 : Math.min(beatDur * beats, 0.45 * (A.end - A.start), 0.45 * (B.end - B.start));
       tr = { type: dur < 0.1 ? TR.CUT : o.trans, dur: dur < 0.1 ? 0 : dur, punch: false };
     }
     B.tin = { type: tr.type, dur: tr.dur };
     B.punch = tr.punch;
     A.tout = B.tin;
   }
+  if (matches) dir.notes.push(`${matches} Match-Cut${matches === 1 ? '' : 's'}: Bilder mit ähnlichem Aufbau schneiden unsichtbar ineinander, die Kamerabewegung läuft weiter.`);
+  if (morphs) dir.notes.push(`${morphs} ${morphs === 1 ? 'Übergang' : 'Übergänge'} „Bild aus Bild“: das nächste Motiv wächst aus dem vorigen heraus.`);
   if (clips.length) {
     clips[0].tin = { type: TR.CUT, dur: 0 };
     clips[clips.length - 1].tout = { type: TR.CUT, dur: 0 };
@@ -595,11 +762,13 @@ function buildPlan(opts) {
 
   // Loop-Ende: letzter Wischer läuft ins erste Bild
   let loopClip = null;
-  if (outro === 'loop' && clips.length > 1 && !clips[0].split) {
+  // mit Vorspann läuft der Loop in die erste Einstellung des Films (nicht in den Vorspann)
+  const loopTo = clips[P] && !clips[P].grid ? clips[P] : null;
+  if (outro === 'loop' && clips.length > P + 1 && loopTo && !loopTo.split) {
     const last = clips[clips.length - 1];
     const L = Math.min(beatDur * 0.5, (last.end - last.start) * 0.45);
     last.tout = { type: TR.WHIP, dur: L };
-    loopClip = { ...clips[0], i: clips.length, start: D, end: D + 1, tin: last.tout, tout: { type: TR.CUT, dur: 0 }, loop: true, punch: false };
+    loopClip = { ...loopTo, i: clips.length, pre: null, leader: false, start: D, end: D + 1, tin: last.tout, tout: { type: TR.CUT, dur: 0 }, loop: true, punch: false };
   }
 
   // Quellen, Tempo, Bewegung, Farbangleichung
@@ -615,6 +784,12 @@ function buildPlan(opts) {
     const m = byId.get(c.mediaId);
     c.mediaIndex = m ? media.indexOf(m) : -1;
     c.corr = m ? dir.corr.get(m.id) || [1, 1, 1] : [1, 1, 1];
+    if (c.strip) {
+      c.strip.items = c.strip.ids.map((id) => { const mm = byId.get(id); return { mediaIndex: media.indexOf(mm), focus: mm && mm.focus }; });
+      c.motion = { from: { s: 1, x: 0, y: 0 }, to: { s: 1, x: 0, y: 0 } };
+      c.srcOffset = 0; c.rate = 1; c.contain = false;
+      continue;
+    }
     if (c.grid) {
       c.grid.items = c.grid.ids.map((id) => {
         const mm = byId.get(id);
@@ -655,6 +830,17 @@ function buildPlan(opts) {
       else if ((c.label === 'intro' || c.label === 'outro' || s.pace === 'ruhig' || c.i === 0) && vd >= visDur * 0.75) rate = 0.75;
       let needS = visDur * rate;
       if (vd < needS) { rate = Math.max(0.5, vd / visDur); needS = visDur * rate; }
+      // Speed-Ramp: ins Drop hinein beschleunigen, auf dem Drop in Zeitlupe abbremsen
+      const nextC = clips[c.i + 1];
+      const rampOut = s.ramp === 'drop' && !o.speed && !withSound && nextC && nextC.sectionChange && (nextC.label === 'drop' || nextC.label === 'chorus') && visDur > 0.8;
+      const rampIn = s.ramp === 'drop' && !o.speed && !withSound && c.sectionChange && (c.label === 'drop' || c.label === 'chorus') && visDur > 0.8;
+      if (rampOut || rampIn) {
+        const pts = rampOut
+          ? [[c.visStart, 1], [c.visStart + visDur * 0.45, 1], [c.visEnd, 2.6]]
+          : [[c.visStart, 0.35], [c.visStart + visDur * 0.55, 0.35], [c.visEnd, 1]];
+        const need = rampIntegral(pts, c.visEnd);
+        if (vd >= need + 0.05) { c.rp = pts; rate = 1; needS = need; }
+      }
       let off;
       if (o.srcOffset != null) off = o.srcOffset;
       else if (c.role === 'takeoff') off = vd - needS - Math.min(1, vd * 0.05); // Abheben liegt meist gegen Ende
@@ -668,7 +854,7 @@ function buildPlan(opts) {
       }
       c.srcOffset = Math.max(0, Math.min(off, Math.max(0, vd - needS)));
       c.rate = rate;
-      if (withSound && Math.abs(rate - 1) < 0.01) {
+      if (withSound && Math.abs(rate - 1) < 0.01 && !c.rp) {
         const t1 = Math.min(c.freezeAt != null ? c.freezeAt : c.visEnd, c.visStart + (vd - c.srcOffset));
         if (t1 - c.visStart > 0.15) voice.push({ mediaIndex: media.indexOf(m), mediaId: m.id, t0: Math.max(0, c.visStart), t1: Math.min(D, t1), src: c.srcOffset + Math.max(0, -c.visStart), gain: m.sound });
       }
@@ -683,17 +869,32 @@ function buildPlan(opts) {
       prevDir = mo.dir;
       c.motion = mo.m;
       c.dir = mo.dir;
+      const pc = c.matchCut ? clips[c.i - 1] : null;
+      if (pc && pc.motion && !pc.contain && media[pc.mediaIndex] && media[pc.mediaIndex].kind === 'image') {
+        // Match-Cut: gleicher Ausschnitt wie am Ende des vorigen Bilds, die Kamerabewegung läuft weiter
+        const f = pc.motion.from, to = pc.motion.to, k = 0.7;
+        const cl = (v) => Math.max(-1, Math.min(1, v));
+        c.motion = { from: { ...to }, to: { s: Math.max(1, to.s + (to.s - f.s) * k), x: cl(to.x + (to.x - f.x) * k), y: cl(to.y + (to.y - f.y) * k) } };
+        c.dir = pc.dir;
+        prevDir = pc.dir;
+      }
+    }
+    if (c.pre === 'rew') {
+      // Zurückspulen: jedes Bild zieht sich schnell zusammen und rutscht gegen die Laufrichtung
+      const sg = c.i % 2 ? 1 : -1;
+      c.motion = { from: { s: 1.16, x: 0.35 * sg, y: 0 }, to: { s: 1.0, x: -0.35 * sg, y: 0 } };
+      if (m.kind === 'video') c.freezeAt = c.visStart;
     }
     if (c.tout && c.tout.type === TR.WHIP) c.tout.dirSign = c.dir === 'left' ? -1 : 1;
   }
   // nach dem Raster-Zoom: gleiches Bild, gleicher (zentrierter) Ausschnitt, dann sanfte Fahrt
-  if (clips[0] && clips[0].grid && clips[1] && clips[1].motion) {
-    const to = clips[1].motion.to;
-    clips[1].motion = { from: { s: 1, x: 0, y: 0 }, to: { s: Math.max(1.04, to.s || 1), x: (to.x || 0) * 0.5, y: (to.y || 0) * 0.5 } };
-    clips[1].contain = false;
+  if (clips[P] && clips[P].grid && clips[P + 1] && clips[P + 1].motion) {
+    const to = clips[P + 1].motion.to;
+    clips[P + 1].motion = { from: { s: 1, x: 0, y: 0 }, to: { s: Math.max(1.04, to.s || 1), x: (to.x || 0) * 0.5, y: (to.y || 0) * 0.5 } };
+    clips[P + 1].contain = false;
   }
   if (loopClip) {
-    const c0 = clips[0];
+    const c0 = loopTo;
     const L = loopClip.tin.dur;
     Object.assign(loopClip, {
       visStart: D - L, visEnd: D + 0.001, mediaIndex: c0.mediaIndex, contain: c0.contain, rate: c0.rate || 1, corr: c0.corr,
@@ -727,28 +928,42 @@ function buildPlan(opts) {
     if (t >= -0.01 && t <= D + 0.01) { beatsRel.push(t); downs.push(i % 4 === an.downPhase); beatEnergy.push(an.energy[i]); }
   }
   const beatsIn = (a, b) => beatsRel.filter((t) => t >= a - 0.01 && t < b);
-  const tEnd = Math.min(D * 0.45, Math.max(2.6, barDur * 1.4));
+  const tEnd = T0 + Math.min(D * 0.45, Math.max(2.6, barDur * 1.4));
+
+  // Vorspann
+  if (pre && pre.kind === 'countdown') {
+    fx.push({ type: 'desat', start: 0, end: pre.end, amp: 1 });
+    fx.push({ type: 'flash', start: pre.end, end: pre.end + 0.22, amp: 0.35 });
+    fx.push({ type: 'punch', start: pre.end, end: pre.end + 0.45, amp: 1 });
+    overlays.push({ type: 'leader', marks: pre.marks, start: 0, end: pre.end });
+  } else if (pre && pre.kind === 'rewind') {
+    fx.push({ type: 'desat', start: pre.teaseEnd, end: pre.end, amp: 0.45 });
+    fx.push({ type: 'flash', start: pre.end, end: pre.end + 0.18, amp: 0.3 });
+    overlays.push({ type: 'rewind', start: pre.teaseEnd - 0.12, end: pre.end, teaseEnd: pre.teaseEnd });
+    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, 'Vorspann Rewind: ein kurzer Blick auf den besten Moment, dann spult der Film zurück an den Anfang.');
+  }
+  if (pre && pre.kind === 'countdown') dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, 'Vorspann Countdown: 3 · 2 · 1 wie im alten Kino, danach beginnt dein Einstieg.');
 
   if (intro === 'cinema') {
-    const cardEnd = Math.min(clips[0].end - 1.0, Math.max(2.2, barDur * 1.1));
+    const cardEnd = Math.min(clips[P].end - 1.0, T0 + Math.max(2.2, barDur * 1.1));
     // Im Hochformat nie Schwarz: das Bild liegt abgedunkelt unter der Titelkarte
-    if (vertical) {
-      fx.push({ type: 'dim', start: 0, end: cardEnd + 0.9, amp: 0.62, fadeOut: 0.9 });
-      fx.push({ type: 'blur', start: 0, end: cardEnd + 0.9, amp: 1, fadeOut: 0.9 });
+    if (vertical || pre) {
+      fx.push({ type: 'dim', start: T0, end: cardEnd + 0.9, amp: 0.62, fadeOut: 0.9 });
+      fx.push({ type: 'blur', start: T0, end: cardEnd + 0.9, amp: 1, fadeOut: 0.9 });
     } else fx.push({ type: 'black', start: 0, end: cardEnd + 0.9, amp: 1, fadeOut: 0.9 });
-    overlays.push({ type: 'titlecard', text: title, sub: subtitle, geo, start: 0.15, end: cardEnd + 0.2 });
+    overlays.push({ type: 'titlecard', text: title, sub: subtitle, geo, start: T0 + 0.15, end: cardEnd + 0.2 });
   } else if (intro === 'city') {
-    fx.push({ type: 'focus', start: 0, end: Math.min(0.7, beatDur * 1.3), amp: 0.8 });
-    fx.push({ type: 'dim', start: 0, end: tEnd + 0.3, amp: 0.3, fadeOut: 0.6 });
-    if (title) overlays.push({ type: 'city', text: title, sub: subtitle, geo, start: 0, end: tEnd });
+    fx.push({ type: 'focus', start: T0, end: T0 + Math.min(0.7, beatDur * 1.3), amp: 0.8 });
+    fx.push({ type: 'dim', start: T0, end: tEnd + 0.3, amp: 0.3, fadeOut: 0.6 });
+    if (title) overlays.push({ type: 'city', text: title, sub: subtitle, geo, start: T0, end: tEnd });
   } else if (intro === 'hook') {
-    if (outro !== 'loop') fx.push({ type: 'focus', start: 0, end: Math.min(0.6, beatDur * 1.2), amp: 1 });
-    if (title) overlays.push({ type: 'lower', text: title, sub: subtitle, geo, start: Math.min(0.4, beatDur), end: tEnd });
+    if (outro !== 'loop' && !pre) fx.push({ type: 'focus', start: 0, end: Math.min(0.6, beatDur * 1.2), amp: 1 });
+    if (title) overlays.push({ type: 'lower', text: title, sub: subtitle, geo, start: T0 + Math.min(0.4, beatDur), end: tEnd });
   } else if (intro === 'type') {
-    const end = Math.min(clips[0].end + (clips[1] ? (clips[1].end - clips[1].start) * 0.5 : 0), tEnd + barDur * 0.5);
+    const end = Math.min(clips[P].end + (clips[P + 1] ? (clips[P + 1].end - clips[P + 1].start) * 0.5 : 0), tEnd + barDur * 0.5);
     if (title) {
-      overlays.push({ type: 'type', text: title, sub: subtitle, start: 0, end, beats: beatsIn(0, end - beatDur) });
-      fx.push({ type: 'dim', start: 0, end, amp: 0.45, fadeOut: 0.5 });
+      overlays.push({ type: 'type', text: title, sub: subtitle, start: T0, end, beats: beatsIn(T0, end - beatDur) });
+      fx.push({ type: 'dim', start: T0, end, amp: 0.45, fadeOut: 0.5 });
     }
   } else if (flight) {
     const an0 = clips.find((c) => c.flightAnim);
@@ -757,15 +972,15 @@ function buildPlan(opts) {
     if (title && tk && flight.from && flight.from.name) overlays.push({ type: 'lower', text: flight.from.name, sub: ['Abflug', flight.dep].filter(Boolean).join(' '), start: Math.min(0.4, beatDur), end: Math.min(tk.end - 0.5, Math.max(2.4, barDur * 1.2)) });
     if (title && ld && flight.to && flight.to.name) overlays.push({ type: 'lower', text: flight.to.name, sub: ['Ankunft', flight.arr].filter(Boolean).join(' '), start: ld.start + Math.min(0.8, beatDur * 1.5), end: Math.min(D - 0.3, ld.start + Math.max(2.6, barDur * 1.4)) });
   } else if (intro === 'countdown' && leader) {
-    fx.push({ type: 'desat', start: 0, end: leader.end, amp: 1 });
+    fx.push({ type: 'desat', start: leader.marks[0], end: leader.end, amp: 1 });
     fx.push({ type: 'flash', start: leader.end, end: leader.end + 0.22, amp: 0.35 });
     fx.push({ type: 'punch', start: leader.end, end: leader.end + 0.45, amp: 1 });
-    overlays.push({ type: 'leader', marks: leader.marks, start: 0, end: leader.end });
+    overlays.push({ type: 'leader', marks: leader.marks, start: leader.marks[0], end: leader.end });
     if (title) overlays.push({ type: 'lower', text: title, sub: subtitle, geo, start: leader.end + Math.min(0.3, beatDur * 0.5), end: Math.min(D - 0.5, leader.end + Math.max(2.6, barDur * 1.3)) });
   } else if (intro === 'knockout' && knock) {
-    if (title) overlays.push({ type: 'knockout', text: title, sub: subtitle, geo, start: 0, end: knock.end, zoomStart: knock.zoomStart });
-  } else if (intro === 'grid' && clips[0].grid) {
-    const g0 = clips[0].grid;
+    if (title) overlays.push({ type: 'knockout', text: title, sub: subtitle, geo, start: T0, end: knock.end, zoomStart: knock.zoomStart });
+  } else if (intro === 'grid' && clips[P] && clips[P].grid) {
+    const g0 = clips[P].grid;
     if (title) overlays.push({ type: 'lower', text: title, sub: subtitle, geo, start: g0.zoomEnd + Math.min(0.3, beatDur * 0.5), end: Math.min(D - 0.5, g0.zoomEnd + Math.max(2.4, barDur * 1.2)) });
   } else if (intro === 'split') {
     if (title) overlays.push({ type: 'lower', text: title, sub: subtitle, geo, start: Math.max(0.6, (clips[0].split ? clips[0].split.reveal.slice(-1)[0] : 0) + 0.2), end: Math.min(D * 0.45, clips[0].end + barDur * 0.5), center: true });
@@ -773,6 +988,7 @@ function buildPlan(opts) {
 
   // Kapitel (Gesamtfilm)
   const introOvEnd = Math.max(0, ...overlays.map((o) => o.end));
+  const introOvEnd0 = introOvEnd;
   let chapterCount = 0;
   for (const c of clips) if (c.chapter) chapterCount++;
   for (let ci = 0; ci < clips.length; ci++) {
@@ -821,6 +1037,38 @@ function buildPlan(opts) {
   for (const c of clips) {
     if (c.punch) fx.push({ type: 'punch', start: c.start, end: c.start + 0.45, amp: 1 });
     if (c.freezeAt != null && !(outro === 'freeze' && c === last)) fx.push({ type: 'flash', start: c.freezeAt, end: c.freezeAt + 0.2, amp: 0.25 });
+  }
+
+  if (last && last.strip) {
+    const dur = last.end - last.start;
+    if (title) overlays.push({ type: 'lower', text: title, sub: subtitle, geo: null, start: last.start + dur * 0.4, end: D + 0.5, center: true });
+    dir.notes.push('Ende als Filmstreifen: das letzte Bild wird zum Einzelbild auf dem Streifen, der rückwärts durch deinen Film läuft.');
+  }
+
+  // Digicam: kleiner Blitz auf Fotoschnitten, Datumsstempel wie früher
+  const digicam = s.look === 'digicam';
+  if (digicam) {
+    let k = 0;
+    for (const c of clips) {
+      const m = byId.get(c.mediaId);
+      if (!m || m.kind !== 'image' || c.pre || c.grid || c.split || c.i === 0 || c.burst) continue;
+      if (k++ % 2 === 0) fx.push({ type: 'flash', start: c.start, end: c.start + 0.12, amp: 0.22 });
+    }
+  }
+  if (s.stamp === 'on' || (s.stamp !== 'off' && digicam)) {
+    const blackAt = Math.min(D, ...fx.filter((f) => f.type === 'black' && f.start > D * 0.5).map((f) => f.start));
+    const stampText = (ms) => { const d = new Date(ms); return `'${String(d.getFullYear() % 100).padStart(2, '0')} ${String(d.getMonth() + 1).padStart(2, ' ')} ${String(d.getDate()).padStart(2, '0')}`; };
+    let curOv = null;
+    for (const c of clips) {
+      const m = byId.get(c.mediaId);
+      const ok = m && m.time > 1e11 && !c.pre && !c.grid && !c.split && !c.flightAnim && !c.strip;
+      const st = Math.max(c.start, introOvEnd0), en = Math.min(c.end, blackAt);
+      if (!ok || en - st < 0.2) { curOv = null; continue; }
+      const text = stampText(m.time);
+      if (curOv && curOv.text === text && Math.abs(curOv.end - st) < 0.01) { curOv.end = en; continue; }
+      curOv = { type: 'datestamp', text, start: st, end: en };
+      overlays.push(curOv);
+    }
   }
 
   // Eigene Texte und Sticker

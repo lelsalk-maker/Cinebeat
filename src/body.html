@@ -157,6 +157,15 @@
             <span class="field-label">Look</span>
             <div class="looks" role="radiogroup" aria-label="Farblook" id="lookGrid"></div>
           </div>
+          <div class="field" id="preField">
+            <span class="field-label" id="preLabel">Vorspann</span>
+            <div class="chips" role="radiogroup" aria-labelledby="preLabel" id="preChips">
+              <button type="button" role="radio" data-v="off">Keiner</button>
+              <button type="button" role="radio" data-v="countdown">Countdown 3 · 2 · 1</button>
+              <button type="button" role="radio" data-v="rewind">Rewind</button>
+            </div>
+            <p class="hint small" id="preHint">Läuft vor dem Einstieg und lässt sich mit jedem Einstieg kombinieren, z. B. Countdown und danach das 9er-Raster.</p>
+          </div>
           <div class="field">
             <span class="field-label" id="introLabel">Einstieg</span>
             <div class="chips" role="radiogroup" aria-labelledby="introLabel" id="introChips">
@@ -165,8 +174,7 @@
               <button type="button" role="radio" data-v="grid">9er-Raster</button>
               <button type="button" role="radio" data-v="knockout">Durch den Namen</button>
               <button type="button" role="radio" data-v="city">Ortsname</button>
-              <button type="button" role="radio" data-v="route">Route</button>
-              <button type="button" role="radio" data-v="cinema">Titelkarte</button>
+               <button type="button" role="radio" data-v="cinema">Titelkarte</button>
               <button type="button" role="radio" data-v="hook">Stärkstes Bild</button>
               <button type="button" role="radio" data-v="type">Wort für Wort</button>
               <button type="button" role="radio" data-v="split">Split-Screen</button>
@@ -179,6 +187,7 @@
               <button type="button" role="radio" data-v="credits">Schlusstitel</button>
               <button type="button" role="radio" data-v="loop">Endlos-Loop</button>
               <button type="button" role="radio" data-v="freeze">Standbild</button>
+              <button type="button" role="radio" data-v="strip">Filmstreifen</button>
               <button type="button" role="radio" data-v="split">Split-Screen</button>
             </div>
           </div>
@@ -211,12 +220,16 @@
             <p class="hint small" id="motionHint"></p>
           </div>
           <div class="field">
-            <span class="field-label" id="burstLabel">Foto-Serie im Drop</span>
-            <div class="chips" role="radiogroup" aria-labelledby="burstLabel" id="burstChips">
-              <button type="button" role="radio" data-v="off">Aus</button>
-              <button type="button" role="radio" data-v="drop">An</button>
+            <span class="field-label" id="fxLabel">Im Film <span class="muted">· beliebig kombinierbar</span></span>
+            <div class="chips" role="group" aria-labelledby="fxLabel" id="fxChips">
+              <button type="button" aria-pressed="false" data-fx="match">Match-Cuts</button>
+              <button type="button" aria-pressed="false" data-fx="morph">Bild aus Bild</button>
+              <button type="button" aria-pressed="false" data-fx="split">Split-Screens</button>
+              <button type="button" aria-pressed="false" data-fx="burst">Foto-Serie im Drop</button>
+              <button type="button" aria-pressed="false" data-fx="ramp">Speed-Ramp</button>
+              <button type="button" aria-pressed="false" data-fx="stamp">Datumsstempel</button>
             </div>
-            <p class="hint small">Beim ersten Drop wechselt einen Takt lang jeden halben Beat das Bild, wie ein Blitzlicht-Photo-Dump.</p>
+            <p class="hint small" id="fxHint"></p>
           </div>
           <div class="field" id="kmField">
             <span class="field-label" id="kmLabel">Unter dem Ortsnamen</span>
