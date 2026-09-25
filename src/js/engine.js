@@ -588,7 +588,7 @@ class Engine {
       cy = Math.max(fh / 2, Math.min(1 - fh / 2, lerp(cy, mf[1], extra.pull)));
     }
     const foc = [Math.max(0.1, Math.min(0.9, (mf[0] - cx) / fw + 0.5)), Math.max(0.1, Math.min(0.9, (mf[1] - cy) / fh + 0.5))];
-    if (extra.rot) geo[0] = extra.rot;
+    geo[0] = (extra.rot || 0) + lerp(mo.from.r || 0, mo.to.r || 0, e);
     return { tex: slot.tex, xf: [fw, fh, cx, cy], box: [0, 1, 1], blur, geo, corr, foc };
   }
 
@@ -615,6 +615,26 @@ class Engine {
       return { zoom: 1 + 0.05 * k, dx: pos * a, dy: -Math.abs(pos) * a * 0.18, rot: pos * 0.011 * k * energy };
     }
     if (mode === 'pulse') return { zoom: 1 + 0.02 + 0.03 * k * bp.env * energy, dx: 0, dy: 0, rot: 0 };
+    if (mode === 'float') {
+      // Schweben: weiche Acht über zwei Takte, dazu ein Atmen im Taktmaß – keine Kante, kein Ruck
+      const bar = plan.beatDur * 4, w = (2 * Math.PI) / (bar * 2);
+      const a = 0.011 * k;
+      return { zoom: 1 + 0.045 * k + 0.012 * k * Math.sin(w * 2 * t), dx: Math.sin(w * t) * a, dy: Math.sin(w * 2 * t + 0.6) * a * 0.55, rot: Math.sin(w * t + 1.1) * 0.004 * k };
+    }
+    if (mode === 'tilt') {
+      // Neigen im Takt: auf jeder Eins kippt das Bild weich zur anderen Seite
+      const downs = plan.downs || [];
+      let i = bp.index || 0;
+      while (i > 0 && !downs[i]) i--;
+      let n = (bp.index || 0) + 1;
+      while (n < b.length && !downs[n]) n++;
+      const t0 = b[i] != null ? b[i] : 0, t1 = b[n] != null ? b[n] : t0 + plan.beatDur * 4;
+      const u = clamp01((t - t0) / Math.max(0.1, t1 - t0));
+      const side = (b.slice(0, i + 1).filter((_, j) => downs[j]).length % 2) ? 1 : -1;
+      const e = 1 - Math.pow(1 - clamp01(u / 0.35), 3);
+      const ang = 0.021 * k * energy * side * (2 * e - 1);
+      return { zoom: 1 + 0.06 * k, dx: 0, dy: 0, rot: ang };
+    }
     if (mode === 'handheld') {
       const a = 0.008 * k;
       const nx = Math.sin(t * 1.31) + 0.5 * Math.sin(t * 2.87 + 1.3) + 0.25 * Math.sin(t * 5.1 + 0.4);
@@ -718,6 +738,15 @@ class Engine {
           eb.zoom *= 1 + 0.16 * (1 - e); eb.pull = 0.5 * (1 - e);
         } else if (L.type === TR.INK || L.type === TR.DOUBLE) {
           ea.zoom *= 1 + 0.06 * p; eb.zoom *= 1 + 0.06 * (1 - p);
+        }
+      }
+      // Impact-Zoom: jede Einstellung setzt leicht vergrößert ein und gleitet in 0,4 s zurück (auf dem Schnitt = auf dem Beat)
+      if (plan.motion === 'snap') {
+        const k = { soft: 0.6, medium: 1, strong: 1.5 }[plan.motionAmt] || 1;
+        for (const [ex, c] of [[ea, L.a], [eb, L.b]]) {
+          if (!c || c.grid || c.split || c.flightAnim || c.strip) continue;
+          const since = Math.max(0, t - c.start);
+          ex.zoom *= 1 + 0.075 * k * Math.exp(-since / 0.14);
         }
       }
       const mv = this.motionFx(t);

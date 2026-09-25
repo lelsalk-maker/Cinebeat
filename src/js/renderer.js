@@ -37,8 +37,8 @@ uniform int uTrans;
 uniform float uDir;
 uniform vec2 uRes;
 uniform float uTime;
-uniform float uSat, uContrast, uTemp, uSplit, uLift, uCrush, uBW, uGrain, uVig;
-uniform vec3 uTint;
+uniform float uSat, uVib, uContrast, uTemp, uLift, uCrush, uBW, uGrain, uVig;
+uniform vec3 uTint, uSh, uHi;
 uniform float uGlow, uLeak, uFlash, uBars, uBlack, uDim, uDesat;
 uniform float uHasOvTop;
 uniform float uLod;
@@ -186,13 +186,16 @@ void main() {
     vec2 uv = vec2(full.x, (full.y - uBand.x) / uBand.y);
     c = composite(uv);
     // Grading
-    c *= vec3(1.0 + uTemp * 0.08, 1.0 + uTemp * 0.012, 1.0 - uTemp * 0.09);
+    // Farbtemperatur (wie Weißabgleich: Rot/Blau gegenläufig, Grün leicht mit)
+    c *= vec3(1.0 + uTemp * 0.13, 1.0 + uTemp * 0.02, 1.0 - uTemp * 0.15);
+    // Farbräder: Schatten und Lichter getrennt tönen, die Mitten bleiben natürlich
     float l = luma(c);
-    vec3 shadowT = vec3(-0.045, 0.02, 0.065);
-    vec3 highT = vec3(0.07, 0.018, -0.055);
-    c += uSplit * (shadowT * (1.0 - smoothstep(0.0, 0.55, l)) + highT * smoothstep(0.4, 1.0, l));
+    c += uSh * (1.0 - smoothstep(0.0, 0.55, l)) + uHi * smoothstep(0.42, 1.0, l);
     l = luma(c);
     c = mix(vec3(l), c, uSat);
+    // Vibrance: blasse Farben kräftiger, bereits satte (Haut, Sonnenuntergang) kaum
+    float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b));
+    c = mix(vec3(luma(c)), c, 1.0 + uVib * (1.0 - clamp((mx - mn) * 1.8, 0.0, 1.0)));
     c = max(c, 0.0);
     c = c / (1.0 + max(c - 0.8, 0.0) * 1.4); // weiche Lichter
     c = clamp(c, 0.0, 1.0);
@@ -369,7 +372,9 @@ class Renderer {
     gl.uniform1f(u.uSat, g.sat);
     gl.uniform1f(u.uContrast, g.contrast);
     gl.uniform1f(u.uTemp, g.temp);
-    gl.uniform1f(u.uSplit, g.split);
+    gl.uniform1f(u.uVib, g.vib || 0);
+    gl.uniform3fv(u.uSh, g.sh || [0, 0, 0]);
+    gl.uniform3fv(u.uHi, g.hi || [0, 0, 0]);
     gl.uniform1f(u.uLift, g.lift);
     gl.uniform1f(u.uCrush, g.crush);
     gl.uniform1f(u.uBW, g.bw);

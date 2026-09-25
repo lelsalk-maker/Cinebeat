@@ -53,7 +53,17 @@ const res = await p.evaluate(async (b64) => {
   const knock = pp.overlays.find((o) => o.type === 'knockout');
   const preEnd = preClips.length ? preClips[preClips.length - 1].end : 0;
   if (!preClips.length || !knock || knock.start < preEnd - 0.01) fails.push('Vorspann vor Knockout');
-  return { order: ids.join(' '), matches: mc.length, continued: cont, morphs: morphs.map((c) => TR_NAMES[c.tin.type]), ramps: ramps.map((c) => c.rp.map((q) => q[1]).join('→')), pre: preClips.map((c) => c.pre).join(','), notes: plan.notes.filter((n) => /Match/.test(n)), fails };
+  // 6. Einstiegs-Elemente im Film: Raster im Refrain, Countdown vor dem Drop (auf den drei Beats davor)
+  const pg = buildPlan({ an, media, settings: { ...S0, midGrid: 'on', midCount: 'drop', length: 'full' }, overrides: { texts: [], stickers: [] } });
+  const gm = pg.clips.find((c) => c.gridMid);
+  const ci = pg.overlays.find((o) => o.type === 'countin');
+  if (!gm || !gm.grid || !gm.grid.ids || !pg.clips[gm.i + 1].afterGrid) fails.push('Raster im Film fehlt');
+  if (!ci || ci.marks.length !== 3) fails.push('Countdown vor dem Drop fehlt');
+  else {
+    const bs = pg.beats;
+    if (ci.marks.some((m) => !bs.some((x) => Math.abs(x - m) < 0.005))) fails.push('Countdown nicht auf den Beats');
+  }
+  return { midGrid: gm ? +gm.start.toFixed(2) : null, countIn: ci ? ci.marks.map((m) => +m.toFixed(2)) : null, order: ids.join(' '), matches: mc.length, continued: cont, morphs: morphs.map((c) => TR_NAMES[c.tin.type]), ramps: ramps.map((c) => c.rp.map((q) => q[1]).join('→')), pre: preClips.map((c) => c.pre).join(','), notes: plan.notes.filter((n) => /Match/.test(n)), fails };
 }, wav);
 console.log(JSON.stringify(res, null, 1));
 if (!res.matches || res.continued !== res.matches) res.fails.push('Match-Cut-Bewegung');

@@ -22,14 +22,27 @@ function hashStr(s) {
 const TR = { CUT: 0, DISSOLVE: 1, DIP: 2, ZOOM: 4, WHIP: 5, LEAK: 6, LUMA: 7, PUSH: 9, INK: 10, MORPH: 11, DOUBLE: 12 };
 const TR_NAMES = { 0: 'Schnitt', 1: 'Blende', 2: 'Schwarzblende', 4: 'Zoom', 5: 'Wischer', 6: 'Lichtleck', 7: 'Lichtblende', 9: 'Schieben', 10: 'Farbfluss', 11: 'Bild aus Bild', 12: 'Doppelbelichtung' };
 
+/**
+ * Looks: natürliches Grading (das Bild bleibt echt), aber klar erkennbar.
+ * sh/hi: Tönung der Schatten/Lichter, vib: Vibrance (hebt blasse Farben, schont Hauttöne), temp: Farbtemperatur,
+ * lift/crush: Schwarz- und Weißpunkt, glow: Halation der Lichter.
+ * pal: Farben für alles, was darüber liegt (Titel, Countdown, Rewind), damit der ganze Film einen Stil hat.
+ */
 const LOOKS = {
-  natur: { label: 'Natürlich', blurb: 'Klare, echte Farben mit Tiefe', grade: { sat: 1.06, contrast: 0.22, temp: 0.03, split: 0.18, lift: 0.012, crush: 0.012, bw: 0, grain: 0.014, vig: 0.26, tint: [1, 1, 1], glow: 0.06, leak: 0 } },
-  golden: { label: 'Golden Hour', blurb: 'Warmes Licht, weiche Lichter', grade: { sat: 1.1, contrast: 0.24, temp: 0.3, split: 0.35, lift: 0.02, crush: 0.02, bw: 0, grain: 0.018, vig: 0.3, tint: [1.02, 1, 0.96], glow: 0.2, leak: 0 } },
-  kino: { label: 'Teal & Orange', blurb: 'Blockbuster-Kontrast', grade: { sat: 0.98, contrast: 0.36, temp: 0.08, split: 0.9, lift: 0.02, crush: 0.02, bw: 0, grain: 0.022, vig: 0.4, tint: [1, 1, 1], glow: 0.05, leak: 0 } },
-  blau: { label: 'Blue Hour', blurb: 'Kühle Nacht, satte Tiefen', grade: { sat: 0.92, contrast: 0.34, temp: -0.22, split: 0.55, lift: 0.018, crush: 0.02, bw: 0, grain: 0.024, vig: 0.42, tint: [0.97, 1, 1.04], glow: 0.14, leak: 0 } },
-  film: { label: 'Film 35', blurb: 'Analoges Korn, sanfte Farben', grade: { sat: 0.86, contrast: 0.16, temp: 0.22, split: 0.25, lift: 0.055, crush: 0.035, bw: 0, grain: 0.055, vig: 0.42, tint: [1.02, 0.99, 0.93], glow: 0.14, leak: 0.05 } },
-  digicam: { label: 'Digicam', blurb: '2000er-Kamera: knackig, kühl, mit Blitz', grade: { sat: 1.16, contrast: 0.44, temp: -0.1, split: 0.08, lift: 0.0, crush: 0.0, bw: 0, grain: 0.02, vig: 0.1, tint: [0.99, 1.01, 1.03], glow: 0, leak: 0 } },
-  noir: { label: 'Noir', blurb: 'Schwarzweiß mit Charakter', grade: { sat: 0, contrast: 0.55, temp: 0, split: 0, lift: 0.02, crush: 0.02, bw: 1, grain: 0.05, vig: 0.5, tint: [1, 1, 1], glow: 0.05, leak: 0 } },
+  natur: { label: 'Natürlich', blurb: 'Klare, echte Farben mit Tiefe', grade: { sat: 1.0, vib: 0.3, contrast: 0.3, temp: 0.08, sh: [-0.012, 0.0, 0.018], hi: [0.02, 0.012, -0.01], lift: 0.01, crush: 0.012, bw: 0, grain: 0.012, vig: 0.24, tint: [1, 1, 1], glow: 0.05, leak: 0 },
+    pal: { ink: '#f1e9d8', tone: [40, 34, 28], accent: '#e4d5b7' } },
+  golden: { label: 'Golden Hour', blurb: 'Warmes Licht, weiche Lichter', grade: { sat: 0.98, vib: 0.22, contrast: 0.22, temp: 0.42, sh: [0.028, 0.004, -0.03], hi: [0.08, 0.022, -0.06], lift: 0.026, crush: 0.02, bw: 0, grain: 0.016, vig: 0.34, tint: [1.02, 1, 0.95], glow: 0.3, leak: 0 },
+    pal: { ink: '#fbe7c6', tone: [96, 58, 22], accent: '#f0b36a' } },
+  kino: { label: 'Teal & Orange', blurb: 'Blockbuster-Kontrast', grade: { sat: 0.9, vib: 0.38, contrast: 0.44, temp: 0.06, sh: [-0.075, 0.02, 0.085], hi: [0.085, 0.025, -0.075], lift: 0.02, crush: 0.03, bw: 0, grain: 0.02, vig: 0.44, tint: [1, 1, 1], glow: 0.06, leak: 0 },
+    pal: { ink: '#f4e4cf', tone: [18, 52, 60], accent: '#f08a3c' } },
+  blau: { label: 'Blue Hour', blurb: 'Kühle Nacht, satte Tiefen', grade: { sat: 0.86, vib: 0.18, contrast: 0.38, temp: -0.4, sh: [-0.035, 0.008, 0.075], hi: [-0.01, 0.02, 0.045], lift: 0.02, crush: 0.03, bw: 0, grain: 0.022, vig: 0.44, tint: [0.97, 1, 1.05], glow: 0.16, leak: 0 },
+    pal: { ink: '#e6eefb', tone: [22, 36, 70], accent: '#8fb4ee' } },
+  film: { label: 'Film 35', blurb: 'Analoges Korn, sanfte Farben', grade: { sat: 0.8, vib: 0.12, contrast: 0.2, temp: 0.2, sh: [-0.02, 0.035, 0.022], hi: [0.06, 0.035, -0.04], lift: 0.07, crush: 0.045, bw: 0, grain: 0.055, vig: 0.4, tint: [1.02, 0.99, 0.93], glow: 0.2, leak: 0.05 },
+    pal: { ink: '#f1e4c8', tone: [92, 70, 40], accent: '#e2b877' } },
+  digicam: { label: 'Digicam', blurb: '2000er-Kamera: knackig, kühl, mit Blitz', grade: { sat: 1.1, vib: 0.1, contrast: 0.5, temp: -0.16, sh: [-0.01, 0.02, 0.03], hi: [0.0, 0.004, 0.02], lift: 0.0, crush: 0.0, bw: 0, grain: 0.018, vig: 0.08, tint: [0.99, 1.01, 1.03], glow: 0, leak: 0 },
+    pal: { ink: '#ffffff', tone: [20, 32, 44], accent: '#ffa23a' } },
+  noir: { label: 'Noir', blurb: 'Schwarzweiß mit Charakter', grade: { sat: 0, vib: 0, contrast: 0.55, temp: 0, sh: [0, 0, 0], hi: [0, 0, 0], lift: 0.02, crush: 0.02, bw: 1, grain: 0.05, vig: 0.5, tint: [1, 1, 1], glow: 0.05, leak: 0 },
+    pal: { ink: '#f2f2f2', tone: [30, 30, 30], accent: '#d9d9d9' } },
 };
 
 const FORMATS = {
@@ -280,7 +293,7 @@ const isCalmLabel = (l) => l !== 'drop' && l !== 'chorus';
  * und zeitlich dort, wo sie in der Reise liegen. Benachbarte Schnitte werden dafür zusammengelegt (bleiben auf Beats).
  */
 function videoSlots(segs, an, win, vids, all, barDur, startAt, endAt) {
-  const special = (g) => g.burst || g.leader || g.knock || g.gridSeg || g.pre || g.reveal || g.vslot;
+  const special = (g) => g.burst || g.leader || g.knock || g.gridSeg || g.gridMid || g.pre || g.reveal || g.vslot;
   const labelAt = (t) => sectionAt(an, win.start + t + 0.01).label;
   const span = Math.max(1, endAt - startAt);
   let budget = (endAt - startAt) * 0.45;
@@ -454,22 +467,28 @@ function imageMotion(rng, m, outAspect, visDur, role, prevDir) {
   const toPos = (f, frac) => (frac >= 0.999 ? 0 : Math.max(-1, Math.min(1, ((f - 0.5) * 2) / (1 - frac))));
   const px = toPos(fx, fw), py = toPos(fy, fh);
   const speed = Math.min(1.4, Math.max(0.6, visDur / 3.2));
-  const z = (role === 'burst' ? 0.09 : 0.07) * speed;
+  const z = (role === 'burst' ? 0.1 : 0.075) * speed;
+  // feine Neigung, die über die Einstellung ausläuft (modern, nie wackelig)
+  const tilt = (rng() < 0.5 ? -1 : 1) * 0.0065 * speed;
+  // Richtung bleibt meist über zwei Einstellungen gleich: ruhiger Fluss statt Hin und Her
+  const keep = rng() < 0.55;
   if (fh < 0.72) {
-    const down = prevDir === 'up' ? true : prevDir === 'down' ? false : rng() < 0.5;
-    const a = Math.max(-1, Math.min(1, py + (down ? -0.55 : 0.55)));
-    return { dir: down ? 'down' : 'up', m: { from: { s: 1.02, x: 0, y: a }, to: { s: 1.02 + z * 0.5, x: 0, y: py } } };
+    const down = prevDir === 'up' ? !keep : prevDir === 'down' ? keep : rng() < 0.5;
+    const a = Math.max(-1, Math.min(1, py + (down ? -0.6 : 0.6)));
+    return { dir: down ? 'down' : 'up', m: { from: { s: 1.03, x: 0, y: a, r: tilt }, to: { s: 1.03 + z * 0.6, x: 0, y: py, r: 0 } } };
   }
   if (fw < 0.72) {
-    const right = prevDir === 'left' ? true : prevDir === 'right' ? false : rng() < 0.5;
-    const a = Math.max(-1, Math.min(1, px + (right ? -0.6 : 0.6)));
-    return { dir: right ? 'right' : 'left', m: { from: { s: 1.02, x: a, y: 0 }, to: { s: 1.02 + z * 0.5, x: px, y: 0 } } };
+    const right = prevDir === 'left' ? !keep : prevDir === 'right' ? keep : rng() < 0.5;
+    const a = Math.max(-1, Math.min(1, px + (right ? -0.65 : 0.65)));
+    return { dir: right ? 'right' : 'left', m: { from: { s: 1.03, x: a, y: 0, r: tilt }, to: { s: 1.03 + z * 0.6, x: px, y: 0, r: 0 } } };
   }
-  const zin = prevDir === 'in' ? rng() < 0.35 : rng() < 0.72;
+  const zin = prevDir === 'in' ? keep || rng() < 0.3 : prevDir === 'out' ? !keep : rng() < 0.7;
   const tx = px * 0.8, ty = py * 0.8;
+  // leichter Versatz quer zur Zoomrichtung: die Fahrt bekommt eine Kurve statt einer geraden Linie
+  const sx = (rng() - 0.5) * 0.35;
   return zin
-    ? { dir: 'in', m: { from: { s: 1.0, x: tx * 0.2, y: ty * 0.2 }, to: { s: 1 + z, x: tx, y: ty } } }
-    : { dir: 'out', m: { from: { s: 1 + z, x: tx, y: ty }, to: { s: 1.0, x: tx * 0.2, y: ty * 0.2 } } };
+    ? { dir: 'in', m: { from: { s: 1.02, x: tx * 0.2 + sx, y: ty * 0.2, r: tilt }, to: { s: 1.02 + z, x: tx, y: ty, r: -tilt * 0.3 } } }
+    : { dir: 'out', m: { from: { s: 1.02 + z, x: tx, y: ty, r: -tilt * 0.3 }, to: { s: 1.02, x: tx * 0.2 + sx, y: ty * 0.2, r: tilt } } };
 }
 
 /**
@@ -646,6 +665,62 @@ function buildPlan(opts) {
       segs = out;
     }
   }
+  // Einstiegs-Elemente mitten im Film: Raster beim Einsatz eines Refrains, Countdown vor dem Drop
+  const secsRel = (an.sections || []).map((x) => ({ ...x, rel: x.start - win.start })).filter((x) => x.rel > 0 && x.rel < D);
+  const isPeakSec = (x) => x.label === 'drop' || x.label === 'chorus';
+  const beatIdxAt = (t) => { let k = 0; for (let i = 0; i < bts0.length; i++) if (bts0[i] <= t + 0.03) k = i; return k; };
+  const special = (g) => g.burst || g.leader || g.knock || g.gridSeg || g.gridMid || g.pre || g.reveal || g.vslot;
+  let midGrid = null;
+  if (s.midGrid === 'on' && !flight && goodMedia(usable).length >= 5) {
+    const busy = (a, b) => segs.some((g) => (g.burst || g.gridSeg || g.pre || g.reveal || g.leader || g.knock) && g.start < b && g.end > a);
+    const peaks = secsRel.filter((x) => isPeakSec(x) && x.rel > Math.max(introEnd, barDur) + barDur);
+    // ohne weiteren Refrain: Anfang einer Phrase (4 Takte) mitten im Drop/Refrain
+    const phase = an.phrasePhase || 0;
+    const phrases = (an.barStart || []).map((b, k) => ({ rel: b - win.start, k })).filter((x) => (x.k - phase) % 4 === 0 && x.rel > introEnd + barDur * 2 && isPeakSec(sectionAt(an, win.start + x.rel + 0.02)))
+      .map((x) => ({ rel: x.rel, end: x.rel + barDur * 4, start: win.start + x.rel }));
+    // bevorzugt der zweite Refrain (der erste gehört oft dem Einstieg oder der Foto-Serie)
+    for (const pk of [...(peaks.length > 1 ? [peaks[1], peaks[0], ...peaks.slice(2)] : peaks), ...phrases]) {
+      const n = goodMedia(usable).length >= 9 && pk.end - pk.start >= barDur * 4 ? 3 : 2;
+      const step = beatDur < 0.42 ? 2 : 1;
+      const k0 = beatIdxAt(pk.rel), tiles = n * n;
+      const at = (k) => (bts0[k0 + k] != null ? bts0[k0 + k] : bts0[k0] + k * beatDur);
+      const times = Array.from({ length: tiles }, (_, k) => at(k * step));
+      const zoomEnd = at(tiles * step);
+      if (zoomEnd > D - barDur * 1.5 || busy(times[0] - 0.05, zoomEnd + 0.05)) continue;
+      midGrid = { n, times, zoomStart: times[tiles - 1], zoomEnd, start: times[0] };
+      break;
+    }
+    if (midGrid) {
+      const a = midGrid.start, z = midGrid.zoomEnd, out = [];
+      for (const g of segs) {
+        if (g.end <= a + 0.01 || g.start >= z - 0.01) { out.push(g); continue; }
+        if (g.start < a - 0.01) out.push({ ...g, end: a });
+        if (g.end > z + 0.01) out.push({ ...g, start: z });
+      }
+      out.push({ start: a, end: z, w: 12, gridMid: midGrid });
+      out.sort((x, y) => x.start - y.start);
+      // Reststücke unter 0,6 s an einen Nachbarn hängen
+      for (let i = 0; i < out.length; i++) {
+        const g = out[i];
+        if (special(g) || g.end - g.start >= 0.6) continue;
+        const prev = out[i - 1], next = out[i + 1];
+        if (prev && !special(prev)) { prev.end = g.end; out.splice(i--, 1); } else if (next && !special(next)) { next.start = g.start; out.splice(i--, 1); }
+      }
+      segs = out;
+    }
+  }
+  let countIn = null;
+  if (s.midCount === 'drop' && !flight) {
+    // nicht dort, wo schon ein Countdown, Raster oder Durch-den-Namen auf den Einsatz zuläuft (die Aufblende darf ihn bekommen)
+    const taken = (t) => segs.some((g) => (g.pre || g.leader || g.knock || g.gridSeg || g.gridMid) && Math.abs(g.end - t) < 0.3);
+    const fixedEnd = segs.filter((g) => g.pre || g.leader || g.knock || g.gridSeg).reduce((m, g) => Math.max(m, g.end), 0);
+    const pk = secsRel.find((x) => isPeakSec(x) && x.rel > fixedEnd + beatDur * 3.5 && x.rel > beatDur * 3.5 && x.rel < D - barDur && !taken(x.rel));
+    if (pk) {
+      const k = beatIdxAt(pk.rel);
+      if (k >= 3) countIn = { marks: [bts0[k - 3], bts0[k - 2], bts0[k - 1]], end: bts0[k] };
+    }
+  }
+
   // Videos: eigene, längere Plätze in ruhigen Songteilen (nicht bei Flügen: dort legt die Rolle die Videos fest)
   if (!flight) {
     const all = orderChrono(goodMedia(usable));
@@ -666,7 +741,7 @@ function buildPlan(opts) {
     const abs = win.start + g.start;
     const sec = sectionAt(an, abs + 0.01);
     return {
-      i, start: g.start, end: g.end, label: sec.label, energy: sec.energy, weight: g.w, freezeAt: g.freezeAt, burst: !!g.burst, leader: !!g.leader, pre: g.pre || null, reveal: !!g.reveal, vid: g.vid || null,
+      i, start: g.start, end: g.end, label: sec.label, energy: sec.energy, weight: g.w, freezeAt: g.freezeAt, burst: !!g.burst, leader: !!g.leader, pre: g.pre || null, reveal: !!g.reveal, vid: g.vid || null, gridMid: g.gridMid || null, grid: !!g.gridMid,
       sectionChange: i > 0 && (an.sections || []).some((x) => Math.abs(x.start - abs) < 0.05),
       mediaId: null, role: 'normal',
     };
@@ -686,7 +761,7 @@ function buildPlan(opts) {
     let since = every;
     for (const c of clips) {
       since++;
-      if (c.vid || c.i <= P + (gridPlan ? 1 : leader ? 3 : reveal ? 2 : 0) || c.i === clips.length - 1 || splitClips.includes(c.i)) continue;
+      if (c.vid || c.gridMid || (clips[c.i - 1] && clips[c.i - 1].gridMid) || c.i <= P + (gridPlan ? 1 : leader ? 3 : reveal ? 2 : 0) || c.i === clips.length - 1 || splitClips.includes(c.i)) continue;
       const peak = c.label === 'drop' || c.label === 'chorus';
       if (peak && c.end - c.start >= Math.max(1.4, beatDur * 3) && (c.sectionChange || since >= every)) { splitClips.push(c.i); since = 0; }
     }
@@ -749,7 +824,7 @@ function buildPlan(opts) {
       const at = order.indexOf(best2);
       if (at > 0) { order.splice(at, 1); order.splice(Math.min(dropIdx, order.length), 0, best2); }
     }
-    const idxs = clips.map((c) => c.i).filter((i) => !(splitClips.includes(i) && i !== 0));
+    const idxs = clips.map((c) => c.i).filter((i) => !(splitClips.includes(i) && i !== 0) && !clips[i].gridMid);
     if (order.length) assignStream(clips, idxs, order, byId);
     if (hook && intro !== 'split' && clips[P]) { clips[P].mediaId = hook.id; clips[P].role = 'hook'; }
     if (leader && hook && clips[P + 3]) {
@@ -839,14 +914,16 @@ function buildPlan(opts) {
     if (o && o.mediaId && byId.has(o.mediaId)) { c.mediaId = o.mediaId; delete c.split; }
   }
 
-  // Raster füllen: Zielbild in der Mitte (bzw. zuletzt), die übrigen nach Qualität, Fotos bevorzugt
-  if (gridPlan && clips.length > 1) {
-    const c0 = clips[P];
-    const target = byId.get(clips[P + 1].mediaId);
-    const tiles = gridPlan.n * gridPlan.n;
-    const others = goodMedia(usable).filter((m) => m !== target && (m.kind === 'image' || m.poster))
-      .sort((a, b) => (a.kind === 'image' ? 0 : 1) - (b.kind === 'image' ? 0 : 1) || (b.score || 0) - (a.score || 0)).slice(0, tiles - 1);
-    const center = gridPlan.n === 3 ? 4 : 3;
+  // Raster füllen (Einstieg und im Film): Zielbild in der Mitte (bzw. zuletzt), die übrigen nach Qualität und Nähe, Fotos bevorzugt
+  const fillGrid = (gi, gp, intro) => {
+    const c0 = clips[gi], next = clips[gi + 1];
+    if (!c0 || !next) return;
+    const target = byId.get(next.mediaId);
+    const tiles = gp.n * gp.n;
+    const pool2 = goodMedia(usable).filter((m) => m !== target && (m.kind === 'image' || m.poster));
+    const tt = target && target.time ? target.time : 0;
+    const others = pool2.sort((a, b) => (a.kind === 'image' ? 0 : 1) - (b.kind === 'image' ? 0 : 1) || (intro ? (b.score || 0) - (a.score || 0) : Math.abs((a.time || 0) - tt) - Math.abs((b.time || 0) - tt))).slice(0, tiles - 1);
+    const center = gp.n === 3 ? 4 : 3;
     const cells = orderChrono(others).map((m) => m.id);
     cells.splice(center, 0, target ? target.id : null);
     while (cells.length < tiles) cells.push(cells[cells.length % Math.max(1, cells.length)] || null);
@@ -855,11 +932,15 @@ function buildPlan(opts) {
     for (let k = orderIdx.length - 1; k > 0; k--) { const j = Math.floor(rng() * (k + 1)); [orderIdx[k], orderIdx[j]] = [orderIdx[j], orderIdx[k]]; }
     orderIdx.push(center);
     const colorAt = new Array(tiles);
-    orderIdx.forEach((cell, k) => { colorAt[cell] = gridPlan.times[k]; });
-    c0.grid = { n: gridPlan.n, ids: cells, colorAt, target: center, zoomStart: gridPlan.zoomStart, zoomEnd: gridPlan.zoomEnd };
+    orderIdx.forEach((cell, k) => { colorAt[cell] = gp.times[k]; });
+    c0.grid = { n: gp.n, ids: cells, colorAt, target: center, zoomStart: gp.zoomStart, zoomEnd: gp.zoomEnd };
     c0.mediaId = target ? target.id : c0.mediaId;
-    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Einstieg im ${gridPlan.n === 3 ? '9er' : '4er'}-Raster: die Bilder werden Beat für Beat farbig, dann zoomt der Film ins ${gridPlan.n === 3 ? 'mittlere' : 'letzte'} Bild${Math.abs(clips[P + 1].start - gridPlan.zoomEnd) < 0.01 && clips[P + 1].label !== clips[P].label ? ` und landet genau auf dem ${SEC_DE[clips[P + 1].label] || 'Einsatz'}` : ''}.`);
-  }
+    next.afterGrid = true;
+    const where = intro ? 'Einstieg' : `${SEC_DE[next.label] || 'Refrain'} bei ${fmtMS(c0.start)}`;
+    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `${where} im ${gp.n === 3 ? '9er' : '4er'}-Raster: die Bilder werden Beat für Beat farbig, dann zoomt der Film ins ${gp.n === 3 ? 'mittlere' : 'letzte'} Bild${intro && Math.abs(next.start - gp.zoomEnd) < 0.01 && next.label !== c0.label ? ` und landet genau auf dem ${SEC_DE[next.label] || 'Einsatz'}` : ''}.`);
+  };
+  if (gridPlan && clips.length > 1) fillGrid(P, gridPlan, true);
+  for (const c of clips) if (c.gridMid) fillGrid(c.i, c.gridMid, false);
 
   // Film-Strip-Ende: das letzte Bild wird zum Negativ auf einem Filmstreifen, der rückwärts durch den Film läuft
   if (outro === 'strip' && !flight && clips.length > 3) {
@@ -950,6 +1031,7 @@ function buildPlan(opts) {
       c.srcOffset = 0; c.rate = 1; c.contain = false;
       continue;
     }
+    if (c.grid && !c.grid.ids) c.grid = false;
     if (c.grid) {
       c.grid.items = c.grid.ids.map((id) => {
         const mm = byId.get(id);
@@ -1063,10 +1145,11 @@ function buildPlan(opts) {
     if (c.tout && c.tout.type === TR.WHIP) c.tout.dirSign = c.dir === 'left' ? -1 : 1;
   }
   // nach dem Raster-Zoom: gleiches Bild, gleicher (zentrierter) Ausschnitt, dann sanfte Fahrt
-  if (clips[P] && clips[P].grid && clips[P + 1] && clips[P + 1].motion) {
-    const to = clips[P + 1].motion.to;
-    clips[P + 1].motion = { from: { s: 1, x: 0, y: 0 }, to: { s: Math.max(1.04, to.s || 1), x: (to.x || 0) * 0.5, y: (to.y || 0) * 0.5 } };
-    clips[P + 1].contain = false;
+  for (const c of clips) {
+    if (!c.afterGrid || !c.motion) continue;
+    const to = c.motion.to;
+    c.motion = { from: { s: 1, x: 0, y: 0 }, to: { s: Math.max(1.04, to.s || 1), x: (to.x || 0) * 0.5, y: (to.y || 0) * 0.5 } };
+    c.contain = false;
   }
   if (loopClip) {
     const c0 = loopTo;
@@ -1119,9 +1202,20 @@ function buildPlan(opts) {
     if (title) overlays.push({ type: 'reveal', text: title, sub: subtitle, geo, start: R[0].start + Math.min(0.5, beatDur), end: reveal.end - 0.04 });
   }
 
+  // Countdown vor dem Drop: 3 · 2 · 1 auf den letzten drei Beats, dann Licht auf dem Einsatz
+  if (countIn) {
+    // eine Einblendung, die in den Countdown hineinliefe (z. B. der Aufblende-Titel), endet vorher
+    for (const o of overlays) if (o.start < countIn.marks[0] && o.end > countIn.marks[0]) o.end = Math.max(o.start + 0.5, countIn.marks[0] - 0.05);
+    overlays.push({ type: 'countin', marks: countIn.marks, start: countIn.marks[0] - 0.05, end: countIn.end });
+    fx.push({ type: 'flash', start: countIn.end, end: countIn.end + 0.22, amp: 0.22 });
+    fx.push({ type: 'punch', start: countIn.end, end: countIn.end + 0.45, amp: 0.7 });
+    dir.notes.push(`Countdown vor dem ${SEC_DE[sectionAt(an, win.start + countIn.end + 0.02).label] || 'Drop'}: 3 · 2 · 1 auf den letzten Beats.`);
+  }
+
   // Vorspann
   if (pre && pre.kind === 'countdown') {
-    fx.push({ type: 'desat', start: 0, end: pre.end, amp: 1 });
+    // im Look entsättigt (nicht hart schwarzweiß) und zum Einsatz hin weich in die Farbe: kein Bruch im Stil
+    fx.push({ type: 'desat', start: 0, end: pre.end, amp: 0.6, fadeOut: beatDur * 0.5 });
     fx.push({ type: 'flash', start: pre.end, end: pre.end + 0.22, amp: 0.35 });
     fx.push({ type: 'punch', start: pre.end, end: pre.end + 0.45, amp: 1 });
     overlays.push({ type: 'leader', marks: pre.marks, start: 0, end: pre.end });
@@ -1161,7 +1255,7 @@ function buildPlan(opts) {
     if (title && tk && flight.from && flight.from.name) overlays.push({ type: 'lower', text: flight.from.name, sub: ['Abflug', flight.dep].filter(Boolean).join(' '), start: Math.min(0.4, beatDur), end: Math.min(tk.end - 0.5, Math.max(2.4, barDur * 1.2)) });
     if (title && ld && flight.to && flight.to.name) overlays.push({ type: 'lower', text: flight.to.name, sub: ['Ankunft', flight.arr].filter(Boolean).join(' '), start: ld.start + Math.min(0.8, beatDur * 1.5), end: Math.min(D - 0.3, ld.start + Math.max(2.6, barDur * 1.4)) });
   } else if (intro === 'countdown' && leader) {
-    fx.push({ type: 'desat', start: leader.marks[0], end: leader.end, amp: 1 });
+    fx.push({ type: 'desat', start: leader.marks[0], end: leader.end, amp: 0.6, fadeOut: beatDur * 0.5 });
     fx.push({ type: 'flash', start: leader.end, end: leader.end + 0.22, amp: 0.35 });
     fx.push({ type: 'punch', start: leader.end, end: leader.end + 0.45, amp: 1 });
     overlays.push({ type: 'leader', marks: leader.marks, start: leader.marks[0], end: leader.end });

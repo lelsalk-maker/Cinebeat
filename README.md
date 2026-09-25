@@ -55,6 +55,10 @@ Reisefilme im Kino-Look, geschnitten nach dem Aufbau deines Songs: für Instagra
 - **Digicam-Look**: knackig und kühl wie eine Kamera der 2000er, kleiner Blitz auf Fotoschnitten und orangefarbener Datumsstempel aus dem Aufnahmedatum (Stempel auch einzeln schaltbar).
 - **Filmstreifen-Ende**: Das letzte Bild wird zum Einzelbild auf einem Filmstreifen mit Perforation, der rückwärts durch den Film läuft.
 - **Titelbild für Reels**: im Export-Dialog. Stärkstes Bild mit Titel in voller Größe als JPEG; der Titel sitzt im Bereich, den das Profilraster zeigt.
+- **Einstiegs-Elemente auch im Film** (Im Film): *Raster im Refrain* – beim Einsatz eines Refrains (oder am Anfang einer Phrase im Drop) werden 4 oder 9 Bilder im Takt farbig, dann zoomt der Film ins nächste Bild. *Countdown vor dem Drop* – 3 · 2 · 1 auf den letzten drei Beats, im Stil des Looks.
+- **Bewegung**: Kamerafahrten gleiten (keine Stopps an den Schnitten), mit feiner Neigung, die Richtung fließt über zwei Einstellungen. Dazu *Impact-Zoom* (jeder Schnitt setzt mit einem kurzen Zoom auf dem Beat ein), *Puls*, *Pendeln*, *Schweben* (weiche Acht über zwei Takte), *Neigen* (kippt auf jeder Eins zur anderen Seite) und *Handkamera*.
+- **Looks**: natürliches Grading mit eigenen Farbrädern für Schatten und Lichter, Vibrance und Farbtemperatur; jeder Look ist klar erkennbar, das Bild bleibt echt. Titel, Countdown, Rewind und Kapitel übernehmen Farbe und Ton des Looks.
+- **Einheitliche Titel**: Alle Einblendungen nutzen die gewählte Titelschrift und eine passende Schrift für kleine Zeilen. Titel gleiten wortweise auf den Beats aus einer Maske ins Bild und auf einem Beat wieder hinaus.
 - **Nichts ist fest**: Titel, Kapitel und Reise-Statistik lassen sich einzeln ausschalten; Koordinaten und Kilometer sind standardmäßig aus.
 
 ## Musik und Instagram

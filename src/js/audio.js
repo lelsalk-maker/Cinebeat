@@ -439,7 +439,7 @@ async function analyzeAudio(buffer, onProgress) {
  * Hook, Akzente (starke Einzelschläge) und Stopps (kurze Pausen im Song).
  */
 function analyzeStructure(a) {
-  const { beats, beatLow, beatDb, timbreF, chromaF, onset, rms, fps, nFrames, toFrame, frameTime, duration, beatPeriod } = a;
+  const { beats, beatLow, beatDb, timbreF, chromaF, rms, fps, nFrames, toFrame, frameTime, duration, beatPeriod } = a;
   const nb = beats.length;
   const tb = [], cb = [];
   for (let i = 0; i < nb; i++) {

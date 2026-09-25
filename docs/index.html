@@ -577,8 +577,11 @@ details.more[open] { display: grid; gap: 16px; }
             <span class="field-label" id="motionLabel">Bewegung im Takt</span>
             <div class="chips" role="radiogroup" aria-labelledby="motionLabel" id="motionChips">
               <button type="button" role="radio" data-v="ken">Kamerafahrt</button>
-              <button type="button" role="radio" data-v="sway">Pendeln</button>
+              <button type="button" role="radio" data-v="snap">Impact-Zoom</button>
               <button type="button" role="radio" data-v="pulse">Puls</button>
+              <button type="button" role="radio" data-v="sway">Pendeln</button>
+              <button type="button" role="radio" data-v="float">Schweben</button>
+              <button type="button" role="radio" data-v="tilt">Neigen</button>
               <button type="button" role="radio" data-v="handheld">Handkamera</button>
             </div>
             <div class="chips sub-chips" role="radiogroup" aria-label="Stärke der Bewegung" id="motionAmtChips">
@@ -594,6 +597,8 @@ details.more[open] { display: grid; gap: 16px; }
               <button type="button" aria-pressed="false" data-fx="match">Match-Cuts</button>
               <button type="button" aria-pressed="false" data-fx="morph">Bild aus Bild</button>
               <button type="button" aria-pressed="false" data-fx="split">Split-Screens</button>
+              <button type="button" aria-pressed="false" data-fx="midGrid">Raster im Refrain</button>
+              <button type="button" aria-pressed="false" data-fx="midCount">Countdown vor dem Drop</button>
               <button type="button" aria-pressed="false" data-fx="burst">Foto-Serie im Drop</button>
               <button type="button" aria-pressed="false" data-fx="ramp">Speed-Ramp</button>
               <button type="button" aria-pressed="false" data-fx="stamp">Datumsstempel</button>
@@ -750,7 +755,8 @@ details.more[open] { display: grid; gap: 16px; }
 const clamp01 = (x) => Math.max(0, Math.min(1, x));
 const lerp = (a, b, t) => a + (b - a) * t;
 const smooth = (t) => t * t * (3 - 2 * t);
-const easeMotion = (t) => lerp(t, smooth(t), 0.6);
+// Gleiten statt Anfahren und Abbremsen: die Kamera ist schon in Bewegung, setzt sich nur leicht (wirkt flüssig über Schnitte)
+const easeMotion = (t) => 0.72 * t + 0.28 * (1 - (1 - t) * (1 - t));
 
 function waitEvent(target, okEvents, failEvents, timeoutMs) {
   return new Promise((resolve) => {
@@ -1843,7 +1849,7 @@ async function analyzeAudio(buffer, onProgress) {
  * Hook, Akzente (starke Einzelschläge) und Stopps (kurze Pausen im Song).
  */
 function analyzeStructure(a) {
-  const { beats, beatLow, beatDb, timbreF, chromaF, onset, rms, fps, nFrames, toFrame, frameTime, duration, beatPeriod } = a;
+  const { beats, beatLow, beatDb, timbreF, chromaF, rms, fps, nFrames, toFrame, frameTime, duration, beatPeriod } = a;
   const nb = beats.length;
   const tb = [], cb = [];
   for (let i = 0; i < nb; i++) {
@@ -2328,14 +2334,27 @@ function hashStr(s) {
 const TR = { CUT: 0, DISSOLVE: 1, DIP: 2, ZOOM: 4, WHIP: 5, LEAK: 6, LUMA: 7, PUSH: 9, INK: 10, MORPH: 11, DOUBLE: 12 };
 const TR_NAMES = { 0: 'Schnitt', 1: 'Blende', 2: 'Schwarzblende', 4: 'Zoom', 5: 'Wischer', 6: 'Lichtleck', 7: 'Lichtblende', 9: 'Schieben', 10: 'Farbfluss', 11: 'Bild aus Bild', 12: 'Doppelbelichtung' };
 
+/**
+ * Looks: natürliches Grading (das Bild bleibt echt), aber klar erkennbar.
+ * sh/hi: Tönung der Schatten/Lichter, vib: Vibrance (hebt blasse Farben, schont Hauttöne), temp: Farbtemperatur,
+ * lift/crush: Schwarz- und Weißpunkt, glow: Halation der Lichter.
+ * pal: Farben für alles, was darüber liegt (Titel, Countdown, Rewind), damit der ganze Film einen Stil hat.
+ */
 const LOOKS = {
-  natur: { label: 'Natürlich', blurb: 'Klare, echte Farben mit Tiefe', grade: { sat: 1.06, contrast: 0.22, temp: 0.03, split: 0.18, lift: 0.012, crush: 0.012, bw: 0, grain: 0.014, vig: 0.26, tint: [1, 1, 1], glow: 0.06, leak: 0 } },
-  golden: { label: 'Golden Hour', blurb: 'Warmes Licht, weiche Lichter', grade: { sat: 1.1, contrast: 0.24, temp: 0.3, split: 0.35, lift: 0.02, crush: 0.02, bw: 0, grain: 0.018, vig: 0.3, tint: [1.02, 1, 0.96], glow: 0.2, leak: 0 } },
-  kino: { label: 'Teal & Orange', blurb: 'Blockbuster-Kontrast', grade: { sat: 0.98, contrast: 0.36, temp: 0.08, split: 0.9, lift: 0.02, crush: 0.02, bw: 0, grain: 0.022, vig: 0.4, tint: [1, 1, 1], glow: 0.05, leak: 0 } },
-  blau: { label: 'Blue Hour', blurb: 'Kühle Nacht, satte Tiefen', grade: { sat: 0.92, contrast: 0.34, temp: -0.22, split: 0.55, lift: 0.018, crush: 0.02, bw: 0, grain: 0.024, vig: 0.42, tint: [0.97, 1, 1.04], glow: 0.14, leak: 0 } },
-  film: { label: 'Film 35', blurb: 'Analoges Korn, sanfte Farben', grade: { sat: 0.86, contrast: 0.16, temp: 0.22, split: 0.25, lift: 0.055, crush: 0.035, bw: 0, grain: 0.055, vig: 0.42, tint: [1.02, 0.99, 0.93], glow: 0.14, leak: 0.05 } },
-  digicam: { label: 'Digicam', blurb: '2000er-Kamera: knackig, kühl, mit Blitz', grade: { sat: 1.16, contrast: 0.44, temp: -0.1, split: 0.08, lift: 0.0, crush: 0.0, bw: 0, grain: 0.02, vig: 0.1, tint: [0.99, 1.01, 1.03], glow: 0, leak: 0 } },
-  noir: { label: 'Noir', blurb: 'Schwarzweiß mit Charakter', grade: { sat: 0, contrast: 0.55, temp: 0, split: 0, lift: 0.02, crush: 0.02, bw: 1, grain: 0.05, vig: 0.5, tint: [1, 1, 1], glow: 0.05, leak: 0 } },
+  natur: { label: 'Natürlich', blurb: 'Klare, echte Farben mit Tiefe', grade: { sat: 1.0, vib: 0.3, contrast: 0.3, temp: 0.08, sh: [-0.012, 0.0, 0.018], hi: [0.02, 0.012, -0.01], lift: 0.01, crush: 0.012, bw: 0, grain: 0.012, vig: 0.24, tint: [1, 1, 1], glow: 0.05, leak: 0 },
+    pal: { ink: '#f1e9d8', tone: [40, 34, 28], accent: '#e4d5b7' } },
+  golden: { label: 'Golden Hour', blurb: 'Warmes Licht, weiche Lichter', grade: { sat: 0.98, vib: 0.22, contrast: 0.22, temp: 0.42, sh: [0.028, 0.004, -0.03], hi: [0.08, 0.022, -0.06], lift: 0.026, crush: 0.02, bw: 0, grain: 0.016, vig: 0.34, tint: [1.02, 1, 0.95], glow: 0.3, leak: 0 },
+    pal: { ink: '#fbe7c6', tone: [96, 58, 22], accent: '#f0b36a' } },
+  kino: { label: 'Teal & Orange', blurb: 'Blockbuster-Kontrast', grade: { sat: 0.9, vib: 0.38, contrast: 0.44, temp: 0.06, sh: [-0.075, 0.02, 0.085], hi: [0.085, 0.025, -0.075], lift: 0.02, crush: 0.03, bw: 0, grain: 0.02, vig: 0.44, tint: [1, 1, 1], glow: 0.06, leak: 0 },
+    pal: { ink: '#f4e4cf', tone: [18, 52, 60], accent: '#f08a3c' } },
+  blau: { label: 'Blue Hour', blurb: 'Kühle Nacht, satte Tiefen', grade: { sat: 0.86, vib: 0.18, contrast: 0.38, temp: -0.4, sh: [-0.035, 0.008, 0.075], hi: [-0.01, 0.02, 0.045], lift: 0.02, crush: 0.03, bw: 0, grain: 0.022, vig: 0.44, tint: [0.97, 1, 1.05], glow: 0.16, leak: 0 },
+    pal: { ink: '#e6eefb', tone: [22, 36, 70], accent: '#8fb4ee' } },
+  film: { label: 'Film 35', blurb: 'Analoges Korn, sanfte Farben', grade: { sat: 0.8, vib: 0.12, contrast: 0.2, temp: 0.2, sh: [-0.02, 0.035, 0.022], hi: [0.06, 0.035, -0.04], lift: 0.07, crush: 0.045, bw: 0, grain: 0.055, vig: 0.4, tint: [1.02, 0.99, 0.93], glow: 0.2, leak: 0.05 },
+    pal: { ink: '#f1e4c8', tone: [92, 70, 40], accent: '#e2b877' } },
+  digicam: { label: 'Digicam', blurb: '2000er-Kamera: knackig, kühl, mit Blitz', grade: { sat: 1.1, vib: 0.1, contrast: 0.5, temp: -0.16, sh: [-0.01, 0.02, 0.03], hi: [0.0, 0.004, 0.02], lift: 0.0, crush: 0.0, bw: 0, grain: 0.018, vig: 0.08, tint: [0.99, 1.01, 1.03], glow: 0, leak: 0 },
+    pal: { ink: '#ffffff', tone: [20, 32, 44], accent: '#ffa23a' } },
+  noir: { label: 'Noir', blurb: 'Schwarzweiß mit Charakter', grade: { sat: 0, vib: 0, contrast: 0.55, temp: 0, sh: [0, 0, 0], hi: [0, 0, 0], lift: 0.02, crush: 0.02, bw: 1, grain: 0.05, vig: 0.5, tint: [1, 1, 1], glow: 0.05, leak: 0 },
+    pal: { ink: '#f2f2f2', tone: [30, 30, 30], accent: '#d9d9d9' } },
 };
 
 const FORMATS = {
@@ -2586,7 +2605,7 @@ const isCalmLabel = (l) => l !== 'drop' && l !== 'chorus';
  * und zeitlich dort, wo sie in der Reise liegen. Benachbarte Schnitte werden dafür zusammengelegt (bleiben auf Beats).
  */
 function videoSlots(segs, an, win, vids, all, barDur, startAt, endAt) {
-  const special = (g) => g.burst || g.leader || g.knock || g.gridSeg || g.pre || g.reveal || g.vslot;
+  const special = (g) => g.burst || g.leader || g.knock || g.gridSeg || g.gridMid || g.pre || g.reveal || g.vslot;
   const labelAt = (t) => sectionAt(an, win.start + t + 0.01).label;
   const span = Math.max(1, endAt - startAt);
   let budget = (endAt - startAt) * 0.45;
@@ -2760,22 +2779,28 @@ function imageMotion(rng, m, outAspect, visDur, role, prevDir) {
   const toPos = (f, frac) => (frac >= 0.999 ? 0 : Math.max(-1, Math.min(1, ((f - 0.5) * 2) / (1 - frac))));
   const px = toPos(fx, fw), py = toPos(fy, fh);
   const speed = Math.min(1.4, Math.max(0.6, visDur / 3.2));
-  const z = (role === 'burst' ? 0.09 : 0.07) * speed;
+  const z = (role === 'burst' ? 0.1 : 0.075) * speed;
+  // feine Neigung, die über die Einstellung ausläuft (modern, nie wackelig)
+  const tilt = (rng() < 0.5 ? -1 : 1) * 0.0065 * speed;
+  // Richtung bleibt meist über zwei Einstellungen gleich: ruhiger Fluss statt Hin und Her
+  const keep = rng() < 0.55;
   if (fh < 0.72) {
-    const down = prevDir === 'up' ? true : prevDir === 'down' ? false : rng() < 0.5;
-    const a = Math.max(-1, Math.min(1, py + (down ? -0.55 : 0.55)));
-    return { dir: down ? 'down' : 'up', m: { from: { s: 1.02, x: 0, y: a }, to: { s: 1.02 + z * 0.5, x: 0, y: py } } };
+    const down = prevDir === 'up' ? !keep : prevDir === 'down' ? keep : rng() < 0.5;
+    const a = Math.max(-1, Math.min(1, py + (down ? -0.6 : 0.6)));
+    return { dir: down ? 'down' : 'up', m: { from: { s: 1.03, x: 0, y: a, r: tilt }, to: { s: 1.03 + z * 0.6, x: 0, y: py, r: 0 } } };
   }
   if (fw < 0.72) {
-    const right = prevDir === 'left' ? true : prevDir === 'right' ? false : rng() < 0.5;
-    const a = Math.max(-1, Math.min(1, px + (right ? -0.6 : 0.6)));
-    return { dir: right ? 'right' : 'left', m: { from: { s: 1.02, x: a, y: 0 }, to: { s: 1.02 + z * 0.5, x: px, y: 0 } } };
+    const right = prevDir === 'left' ? !keep : prevDir === 'right' ? keep : rng() < 0.5;
+    const a = Math.max(-1, Math.min(1, px + (right ? -0.65 : 0.65)));
+    return { dir: right ? 'right' : 'left', m: { from: { s: 1.03, x: a, y: 0, r: tilt }, to: { s: 1.03 + z * 0.6, x: px, y: 0, r: 0 } } };
   }
-  const zin = prevDir === 'in' ? rng() < 0.35 : rng() < 0.72;
+  const zin = prevDir === 'in' ? keep || rng() < 0.3 : prevDir === 'out' ? !keep : rng() < 0.7;
   const tx = px * 0.8, ty = py * 0.8;
+  // leichter Versatz quer zur Zoomrichtung: die Fahrt bekommt eine Kurve statt einer geraden Linie
+  const sx = (rng() - 0.5) * 0.35;
   return zin
-    ? { dir: 'in', m: { from: { s: 1.0, x: tx * 0.2, y: ty * 0.2 }, to: { s: 1 + z, x: tx, y: ty } } }
-    : { dir: 'out', m: { from: { s: 1 + z, x: tx, y: ty }, to: { s: 1.0, x: tx * 0.2, y: ty * 0.2 } } };
+    ? { dir: 'in', m: { from: { s: 1.02, x: tx * 0.2 + sx, y: ty * 0.2, r: tilt }, to: { s: 1.02 + z, x: tx, y: ty, r: -tilt * 0.3 } } }
+    : { dir: 'out', m: { from: { s: 1.02 + z, x: tx, y: ty, r: -tilt * 0.3 }, to: { s: 1.02, x: tx * 0.2 + sx, y: ty * 0.2, r: tilt } } };
 }
 
 /**
@@ -2952,6 +2977,62 @@ function buildPlan(opts) {
       segs = out;
     }
   }
+  // Einstiegs-Elemente mitten im Film: Raster beim Einsatz eines Refrains, Countdown vor dem Drop
+  const secsRel = (an.sections || []).map((x) => ({ ...x, rel: x.start - win.start })).filter((x) => x.rel > 0 && x.rel < D);
+  const isPeakSec = (x) => x.label === 'drop' || x.label === 'chorus';
+  const beatIdxAt = (t) => { let k = 0; for (let i = 0; i < bts0.length; i++) if (bts0[i] <= t + 0.03) k = i; return k; };
+  const special = (g) => g.burst || g.leader || g.knock || g.gridSeg || g.gridMid || g.pre || g.reveal || g.vslot;
+  let midGrid = null;
+  if (s.midGrid === 'on' && !flight && goodMedia(usable).length >= 5) {
+    const busy = (a, b) => segs.some((g) => (g.burst || g.gridSeg || g.pre || g.reveal || g.leader || g.knock) && g.start < b && g.end > a);
+    const peaks = secsRel.filter((x) => isPeakSec(x) && x.rel > Math.max(introEnd, barDur) + barDur);
+    // ohne weiteren Refrain: Anfang einer Phrase (4 Takte) mitten im Drop/Refrain
+    const phase = an.phrasePhase || 0;
+    const phrases = (an.barStart || []).map((b, k) => ({ rel: b - win.start, k })).filter((x) => (x.k - phase) % 4 === 0 && x.rel > introEnd + barDur * 2 && isPeakSec(sectionAt(an, win.start + x.rel + 0.02)))
+      .map((x) => ({ rel: x.rel, end: x.rel + barDur * 4, start: win.start + x.rel }));
+    // bevorzugt der zweite Refrain (der erste gehört oft dem Einstieg oder der Foto-Serie)
+    for (const pk of [...(peaks.length > 1 ? [peaks[1], peaks[0], ...peaks.slice(2)] : peaks), ...phrases]) {
+      const n = goodMedia(usable).length >= 9 && pk.end - pk.start >= barDur * 4 ? 3 : 2;
+      const step = beatDur < 0.42 ? 2 : 1;
+      const k0 = beatIdxAt(pk.rel), tiles = n * n;
+      const at = (k) => (bts0[k0 + k] != null ? bts0[k0 + k] : bts0[k0] + k * beatDur);
+      const times = Array.from({ length: tiles }, (_, k) => at(k * step));
+      const zoomEnd = at(tiles * step);
+      if (zoomEnd > D - barDur * 1.5 || busy(times[0] - 0.05, zoomEnd + 0.05)) continue;
+      midGrid = { n, times, zoomStart: times[tiles - 1], zoomEnd, start: times[0] };
+      break;
+    }
+    if (midGrid) {
+      const a = midGrid.start, z = midGrid.zoomEnd, out = [];
+      for (const g of segs) {
+        if (g.end <= a + 0.01 || g.start >= z - 0.01) { out.push(g); continue; }
+        if (g.start < a - 0.01) out.push({ ...g, end: a });
+        if (g.end > z + 0.01) out.push({ ...g, start: z });
+      }
+      out.push({ start: a, end: z, w: 12, gridMid: midGrid });
+      out.sort((x, y) => x.start - y.start);
+      // Reststücke unter 0,6 s an einen Nachbarn hängen
+      for (let i = 0; i < out.length; i++) {
+        const g = out[i];
+        if (special(g) || g.end - g.start >= 0.6) continue;
+        const prev = out[i - 1], next = out[i + 1];
+        if (prev && !special(prev)) { prev.end = g.end; out.splice(i--, 1); } else if (next && !special(next)) { next.start = g.start; out.splice(i--, 1); }
+      }
+      segs = out;
+    }
+  }
+  let countIn = null;
+  if (s.midCount === 'drop' && !flight) {
+    // nicht dort, wo schon ein Countdown, Raster oder Durch-den-Namen auf den Einsatz zuläuft (die Aufblende darf ihn bekommen)
+    const taken = (t) => segs.some((g) => (g.pre || g.leader || g.knock || g.gridSeg || g.gridMid) && Math.abs(g.end - t) < 0.3);
+    const fixedEnd = segs.filter((g) => g.pre || g.leader || g.knock || g.gridSeg).reduce((m, g) => Math.max(m, g.end), 0);
+    const pk = secsRel.find((x) => isPeakSec(x) && x.rel > fixedEnd + beatDur * 3.5 && x.rel > beatDur * 3.5 && x.rel < D - barDur && !taken(x.rel));
+    if (pk) {
+      const k = beatIdxAt(pk.rel);
+      if (k >= 3) countIn = { marks: [bts0[k - 3], bts0[k - 2], bts0[k - 1]], end: bts0[k] };
+    }
+  }
+
   // Videos: eigene, längere Plätze in ruhigen Songteilen (nicht bei Flügen: dort legt die Rolle die Videos fest)
   if (!flight) {
     const all = orderChrono(goodMedia(usable));
@@ -2972,7 +3053,7 @@ function buildPlan(opts) {
     const abs = win.start + g.start;
     const sec = sectionAt(an, abs + 0.01);
     return {
-      i, start: g.start, end: g.end, label: sec.label, energy: sec.energy, weight: g.w, freezeAt: g.freezeAt, burst: !!g.burst, leader: !!g.leader, pre: g.pre || null, reveal: !!g.reveal, vid: g.vid || null,
+      i, start: g.start, end: g.end, label: sec.label, energy: sec.energy, weight: g.w, freezeAt: g.freezeAt, burst: !!g.burst, leader: !!g.leader, pre: g.pre || null, reveal: !!g.reveal, vid: g.vid || null, gridMid: g.gridMid || null, grid: !!g.gridMid,
       sectionChange: i > 0 && (an.sections || []).some((x) => Math.abs(x.start - abs) < 0.05),
       mediaId: null, role: 'normal',
     };
@@ -2992,7 +3073,7 @@ function buildPlan(opts) {
     let since = every;
     for (const c of clips) {
       since++;
-      if (c.vid || c.i <= P + (gridPlan ? 1 : leader ? 3 : reveal ? 2 : 0) || c.i === clips.length - 1 || splitClips.includes(c.i)) continue;
+      if (c.vid || c.gridMid || (clips[c.i - 1] && clips[c.i - 1].gridMid) || c.i <= P + (gridPlan ? 1 : leader ? 3 : reveal ? 2 : 0) || c.i === clips.length - 1 || splitClips.includes(c.i)) continue;
       const peak = c.label === 'drop' || c.label === 'chorus';
       if (peak && c.end - c.start >= Math.max(1.4, beatDur * 3) && (c.sectionChange || since >= every)) { splitClips.push(c.i); since = 0; }
     }
@@ -3055,7 +3136,7 @@ function buildPlan(opts) {
       const at = order.indexOf(best2);
       if (at > 0) { order.splice(at, 1); order.splice(Math.min(dropIdx, order.length), 0, best2); }
     }
-    const idxs = clips.map((c) => c.i).filter((i) => !(splitClips.includes(i) && i !== 0));
+    const idxs = clips.map((c) => c.i).filter((i) => !(splitClips.includes(i) && i !== 0) && !clips[i].gridMid);
     if (order.length) assignStream(clips, idxs, order, byId);
     if (hook && intro !== 'split' && clips[P]) { clips[P].mediaId = hook.id; clips[P].role = 'hook'; }
     if (leader && hook && clips[P + 3]) {
@@ -3145,14 +3226,16 @@ function buildPlan(opts) {
     if (o && o.mediaId && byId.has(o.mediaId)) { c.mediaId = o.mediaId; delete c.split; }
   }
 
-  // Raster füllen: Zielbild in der Mitte (bzw. zuletzt), die übrigen nach Qualität, Fotos bevorzugt
-  if (gridPlan && clips.length > 1) {
-    const c0 = clips[P];
-    const target = byId.get(clips[P + 1].mediaId);
-    const tiles = gridPlan.n * gridPlan.n;
-    const others = goodMedia(usable).filter((m) => m !== target && (m.kind === 'image' || m.poster))
-      .sort((a, b) => (a.kind === 'image' ? 0 : 1) - (b.kind === 'image' ? 0 : 1) || (b.score || 0) - (a.score || 0)).slice(0, tiles - 1);
-    const center = gridPlan.n === 3 ? 4 : 3;
+  // Raster füllen (Einstieg und im Film): Zielbild in der Mitte (bzw. zuletzt), die übrigen nach Qualität und Nähe, Fotos bevorzugt
+  const fillGrid = (gi, gp, intro) => {
+    const c0 = clips[gi], next = clips[gi + 1];
+    if (!c0 || !next) return;
+    const target = byId.get(next.mediaId);
+    const tiles = gp.n * gp.n;
+    const pool2 = goodMedia(usable).filter((m) => m !== target && (m.kind === 'image' || m.poster));
+    const tt = target && target.time ? target.time : 0;
+    const others = pool2.sort((a, b) => (a.kind === 'image' ? 0 : 1) - (b.kind === 'image' ? 0 : 1) || (intro ? (b.score || 0) - (a.score || 0) : Math.abs((a.time || 0) - tt) - Math.abs((b.time || 0) - tt))).slice(0, tiles - 1);
+    const center = gp.n === 3 ? 4 : 3;
     const cells = orderChrono(others).map((m) => m.id);
     cells.splice(center, 0, target ? target.id : null);
     while (cells.length < tiles) cells.push(cells[cells.length % Math.max(1, cells.length)] || null);
@@ -3161,11 +3244,15 @@ function buildPlan(opts) {
     for (let k = orderIdx.length - 1; k > 0; k--) { const j = Math.floor(rng() * (k + 1)); [orderIdx[k], orderIdx[j]] = [orderIdx[j], orderIdx[k]]; }
     orderIdx.push(center);
     const colorAt = new Array(tiles);
-    orderIdx.forEach((cell, k) => { colorAt[cell] = gridPlan.times[k]; });
-    c0.grid = { n: gridPlan.n, ids: cells, colorAt, target: center, zoomStart: gridPlan.zoomStart, zoomEnd: gridPlan.zoomEnd };
+    orderIdx.forEach((cell, k) => { colorAt[cell] = gp.times[k]; });
+    c0.grid = { n: gp.n, ids: cells, colorAt, target: center, zoomStart: gp.zoomStart, zoomEnd: gp.zoomEnd };
     c0.mediaId = target ? target.id : c0.mediaId;
-    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Einstieg im ${gridPlan.n === 3 ? '9er' : '4er'}-Raster: die Bilder werden Beat für Beat farbig, dann zoomt der Film ins ${gridPlan.n === 3 ? 'mittlere' : 'letzte'} Bild${Math.abs(clips[P + 1].start - gridPlan.zoomEnd) < 0.01 && clips[P + 1].label !== clips[P].label ? ` und landet genau auf dem ${SEC_DE[clips[P + 1].label] || 'Einsatz'}` : ''}.`);
-  }
+    next.afterGrid = true;
+    const where = intro ? 'Einstieg' : `${SEC_DE[next.label] || 'Refrain'} bei ${fmtMS(c0.start)}`;
+    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `${where} im ${gp.n === 3 ? '9er' : '4er'}-Raster: die Bilder werden Beat für Beat farbig, dann zoomt der Film ins ${gp.n === 3 ? 'mittlere' : 'letzte'} Bild${intro && Math.abs(next.start - gp.zoomEnd) < 0.01 && next.label !== c0.label ? ` und landet genau auf dem ${SEC_DE[next.label] || 'Einsatz'}` : ''}.`);
+  };
+  if (gridPlan && clips.length > 1) fillGrid(P, gridPlan, true);
+  for (const c of clips) if (c.gridMid) fillGrid(c.i, c.gridMid, false);
 
   // Film-Strip-Ende: das letzte Bild wird zum Negativ auf einem Filmstreifen, der rückwärts durch den Film läuft
   if (outro === 'strip' && !flight && clips.length > 3) {
@@ -3256,6 +3343,7 @@ function buildPlan(opts) {
       c.srcOffset = 0; c.rate = 1; c.contain = false;
       continue;
     }
+    if (c.grid && !c.grid.ids) c.grid = false;
     if (c.grid) {
       c.grid.items = c.grid.ids.map((id) => {
         const mm = byId.get(id);
@@ -3369,10 +3457,11 @@ function buildPlan(opts) {
     if (c.tout && c.tout.type === TR.WHIP) c.tout.dirSign = c.dir === 'left' ? -1 : 1;
   }
   // nach dem Raster-Zoom: gleiches Bild, gleicher (zentrierter) Ausschnitt, dann sanfte Fahrt
-  if (clips[P] && clips[P].grid && clips[P + 1] && clips[P + 1].motion) {
-    const to = clips[P + 1].motion.to;
-    clips[P + 1].motion = { from: { s: 1, x: 0, y: 0 }, to: { s: Math.max(1.04, to.s || 1), x: (to.x || 0) * 0.5, y: (to.y || 0) * 0.5 } };
-    clips[P + 1].contain = false;
+  for (const c of clips) {
+    if (!c.afterGrid || !c.motion) continue;
+    const to = c.motion.to;
+    c.motion = { from: { s: 1, x: 0, y: 0 }, to: { s: Math.max(1.04, to.s || 1), x: (to.x || 0) * 0.5, y: (to.y || 0) * 0.5 } };
+    c.contain = false;
   }
   if (loopClip) {
     const c0 = loopTo;
@@ -3425,9 +3514,20 @@ function buildPlan(opts) {
     if (title) overlays.push({ type: 'reveal', text: title, sub: subtitle, geo, start: R[0].start + Math.min(0.5, beatDur), end: reveal.end - 0.04 });
   }
 
+  // Countdown vor dem Drop: 3 · 2 · 1 auf den letzten drei Beats, dann Licht auf dem Einsatz
+  if (countIn) {
+    // eine Einblendung, die in den Countdown hineinliefe (z. B. der Aufblende-Titel), endet vorher
+    for (const o of overlays) if (o.start < countIn.marks[0] && o.end > countIn.marks[0]) o.end = Math.max(o.start + 0.5, countIn.marks[0] - 0.05);
+    overlays.push({ type: 'countin', marks: countIn.marks, start: countIn.marks[0] - 0.05, end: countIn.end });
+    fx.push({ type: 'flash', start: countIn.end, end: countIn.end + 0.22, amp: 0.22 });
+    fx.push({ type: 'punch', start: countIn.end, end: countIn.end + 0.45, amp: 0.7 });
+    dir.notes.push(`Countdown vor dem ${SEC_DE[sectionAt(an, win.start + countIn.end + 0.02).label] || 'Drop'}: 3 · 2 · 1 auf den letzten Beats.`);
+  }
+
   // Vorspann
   if (pre && pre.kind === 'countdown') {
-    fx.push({ type: 'desat', start: 0, end: pre.end, amp: 1 });
+    // im Look entsättigt (nicht hart schwarzweiß) und zum Einsatz hin weich in die Farbe: kein Bruch im Stil
+    fx.push({ type: 'desat', start: 0, end: pre.end, amp: 0.6, fadeOut: beatDur * 0.5 });
     fx.push({ type: 'flash', start: pre.end, end: pre.end + 0.22, amp: 0.35 });
     fx.push({ type: 'punch', start: pre.end, end: pre.end + 0.45, amp: 1 });
     overlays.push({ type: 'leader', marks: pre.marks, start: 0, end: pre.end });
@@ -3467,7 +3567,7 @@ function buildPlan(opts) {
     if (title && tk && flight.from && flight.from.name) overlays.push({ type: 'lower', text: flight.from.name, sub: ['Abflug', flight.dep].filter(Boolean).join(' '), start: Math.min(0.4, beatDur), end: Math.min(tk.end - 0.5, Math.max(2.4, barDur * 1.2)) });
     if (title && ld && flight.to && flight.to.name) overlays.push({ type: 'lower', text: flight.to.name, sub: ['Ankunft', flight.arr].filter(Boolean).join(' '), start: ld.start + Math.min(0.8, beatDur * 1.5), end: Math.min(D - 0.3, ld.start + Math.max(2.6, barDur * 1.4)) });
   } else if (intro === 'countdown' && leader) {
-    fx.push({ type: 'desat', start: leader.marks[0], end: leader.end, amp: 1 });
+    fx.push({ type: 'desat', start: leader.marks[0], end: leader.end, amp: 0.6, fadeOut: beatDur * 0.5 });
     fx.push({ type: 'flash', start: leader.end, end: leader.end + 0.22, amp: 0.35 });
     fx.push({ type: 'punch', start: leader.end, end: leader.end + 0.45, amp: 1 });
     overlays.push({ type: 'leader', marks: leader.marks, start: leader.marks[0], end: leader.end });
@@ -3933,8 +4033,8 @@ uniform int uTrans;
 uniform float uDir;
 uniform vec2 uRes;
 uniform float uTime;
-uniform float uSat, uContrast, uTemp, uSplit, uLift, uCrush, uBW, uGrain, uVig;
-uniform vec3 uTint;
+uniform float uSat, uVib, uContrast, uTemp, uLift, uCrush, uBW, uGrain, uVig;
+uniform vec3 uTint, uSh, uHi;
 uniform float uGlow, uLeak, uFlash, uBars, uBlack, uDim, uDesat;
 uniform float uHasOvTop;
 uniform float uLod;
@@ -4082,13 +4182,16 @@ void main() {
     vec2 uv = vec2(full.x, (full.y - uBand.x) / uBand.y);
     c = composite(uv);
     // Grading
-    c *= vec3(1.0 + uTemp * 0.08, 1.0 + uTemp * 0.012, 1.0 - uTemp * 0.09);
+    // Farbtemperatur (wie Weißabgleich: Rot/Blau gegenläufig, Grün leicht mit)
+    c *= vec3(1.0 + uTemp * 0.13, 1.0 + uTemp * 0.02, 1.0 - uTemp * 0.15);
+    // Farbräder: Schatten und Lichter getrennt tönen, die Mitten bleiben natürlich
     float l = luma(c);
-    vec3 shadowT = vec3(-0.045, 0.02, 0.065);
-    vec3 highT = vec3(0.07, 0.018, -0.055);
-    c += uSplit * (shadowT * (1.0 - smoothstep(0.0, 0.55, l)) + highT * smoothstep(0.4, 1.0, l));
+    c += uSh * (1.0 - smoothstep(0.0, 0.55, l)) + uHi * smoothstep(0.42, 1.0, l);
     l = luma(c);
     c = mix(vec3(l), c, uSat);
+    // Vibrance: blasse Farben kräftiger, bereits satte (Haut, Sonnenuntergang) kaum
+    float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b));
+    c = mix(vec3(luma(c)), c, 1.0 + uVib * (1.0 - clamp((mx - mn) * 1.8, 0.0, 1.0)));
     c = max(c, 0.0);
     c = c / (1.0 + max(c - 0.8, 0.0) * 1.4); // weiche Lichter
     c = clamp(c, 0.0, 1.0);
@@ -4265,7 +4368,9 @@ class Renderer {
     gl.uniform1f(u.uSat, g.sat);
     gl.uniform1f(u.uContrast, g.contrast);
     gl.uniform1f(u.uTemp, g.temp);
-    gl.uniform1f(u.uSplit, g.split);
+    gl.uniform1f(u.uVib, g.vib || 0);
+    gl.uniform3fv(u.uSh, g.sh || [0, 0, 0]);
+    gl.uniform3fv(u.uHi, g.hi || [0, 0, 0]);
     gl.uniform1f(u.uLift, g.lift);
     gl.uniform1f(u.uCrush, g.crush);
     gl.uniform1f(u.uBW, g.bw);
@@ -4314,14 +4419,15 @@ const MAP_INKS = ['', '#efe6d2', '#ffffff', '#ff6a2b', '#e4c16b', '#7fb2ff', '#e
 
 /** Schrift für Filmtitel (Titelkarte, Ortsname, Route, Etappen, Abspann) */
 const FONT_SETS = {
-  klassisch: { label: 'Klassisch', css: OV_FONTS.serif, title: (s) => `400 ${s}px ${OV_FONTS.serif}` },
-  modern: { label: 'Modern', css: OV_FONTS.sans, weight: 500, title: (s) => `500 ${s * 0.72}px ${OV_FONTS.sans}`, upper: true, track: 0.16 },
-  grotesk: { label: 'Grotesk', css: OV_FONTS.cond, weight: 800, title: (s) => `800 ${s * 0.95}px ${OV_FONTS.cond}`, upper: true, track: 0.01 },
-  editorial: { label: 'Editorial', css: OV_FONTS.book, italic: true, title: (s) => `italic 400 ${s * 1.02}px ${OV_FONTS.book}` },
-  geo: { label: 'Geometrisch', css: OV_FONTS.geo, weight: 500, title: (s) => `500 ${s * 0.74}px ${OV_FONTS.geo}`, upper: true, track: 0.2 },
-  mono: { label: 'Mono', css: OV_FONTS.mono, weight: 500, title: (s) => `500 ${s * 0.56}px ${OV_FONTS.mono}`, upper: true, track: 0.12 },
+  // title: große Titel; small: kleine Zeilen (Untertitel, Datum, Kapitelnummer) passend zur Titelschrift
+  klassisch: { label: 'Klassisch', css: OV_FONTS.serif, title: (s) => `400 ${s}px ${OV_FONTS.serif}`, small: (s) => `500 ${s}px ${OV_FONTS.sans}` },
+  modern: { label: 'Modern', css: OV_FONTS.sans, weight: 500, title: (s) => `500 ${s * 0.72}px ${OV_FONTS.sans}`, upper: true, track: 0.16, small: (s) => `500 ${s}px ${OV_FONTS.sans}` },
+  grotesk: { label: 'Grotesk', css: OV_FONTS.cond, weight: 800, title: (s) => `800 ${s * 0.95}px ${OV_FONTS.cond}`, upper: true, track: 0.01, small: (s) => `600 ${s * 1.08}px ${OV_FONTS.cond}` },
+  editorial: { label: 'Editorial', css: OV_FONTS.book, italic: true, title: (s) => `italic 400 ${s * 1.02}px ${OV_FONTS.book}`, small: (s) => `500 ${s}px ${OV_FONTS.sans}` },
+  geo: { label: 'Geometrisch', css: OV_FONTS.geo, weight: 500, title: (s) => `500 ${s * 0.74}px ${OV_FONTS.geo}`, upper: true, track: 0.2, small: (s) => `500 ${s}px ${OV_FONTS.geo}` },
+  mono: { label: 'Mono', css: OV_FONTS.mono, weight: 500, title: (s) => `500 ${s * 0.56}px ${OV_FONTS.mono}`, upper: true, track: 0.12, small: (s) => `500 ${s * 0.92}px ${OV_FONTS.mono}` },
 };
-const OV_INK = '#efe6d2';
+const easeInCubic = (x) => x * x * x;
 
 const TEXT_STYLES = {
   modern: { label: 'Modern', css: OV_FONTS.sans, font: (s) => `600 ${s}px ${OV_FONTS.sans}`, upper: true, track: 0.16 },
@@ -4344,20 +4450,26 @@ const cl01 = (x) => Math.max(0, Math.min(1, x));
 const easeInOut3 = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
 
 
-function trackedWidth(ctx, text, track, size) {
+/** Zeichenbreite; Ziffern auf Wunsch gleich breit (Zahlen, die sich ändern, springen dann nicht). */
+function charW(ctx, ch, tab) {
+  return tab && ch >= '0' && ch <= '9' ? ctx.measureText('0').width : ctx.measureText(ch).width;
+}
+
+function trackedWidth(ctx, text, track, size, tab) {
   let w = 0;
-  for (const ch of text) w += ctx.measureText(ch).width;
+  for (const ch of text) w += charW(ctx, ch, tab);
   return w + Math.max(0, Array.from(text).length - 1) * track * size;
 }
 
-function drawTracked(ctx, text, x, y, track, size, align) {
-  const w = trackedWidth(ctx, text, track, size);
+function drawTracked(ctx, text, x, y, track, size, align, tab) {
+  const w = trackedWidth(ctx, text, track, size, tab);
   let cx = align === 'center' ? x - w / 2 : align === 'right' ? x - w : x;
   const prev = ctx.textAlign;
   ctx.textAlign = 'left';
   for (const ch of text) {
-    ctx.fillText(ch, cx, y);
-    cx += ctx.measureText(ch).width + track * size;
+    const cw = charW(ctx, ch, tab);
+    ctx.fillText(ch, cx + (cw - ctx.measureText(ch).width) / 2, y);
+    cx += cw + track * size;
   }
   ctx.textAlign = prev;
   return w;
@@ -4410,6 +4522,69 @@ class OverlayPainter {
 
   get fontSet() { return FONT_SETS[this.fontKey] || FONT_SETS.klassisch; }
   font(role, size) { return this.fontSet.title(size); }
+  /** kleine Zeilen: dieselbe Schriftfamilie im ganzen Film */
+  small(size) { return this.fontSet.small(size); }
+  /** Schriftfarbe des Looks mit Deckkraft */
+  inkA(a) { const h = this.ink; return `rgba(${parseInt(h.slice(1, 3), 16)},${parseInt(h.slice(3, 5), 16)},${parseInt(h.slice(5, 7), 16)},${a})`; }
+  toneA(a) { const c = this.pal.tone; return `rgba(${c[0]},${c[1]},${c[2]},${a})`; }
+
+  /** Kleine Zeile in Versalien, gesperrt. */
+  drawLabel(ctx, text, x, y, size, align, alpha = 1, track = 0.32) {
+    if (!text) return;
+    ctx.save();
+    ctx.globalAlpha *= alpha;
+    ctx.font = this.small(size);
+    ctx.fillStyle = this.ink;
+    ctx.textBaseline = 'alphabetic';
+    drawTracked(ctx, String(text).toLocaleUpperCase('de-DE'), x, y, track, size, align, true);
+    ctx.restore();
+  }
+
+  /**
+   * Zeitpunkte für Wörter: auf den Beats ab dem Start der Einblendung (bei schnellen Songs jeder zweite),
+   * damit Titel im Takt erscheinen. Ohne Beats gleichmäßig.
+   */
+  beatTimes(o, n, from = o.start) {
+    const b = (this.beats || []).filter((x) => x >= from - 0.03 && x < o.end - 0.3);
+    const gap = b.length > 1 ? b[1] - b[0] : 0.5;
+    const step = gap < 0.36 ? 2 : 1;
+    const out = [];
+    for (let i = 0; i < n; i++) out.push(b[i * step] != null ? b[i * step] : (out.length ? out[out.length - 1] + Math.max(0.2, gap * step) : from));
+    return out;
+  }
+  /** Ausstieg auf dem letzten Beat vor dem Ende (sonst kurz davor). */
+  beatExit(o) {
+    const b = (this.beats || []).filter((x) => x > o.start + 0.8 && x <= o.end - 0.28);
+    return b.length ? b[b.length - 1] : o.end - 0.4;
+  }
+
+  /**
+   * Titel wortweise im Takt: jedes Wort gleitet aus einer Maske nach oben ins Bild,
+   * beim Ausstieg (auf einem Beat) gleiten alle zusammen nach oben hinaus. Liefert die Breite.
+   */
+  maskTitle(ctx, text, x, y, size, track, align, times, exitT, t, fontFn) {
+    const words = String(text || '').split(/\s+/).filter(Boolean);
+    if (!words.length) return 0;
+    ctx.font = fontFn(size);
+    const space = ctx.measureText(' ').width + track * size;
+    const widths = words.map((w) => trackedWidth(ctx, w, track, size));
+    const total = widths.reduce((a, w) => a + w, 0) + space * (words.length - 1);
+    let wx = align === 'center' ? x - total / 2 : align === 'right' ? x - total : x;
+    const q = easeInCubic(cl01((t - exitT) / 0.32));
+    const top = y - size * 1.05, h = size * 1.4;
+    words.forEach((w, i) => {
+      const p = easeOutCubic(cl01((t - times[Math.min(i, times.length - 1)]) / 0.42));
+      if (p > 0 && q < 1) {
+        ctx.save();
+        ctx.beginPath(); ctx.rect(wx - size * 0.2, top, widths[i] + size * 0.4, h); ctx.clip();
+        ctx.globalAlpha *= Math.min(1, p * 1.4) * (1 - q);
+        drawTracked(ctx, w, wx, y + (1 - p) * size * 0.95 - q * size * 1.1, track, size, 'left');
+        ctx.restore();
+      }
+      wx += widths[i] + space;
+    });
+    return total;
+  }
   caseTitle(text) { return this.fontSet.upper ? String(text || '').toLocaleUpperCase('de-DE') : String(text || ''); }
   titleTrack(def) { return this.fontSet.track != null ? this.fontSet.track : def; }
 
@@ -4418,10 +4593,12 @@ class OverlayPainter {
     const res = { top: false, topDirty: false };
     this.fontKey = plan.font;
     this.beats = plan.beats || [];
+    this.pal = (LOOKS[plan.look] || LOOKS.natur).pal;
+    this.ink = this.pal.ink;
     const active = plan.overlays.filter((o) => t >= o.start - 0.001 && t < o.end);
     if (!active.length) { this.lastKey = ''; return res; }
     const anim = active.some((o) => (o.type !== 'usertext' && o.type !== 'sticker') || t - o.start < (o.anim === 'type' || o.anim === 'words' ? 6 : 1) || o.end - t < 0.4);
-    const key = anim ? 't' + t.toFixed(4) : 's' + JSON.stringify(active.map((o) => [o.id, o.text, o.x, o.y, o.size, o.style, o.kind, o.color, o.rot, o.bg, o.anim])) + '|' + (selectedId || '') + '|' + plan.band.join(',');
+    const key = anim ? 't' + t.toFixed(4) : 's' + JSON.stringify(active.map((o) => [o.id, o.text, o.x, o.y, o.size, o.style, o.kind, o.color, o.rot, o.bg, o.anim])) + '|' + (selectedId || '') + '|' + plan.band.join(',') + '|' + plan.look + '|' + plan.font;
     if (key !== this.lastKey) {
       const ctx = this.top.getContext('2d');
       ctx.clearRect(0, 0, this.w, this.h);
@@ -4439,6 +4616,7 @@ class OverlayPainter {
         else if (o.type === 'leader') this.drawLeader(ctx, o, t, geo);
         else if (o.type === 'rewind') this.drawRewind(ctx, o, t, geo);
         else if (o.type === 'reveal') this.drawReveal(ctx, o, t, geo);
+        else if (o.type === 'countin') this.drawCountIn(ctx, o, t, geo);
         else if (o.type === 'datestamp') this.drawDateStamp(ctx, o, t, geo);
         else if (o.type === 'usertext') this.drawUserText(ctx, o, t, geo, o.id === selectedId);
         else if (o.type === 'sticker') this.drawSticker(ctx, o, t, geo, o.id === selectedId);
@@ -4471,117 +4649,103 @@ class OverlayPainter {
   }
 
   drawTitleCard(ctx, o, t, g) {
-    const local = t - o.start, left = o.end - t;
-    const a = easeOutCubic(cl01(local / 0.9)) * (1 - cl01((0.6 - left) / 0.6));
-    if (a <= 0) return;
+    // Titelkarte: Titel wortweise im Takt, darüber das Datum, darunter eine feine Linie
     const title = this.caseTitle(o.text);
     const tr = this.titleTrack(0.04);
-    const size = fitSize(ctx, title, (s) => this.font('title', s), g.base * 0.12, g.W * 0.82, tr);
-    const drift = (1 - easeOutCubic(cl01(local / 1.4))) * size * 0.15;
-    ctx.globalAlpha = a;
-    ctx.fillStyle = OV_INK;
+    const size = fitSize(ctx, title, (sz) => this.font('title', sz), g.base * 0.12, g.W * 0.82, tr);
+    const times = this.beatTimes(o, Math.max(1, title.split(/\s+/).length));
+    const exitT = this.beatExit(o);
+    const out = cl01((t - exitT) / 0.32);
+    ctx.fillStyle = this.ink;
+    this.shadow(ctx, size * 0.5);
     ctx.textBaseline = 'alphabetic';
-    if (o.sub) {
-      const ss = g.base * 0.024;
-      ctx.font = `400 ${ss}px ${OV_FONTS.mono}`;
-      drawTracked(ctx, o.sub.toLocaleUpperCase('de-DE'), g.cx, g.cy - size * 0.95 + drift, 0.4, ss, 'center');
-    }
-    if (title) {
-      ctx.font = this.font('title', size);
-      drawTracked(ctx, title, g.cx, g.cy + size * 0.3 + drift, tr + 0.02 * cl01(local / 3), size, 'center');
-      const rw = g.W * 0.08 * easeOutCubic(cl01((local - 0.3) / 0.8));
-      ctx.fillRect(g.cx - rw / 2, g.cy + size * 0.72 + drift, rw, Math.max(1, g.base * 0.0022));
-      this.drawGeoLine(ctx, o, t, g.cx, g.cy + size * 0.72 + drift + g.base * 0.06, g.base * 0.022, 'center', a);
-    }
+    const y = g.cy + size * 0.3;
+    if (title) this.maskTitle(ctx, title, g.cx, y, size, tr, 'center', times, exitT, t, (sz) => this.font('title', sz));
+    const last = times[times.length - 1];
+    const lp = easeOutCubic(cl01((t - last) / 0.6)) * (1 - out);
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = lp * 0.8;
+    const rw = g.W * 0.1 * lp;
+    ctx.fillRect(g.cx - rw / 2, y + size * 0.42, rw, Math.max(1, g.base * 0.002));
+    ctx.globalAlpha = 1;
+    this.drawLabel(ctx, o.sub, g.cx, y - size * 1.15, g.base * 0.022, 'center', lp);
+    this.drawGeoLine(ctx, o, t, g.cx, y + size * 0.42 + g.base * 0.055, g.base * 0.021, 'center', lp);
   }
 
+
   drawEndCard(ctx, o, t, g) {
-    const local = t - o.start;
-    const a = easeOutCubic(cl01(local / 0.8));
-    if (a <= 0 || !(o.text || o.sub)) return;
-    ctx.globalAlpha = a;
-    ctx.fillStyle = OV_INK;
-    ctx.textBaseline = 'alphabetic';
+    if (!(o.text || o.sub)) return;
     const title = this.caseTitle(o.text);
     const tr = this.titleTrack(0.04);
-    const size = fitSize(ctx, title, (s) => this.font('title', s), g.base * 0.09, g.W * 0.78, tr);
-    if (title) {
-      ctx.font = this.font('title', size);
-      drawTracked(ctx, title, g.cx, g.cy, tr, size, 'center');
-    }
-    const rw = g.W * 0.06;
-    ctx.fillRect(g.cx - rw / 2, g.cy + size * 0.42, rw, Math.max(1, g.base * 0.0022));
-    if (o.sub) {
-      const ss = g.base * 0.022;
-      ctx.font = `400 ${ss}px ${OV_FONTS.mono}`;
-      drawTracked(ctx, o.sub.toLocaleUpperCase('de-DE'), g.cx, g.cy + size * 0.42 + ss * 2.4, 0.4, ss, 'center');
-    }
-    if (o.stats) {
-      const ss = g.base * 0.02;
-      ctx.globalAlpha = a * cl01((t - o.start - 0.4) / 0.6);
-      ctx.font = `400 ${ss}px ${OV_FONTS.mono}`;
-      ctx.fillStyle = 'rgba(239,230,210,0.7)';
-      drawTracked(ctx, o.stats.toLocaleUpperCase('de-DE'), g.cx, g.cy + size * 0.42 + ss * 5.2, 0.3, ss, 'center');
-    }
+    const size = fitSize(ctx, title, (sz) => this.font('title', sz), g.base * 0.09, g.W * 0.78, tr);
+    const times = this.beatTimes(o, Math.max(1, title.split(/\s+/).length));
+    ctx.fillStyle = this.ink;
+    ctx.textBaseline = 'alphabetic';
+    if (title) this.maskTitle(ctx, title, g.cx, g.cy, size, tr, 'center', times, Infinity, t, (sz) => this.font('title', sz));
+    const lp = easeOutCubic(cl01((t - times[times.length - 1]) / 0.6));
+    ctx.globalAlpha = lp * 0.8;
+    const rw = g.W * 0.07 * lp;
+    ctx.fillRect(g.cx - rw / 2, g.cy + size * 0.42, rw, Math.max(1, g.base * 0.002));
+    ctx.globalAlpha = 1;
+    const ss = g.base * 0.021;
+    this.drawLabel(ctx, o.sub, g.cx, g.cy + size * 0.42 + ss * 2.5, ss, 'center', lp);
+    if (o.stats) this.drawLabel(ctx, o.stats, g.cx, g.cy + size * 0.42 + ss * 5.2, ss * 0.92, 'center', 0.7 * cl01((t - o.start - 0.5) / 0.6), 0.26);
   }
+
 
   /** Ortsname groß im Bild: Stories starten nie auf Schwarz. */
   drawCity(ctx, o, t, g) {
-    const local = t - o.start, left = o.end - t;
-    const a = easeOutCubic(cl01(local / 0.6)) * (1 - cl01((0.5 - left) / 0.5));
-    if (a <= 0) return;
+    // Ortsname groß im Bild, wortweise im Takt; Datum und Koordinaten folgen auf dem nächsten Beat
     const title = this.caseTitle(o.text);
     const tr = this.titleTrack(0.02);
-    const size = fitSize(ctx, title, (s) => this.font('title', s), g.base * 0.19, g.W * 0.86, tr + 0.03);
-    const track = tr + 0.03 * easeOutCubic(cl01(local / 3));
-    ctx.globalAlpha = a;
-    ctx.fillStyle = OV_INK;
+    const size = fitSize(ctx, title, (sz) => this.font('title', sz), g.base * 0.19, g.W * 0.86, tr + 0.03);
+    const words = Math.max(1, title.split(/\s+/).length);
+    const times = this.beatTimes(o, words + 1);
+    const exitT = this.beatExit(o);
+    const out = cl01((t - exitT) / 0.32);
+    ctx.fillStyle = this.ink;
     this.shadow(ctx, size * 0.6);
     ctx.textBaseline = 'alphabetic';
-    ctx.font = this.font('title', size);
     const y = g.cy + size * 0.3;
-    drawTracked(ctx, title, g.cx, y, track, size, 'center');
-    if (o.sub) {
-      const ss = g.base * 0.026;
-      ctx.font = `400 ${ss}px ${OV_FONTS.mono}`;
-      ctx.globalAlpha = a * cl01((local - 0.3) / 0.5);
-      drawTracked(ctx, o.sub.toLocaleUpperCase('de-DE'), g.cx, y + ss * 2.8, 0.4, ss, 'center');
-    }
-    this.drawGeoLine(ctx, o, t, g.cx, y + g.base * 0.026 * (o.sub ? 5 : 2.8), g.base * 0.023, 'center', a);
+    const track = tr + 0.03 * easeOutCubic(cl01((t - o.start) / 3));
+    this.maskTitle(ctx, title, g.cx, y, size, track, 'center', times, exitT, t, (sz) => this.font('title', sz));
+    const sp = easeOutCubic(cl01((t - times[words]) / 0.5)) * (1 - out);
+    const ss = g.base * 0.024;
+    this.drawLabel(ctx, o.sub, g.cx, y + ss * 2.8 - (1 - sp) * ss * 0.8, ss, 'center', sp, 0.4);
+    this.drawGeoLine(ctx, o, t, g.cx, y + ss * (o.sub ? 5 : 2.8), g.base * 0.022, 'center', sp);
   }
+
 
   /**
    * Aufblende: schlichter, weit gesperrter Titel, eine feine Linie wächst aus der Mitte.
    * Die Sperrung zieht langsam zusammen, kurz vor dem Höhepunkt löst sich alles nach oben auf.
    */
   drawReveal(ctx, o, t, g) {
-    const local = t - o.start, left = o.end - t, dur = Math.max(0.5, o.end - o.start);
-    const a = smooth(cl01(local / 0.9)) * smooth(cl01(left / 0.35));
-    if (a <= 0) return;
+    // Aufblende: kleiner, weit gesperrter Titel; Wörter kommen auf den Beats, die Linie wächst mit,
+    // kurz vor dem Höhepunkt gleitet alles auf einem Beat nach oben hinaus
     const title = this.caseTitle(o.text);
-    const u = cl01(local / dur);
-    const track = 0.42 - 0.2 * easeOutCubic(u);
-    const size = fitSize(ctx, title, (s) => this.font('title', s), g.base * 0.075, g.W * 0.8, track);
-    const lift = (1 - smooth(cl01(left / 0.35))) * size * 0.35;
-    const y = g.cy + size * 0.3 - lift;
-    ctx.globalAlpha = a;
-    ctx.fillStyle = OV_INK;
+    const u = cl01((t - o.start) / Math.max(0.5, o.end - o.start));
+    const track = 0.42 - 0.18 * easeOutCubic(u);
+    const size = fitSize(ctx, title, (sz) => this.font('title', sz), g.base * 0.075, g.W * 0.8, track);
+    const words = Math.max(1, title.split(/\s+/).length);
+    const times = this.beatTimes(o, words + 1);
+    const exitT = this.beatExit(o);
+    const out = cl01((t - exitT) / 0.32);
+    ctx.fillStyle = this.ink;
     this.shadow(ctx, size * 0.8);
     ctx.textBaseline = 'alphabetic';
-    ctx.font = this.font('title', size);
-    drawTracked(ctx, title, g.cx, y, track, size, 'center');
-    // Linie wächst aus der Mitte
-    const lw = g.W * 0.16 * easeOutCubic(cl01((local - 0.3) / 1.4));
+    const y = g.cy + size * 0.3;
+    this.maskTitle(ctx, title, g.cx, y, size, track, 'center', times, exitT, t, (sz) => this.font('title', sz));
+    const lp = easeOutCubic(cl01((t - times[0]) / 1.6)) * (1 - out);
     ctx.shadowBlur = 0;
-    ctx.globalAlpha = a * 0.75;
+    ctx.globalAlpha = lp * 0.75;
+    const lw = g.W * 0.16 * lp;
     ctx.fillRect(g.cx - lw / 2, y + size * 0.55, lw, Math.max(1, g.base * 0.0016));
-    if (o.sub) {
-      const ss = g.base * 0.022;
-      ctx.font = `400 ${ss}px ${OV_FONTS.mono}`;
-      ctx.globalAlpha = a * 0.85 * cl01((local - 0.6) / 0.6);
-      drawTracked(ctx, o.sub.toLocaleUpperCase('de-DE'), g.cx, y + size * 0.55 + ss * 2.6, 0.45, ss, 'center');
-    }
+    ctx.globalAlpha = 1;
+    const ss = g.base * 0.022;
+    this.drawLabel(ctx, o.sub, g.cx, y + size * 0.55 + ss * 2.6, ss, 'center', 0.85 * easeOutCubic(cl01((t - times[words]) / 0.5)) * (1 - out), 0.45);
   }
+
 
   /** Flug: Globus oder flache Karte mit Kontinenten, Großkreis, Flugzeug, Zeiten. Deckt das Bild ab. */
   drawFlight(ctx, o, t, g) {
@@ -4734,7 +4898,7 @@ class OverlayPainter {
       ctx.restore();
     }
     const ls = g.base * 0.02;
-    ctx.font = `500 ${ls}px ${OV_FONTS.mono}`;
+    ctx.font = this.small(ls);
     ctx.fillStyle = text;
     ctx.textBaseline = 'middle';
     const lab = (q, label, other) => {
@@ -4759,7 +4923,7 @@ class OverlayPainter {
     drawTracked(ctx, title, W / 2, ty, this.titleTrack(0.03), size, 'center');
     ctx.shadowColor = 'transparent';
     const ss = g.base * 0.019;
-    ctx.font = `400 ${ss}px ${OV_FONTS.mono}`;
+    ctx.font = this.small(ss);
     const info = [];
     if (f.dep) info.push('ABFLUG ' + f.dep);
     if (f.arr) info.push('ANKUNFT ' + f.arr);
@@ -4792,7 +4956,7 @@ class OverlayPainter {
     ctx.save();
     ctx.beginPath(); ctx.rect(0, top, W, bh); ctx.clip();
     // kühler Videoton
-    ctx.fillStyle = 'rgba(30,48,96,0.14)';
+    ctx.fillStyle = this.toneA(0.18);
     ctx.fillRect(0, top, W, bh);
     // Zeilenstruktur
     ctx.fillStyle = 'rgba(0,0,0,0.13)';
@@ -4818,11 +4982,11 @@ class OverlayPainter {
     // Anzeige
     const m = g.margin;
     const fs = short * 0.06;
-    ctx.font = `600 ${fs}px ${OV_FONTS.mono}`;
+    ctx.font = this.small(fs);
     ctx.textBaseline = 'top';
     ctx.shadowColor = 'rgba(0,0,0,0.45)';
     ctx.shadowBlur = fs * 0.2;
-    ctx.fillStyle = 'rgba(246,242,232,0.95)';
+    ctx.fillStyle = this.inkA(0.95);
     const y = top + m * 0.8;
     if (frame % 16 < 12) {
       // ◀◀ als zwei Dreiecke (unabhängig von der Schrift)
@@ -4838,8 +5002,40 @@ class OverlayPainter {
     const tc = `0:${String(Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`;
     ctx.textAlign = 'right';
     ctx.textBaseline = 'bottom';
-    ctx.fillText(tc, W - m, top + bh - m * 0.9);
     ctx.textAlign = 'left';
+    drawTracked(ctx, tc, W - m, top + bh - m * 0.9, 0.08, fs, 'right', true);
+    ctx.textAlign = 'left';
+  }
+
+  /**
+   * Countdown vor dem Drop: große Ziffer in der Titelschrift auf jedem der letzten drei Beats,
+   * ein feiner Ring läuft pro Beat einmal herum. Das Bild läuft weiter, nur leicht abgedunkelt.
+   */
+  drawCountIn(ctx, o, t, g) {
+    const m = o.marks;
+    let k = 0;
+    while (k < m.length - 1 && t >= m[k + 1]) k++;
+    const t0 = m[k], t1 = k + 1 < m.length ? m[k + 1] : o.end;
+    const u = cl01((t - t0) / Math.max(0.05, t1 - t0));
+    const short = Math.min(g.W, g.bh);
+    const pop = easeOutCubic(cl01(u / 0.3));
+    ctx.fillStyle = this.toneA(0.18 + 0.1 * (1 - u));
+    ctx.fillRect(0, g.by, g.W, g.bh);
+    ctx.fillStyle = this.ink;
+    this.shadow(ctx, short * 0.04);
+    const size = short * 0.34 * (1.12 - 0.12 * pop);
+    ctx.globalAlpha = pop * (1 - cl01((u - 0.82) / 0.18));
+    ctx.font = this.font('title', size);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(m.length - k), g.cx, g.cy);
+    ctx.textAlign = 'left';
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = this.inkA(0.8);
+    ctx.lineWidth = Math.max(1.5, short * 0.004);
+    ctx.beginPath();
+    ctx.arc(g.cx, g.cy, short * 0.3, -Math.PI / 2, -Math.PI / 2 + easeInOut3(u) * Math.PI * 2);
+    ctx.stroke();
   }
 
   /** Datumsstempel wie auf einer Digitalkamera der 2000er: orange Ziffern unten rechts. */
@@ -4877,8 +5073,8 @@ class OverlayPainter {
     // Bildstand wackelt leicht wie im Projektor
     const jx = (rnd(frame) - 0.5) * short * 0.004, jy = (rnd(frame + 99) - 0.5) * short * 0.006;
     ctx.translate(jx, jy);
-    // warmer Sepia-Ton und Flackern
-    ctx.fillStyle = 'rgba(122,92,54,0.24)';
+    // Ton des Looks (statt festem Sepia) und Flackern: der Vorspann gehört farblich schon zum Film
+    ctx.fillStyle = this.toneA(0.22);
     ctx.fillRect(-10, -10, W + 20, H + 20);
     ctx.fillStyle = `rgba(10,8,6,${(0.04 + rnd(frame + 7) * 0.08).toFixed(3)})`;
     ctx.fillRect(-10, -10, W + 20, H + 20);
@@ -4886,14 +5082,14 @@ class OverlayPainter {
     vig.addColorStop(0, 'rgba(0,0,0,0)'); vig.addColorStop(1, 'rgba(8,6,4,0.62)');
     ctx.fillStyle = vig;
     ctx.fillRect(-10, -10, W + 20, H + 20);
-    const ink = 'rgba(246,239,226,0.92)';
+    const ink = this.inkA(0.92);
     const lw = Math.max(1.5, short * 0.005);
     const r1 = short * 0.3, r2 = short * 0.36;
     ctx.shadowColor = 'rgba(0,0,0,0.5)';
     ctx.shadowBlur = lw * 3;
     // Wischer: Fläche, die im Uhrzeigersinn einmal pro Ziffer umläuft
     const a0 = -Math.PI / 2, a1 = a0 + u * Math.PI * 2;
-    ctx.fillStyle = 'rgba(246,239,226,0.16)';
+    ctx.fillStyle = this.inkA(0.16);
     ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, r2, a0, a1); ctx.closePath(); ctx.fill();
     ctx.strokeStyle = ink;
     ctx.lineWidth = lw;
@@ -4909,7 +5105,7 @@ class OverlayPainter {
     // Ziffer
     const num = String(m.length - k);
     const size = r1 * 1.25 * (1.06 - 0.06 * easeOutCubic(cl01(u / 0.25)));
-    ctx.font = `700 ${size}px ${OV_FONTS.sans}`;
+    ctx.font = this.font('title', size * 1.15);
     ctx.fillStyle = ink;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -4917,7 +5113,7 @@ class OverlayPainter {
     ctx.textAlign = 'left';
     ctx.shadowColor = 'transparent';
     // Kratzer und Staub, jedes Bild anders
-    ctx.strokeStyle = 'rgba(250,245,235,0.35)';
+    ctx.strokeStyle = this.inkA(0.35);
     ctx.lineWidth = Math.max(1, short * 0.0015);
     for (let i = 0; i < 2; i++) {
       if (rnd(frame * 3 + i) < 0.45) continue;
@@ -4956,48 +5152,42 @@ class OverlayPainter {
     drawTracked(ctx, title, 0, 0, 0.0, size, 'center');
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalCompositeOperation = 'source-over';
-    if (o.sub && zp < 0.05) {
-      const ss = g.base * 0.024;
-      ctx.font = `400 ${ss}px ${OV_FONTS.mono}`;
-      ctx.fillStyle = OV_INK;
-      ctx.globalAlpha = cl01((local - 0.4) / 0.5);
-      ctx.textBaseline = 'alphabetic';
-      drawTracked(ctx, o.sub.toLocaleUpperCase('de-DE'), g.cx, g.cy + size * 0.75, 0.4, ss, 'center');
-    }
+    if (o.sub && zp < 0.05) this.drawLabel(ctx, o.sub, g.cx, g.cy + size * 0.75, g.base * 0.023, 'center', cl01((local - 0.4) / 0.5), 0.4);
     if (zp < 0.05) this.drawGeoLine(ctx, o, t, g.cx, g.cy + size * 0.75 + g.base * (o.sub ? 0.05 : 0), g.base * 0.022, 'center', 1);
   }
 
   drawLower(ctx, o, t, g) {
-    const local = t - o.start, left = o.end - t;
-    const pin = easeOutCubic(cl01(local / 0.7));
-    const a = pin * (1 - cl01((0.45 - left) / 0.45));
-    if (a <= 0) return;
+    // Bauchbinde: Titel in der Titelschrift, wortweise im Takt aus der Maske, Datum darunter
     const center = !!o.center;
-    const title = (o.text || '').toLocaleUpperCase('de-DE');
-    const size = fitSize(ctx, title, (s) => `600 ${s}px ${OV_FONTS.sans}`, g.base * 0.052, g.W - g.margin * 2, 0.2);
+    const title = this.caseTitle(o.text);
+    const tr = this.titleTrack(0.06);
+    const size = fitSize(ctx, title, (sz) => this.font('title', sz), g.base * 0.088, g.W - g.margin * 2, tr);
     const x = center ? g.cx : g.margin;
     const align = center ? 'center' : 'left';
     const y = g.lowerY;
-    ctx.globalAlpha = a;
-    ctx.fillStyle = OV_INK;
-    this.shadow(ctx, size);
+    const words = Math.max(1, title.split(/\s+/).length);
+    const times = this.beatTimes(o, words + 1);
+    const exitT = this.beatExit(o);
+    const out = cl01((t - exitT) / 0.32);
+    ctx.fillStyle = this.ink;
+    this.shadow(ctx, size * 0.6);
     ctx.textBaseline = 'alphabetic';
-    const lw = g.W * 0.07 * pin;
-    ctx.fillRect(center ? g.cx - lw / 2 : x, y - size * 1.55, lw, Math.max(1, g.base * 0.0025));
-    ctx.font = `600 ${size}px ${OV_FONTS.sans}`;
-    drawTracked(ctx, title, x + (1 - pin) * (center ? 0 : -size * 0.4), y, 0.2, size, align);
-    if (o.sub) {
-      const ss = size * 0.42;
-      ctx.font = `400 ${ss}px ${OV_FONTS.mono}`;
-      ctx.globalAlpha = a * cl01((local - 0.25) / 0.5);
-      drawTracked(ctx, o.sub.toLocaleUpperCase('de-DE'), x, y + ss * 2.3, 0.3, ss, align);
-    }
-    this.drawGeoLine(ctx, o, t, x, y + size * 0.42 * (o.sub ? 4.3 : 2.3), size * 0.4, align, a);
+    const lp = easeOutCubic(cl01((t - times[0]) / 0.5)) * (1 - out);
+    ctx.globalAlpha = lp * 0.85;
+    const lw = g.W * 0.07 * lp;
+    ctx.fillRect(center ? g.cx - lw / 2 : x, y - size * 1.25, lw, Math.max(1, g.base * 0.0022));
+    ctx.globalAlpha = 1;
+    this.maskTitle(ctx, title, x, y, size, tr, align, times, exitT, t, (sz) => this.font('title', sz));
+    const sp = easeOutCubic(cl01((t - times[words]) / 0.5)) * (1 - out);
+    const ss = g.base * 0.021;
+    this.drawLabel(ctx, o.sub, x, y + ss * 2.4, ss, align, sp);
+    this.drawGeoLine(ctx, o, t, x, y + ss * (o.sub ? 4.8 : 2.4), ss, align, sp);
   }
+
 
   /** Titel Wort für Wort auf den Beats, harte Schnitte, am Ende komplett mit Unterzeile. */
   drawType(ctx, o, t, g) {
-    const words = (o.text || '').toLocaleUpperCase('de-DE').split(/\s+/).filter(Boolean);
+    const words = this.caseTitle(o.text).split(/\s+/).filter(Boolean);
     if (!words.length) return;
     const beats = (o.beats && o.beats.length ? o.beats : [o.start]).filter((b) => b >= o.start - 0.01);
     let steps;
@@ -5014,15 +5204,15 @@ class OverlayPainter {
     const left = o.end - t;
     const a = 1 - cl01((0.45 - left) / 0.45);
     ctx.globalAlpha = a;
-    ctx.fillStyle = OV_INK;
+    ctx.fillStyle = this.ink;
     ctx.textBaseline = 'middle';
     this.shadow(ctx, g.base * 0.05);
     const bt = beats[Math.min(idx, beats.length - 1)];
     const sc = 1.03 - 0.03 * easeOutCubic(cl01((t - bt) / 0.35));
     if (!cur.final) {
       const full = words.length === 1 ? words[0] : cur.text;
-      const size = fitSize(ctx, full, (s) => `800 ${s}px ${OV_FONTS.cond}`, g.base * 0.26, g.W * 0.86, 0.02);
-      ctx.font = `800 ${size}px ${OV_FONTS.cond}`;
+      const size = fitSize(ctx, full, (sz) => this.font('title', sz), g.base * 0.26, g.W * 0.86, 0.02);
+      ctx.font = this.font('title', size);
       ctx.translate(g.cx, g.cy);
       ctx.scale(sc, sc);
       if (words.length === 1) {
@@ -5031,39 +5221,32 @@ class OverlayPainter {
       } else drawTracked(ctx, cur.text, 0, 0, 0.02, size, 'center');
       return;
     }
-    const size = fitSize(ctx, final.text, (s) => `800 ${s}px ${OV_FONTS.cond}`, g.base * 0.15, g.W * 0.86, 0.06);
-    ctx.font = `800 ${size}px ${OV_FONTS.cond}`;
+    const size = fitSize(ctx, final.text, (sz) => this.font('title', sz), g.base * 0.15, g.W * 0.86, 0.06);
+    ctx.font = this.font('title', size);
     drawTracked(ctx, final.text, g.cx, g.cy, 0.06, size, 'center');
-    if (o.sub) {
-      const ss = g.base * 0.024;
-      ctx.font = `400 ${ss}px ${OV_FONTS.mono}`;
-      ctx.globalAlpha = a * cl01((t - bt) / 0.4);
-      drawTracked(ctx, o.sub.toLocaleUpperCase('de-DE'), g.cx, g.cy + size * 0.72, 0.4, ss, 'center');
-    }
+    this.drawLabel(ctx, o.sub, g.cx, g.cy + size * 0.72, g.base * 0.023, 'center', a * cl01((t - bt) / 0.4), 0.4);
   }
 
   drawChapter(ctx, o, t, g) {
-    const local = t - o.start, left = o.end - t;
-    const pin = easeOutCubic(cl01(local / 0.6));
-    const a = pin * (1 - cl01((0.4 - left) / 0.4));
-    if (a <= 0) return;
-    const title = (o.text || '').toLocaleUpperCase('de-DE');
-    const size = fitSize(ctx, title, (s) => `600 ${s}px ${OV_FONTS.sans}`, g.base * 0.05, g.W - g.margin * 2, 0.2);
+    // Kapitel: Nummer als kleine Zeile, Ortsname in der Titelschrift wortweise im Takt
+    const title = this.caseTitle(o.text);
+    const tr = this.titleTrack(0.06);
+    const size = fitSize(ctx, title, (sz) => this.font('title', sz), g.base * 0.07, g.W - g.margin * 2, tr);
     const x = g.margin, y = g.lowerY;
-    ctx.globalAlpha = a;
-    ctx.fillStyle = OV_INK;
-    this.shadow(ctx, size);
+    const words = Math.max(1, title.split(/\s+/).length);
+    const times = this.beatTimes(o, words + 1);
+    const exitT = this.beatExit(o);
+    const out = cl01((t - exitT) / 0.32);
+    const lp = easeOutCubic(cl01((t - times[0]) / 0.45)) * (1 - out);
+    const ss = g.base * 0.02;
+    this.drawLabel(ctx, `${String(o.no).padStart(2, '0')} / ${String(o.total).padStart(2, '0')}`, x, y - size * 1.2, ss, 'left', lp, 0.3);
+    ctx.fillStyle = this.ink;
+    this.shadow(ctx, size * 0.6);
     ctx.textBaseline = 'alphabetic';
-    const ss = size * 0.42;
-    ctx.font = `400 ${ss}px ${OV_FONTS.mono}`;
-    const no = `${String(o.no).padStart(2, '0')} / ${String(o.total).padStart(2, '0')}`;
-    drawTracked(ctx, no, x, y - size * 1.3, 0.3, ss, 'left');
-    this.drawGeoLine(ctx, o, t, x, y + ss * 2.4, ss, 'left', a);
-    ctx.globalAlpha = a;
-    ctx.fillStyle = OV_INK;
-    ctx.font = `600 ${size}px ${OV_FONTS.sans}`;
-    drawTracked(ctx, title, x + (1 - pin) * -size * 0.4, y, 0.2, size, 'left');
+    this.maskTitle(ctx, title, x, y, size, tr, 'left', times, exitT, t, (sz) => this.font('title', sz));
+    this.drawGeoLine(ctx, o, t, x, y + ss * 2.4, ss, 'left', easeOutCubic(cl01((t - times[words]) / 0.5)) * (1 - out));
   }
+
 
   /**
    * Zeile unter dem Ortsnamen: Koordinaten erscheinen Ziffer für Ziffer,
@@ -5077,8 +5260,8 @@ class OverlayPainter {
     const sw = !hasPos ? o.start + 0.3 : hasKm ? o.start + Math.max(1.3, (o.end - o.start) * 0.45) : Infinity;
     const shift = cl01((t - sw) / 0.35);
     ctx.save();
-    ctx.font = `400 ${size}px ${OV_FONTS.mono}`;
-    ctx.fillStyle = OV_INK;
+    ctx.font = this.small(size);
+    ctx.fillStyle = this.ink;
     ctx.textBaseline = 'alphabetic';
     if (hasPos && shift < 1) {
       const deg = (v, p, n) => `${Math.abs(v).toFixed(4)}° ${v >= 0 ? p : n}`;
@@ -5089,14 +5272,14 @@ class OverlayPainter {
       let txt = '';
       Array.from(full).forEach((ch, i) => { txt += i >= lock && /\d/.test(ch) ? String((frame * 7 + i * 13) % 10) : ch; });
       ctx.globalAlpha = alpha * cl01(local / 0.25) * (1 - shift);
-      drawTracked(ctx, txt, x, y - shift * size * 0.7, 0.2, size, align);
+      drawTracked(ctx, txt, x, y - shift * size * 0.7, 0.2, size, align, true);
     }
     if (hasKm && t >= sw) {
       const p = easeOutCubic(cl01((t - sw) / 0.9));
       const v = geo.kmFrom + (geo.km - geo.kmFrom) * p;
       const txt = `${geo.mode === 'leg' ? '+' : ''}${Math.round(v).toLocaleString('de-DE')} KM${geo.mode === 'total' ? ' UNTERWEGS' : ''}`;
       ctx.globalAlpha = alpha * shift;
-      drawTracked(ctx, txt, x, y + (1 - shift) * size * 0.7, 0.25, size, align);
+      drawTracked(ctx, txt, x, y + (1 - shift) * size * 0.7, 0.25, size, align, true);
     }
     ctx.restore();
   }
@@ -5132,7 +5315,7 @@ class OverlayPainter {
     ctx.globalAlpha = alpha;
     const y0 = -((lines.length - 1) * lh) / 2;
     const bg = o.bg || 'none';
-    const color = o.color || OV_INK;
+    const color = o.color || this.ink;
     // sichtbarer Teil je Zeile (Tippen / Wort im Takt)
     let chars = budget >= 0 ? budget : Infinity, words = budget < 0 ? -budget : Infinity;
     const parts = lines.map((l) => {
@@ -5173,15 +5356,15 @@ class OverlayPainter {
     ctx.globalAlpha = Math.min(pin, pout);
     let bw, bh;
     if (o.kind === 'date') {
-      ctx.font = `400 ${size}px ${OV_FONTS.mono}`;
+      ctx.font = this.small(size);
       ctx.textBaseline = 'middle';
-      ctx.fillStyle = OV_INK;
+      ctx.fillStyle = this.ink;
       this.shadow(ctx, size);
       bw = drawTracked(ctx, String(o.text || ''), 0, 0, 0.25, size, 'center');
       bh = size * 1.4;
     } else {
       const label = String(o.text || 'Ort').toLocaleUpperCase('de-DE');
-      ctx.font = `600 ${size}px ${OV_FONTS.sans}`;
+      ctx.font = this.small(size * 1.05);
       const tw = trackedWidth(ctx, label, 0.18, size);
       bw = tw + size * 2.6; bh = size * 2.1;
       ctx.fillStyle = 'rgba(8,10,16,0.55)';
@@ -5196,9 +5379,9 @@ class OverlayPainter {
       ctx.arc(px, py, r, Math.PI * 0.8, Math.PI * 2.2);
       ctx.lineTo(px, py + r * 1.6);
       ctx.closePath();
-      ctx.strokeStyle = OV_INK;
+      ctx.strokeStyle = this.ink;
       ctx.stroke();
-      ctx.beginPath(); ctx.arc(px, py, r * 0.3, 0, Math.PI * 2); ctx.fillStyle = OV_INK; ctx.fill();
+      ctx.beginPath(); ctx.arc(px, py, r * 0.3, 0, Math.PI * 2); ctx.fillStyle = this.ink; ctx.fill();
       ctx.textBaseline = 'middle';
       drawTracked(ctx, label, -bw / 2 + size * 1.75, size * 0.05, 0.18, size, 'left');
     }
@@ -6444,7 +6627,7 @@ class Engine {
       cy = Math.max(fh / 2, Math.min(1 - fh / 2, lerp(cy, mf[1], extra.pull)));
     }
     const foc = [Math.max(0.1, Math.min(0.9, (mf[0] - cx) / fw + 0.5)), Math.max(0.1, Math.min(0.9, (mf[1] - cy) / fh + 0.5))];
-    if (extra.rot) geo[0] = extra.rot;
+    geo[0] = (extra.rot || 0) + lerp(mo.from.r || 0, mo.to.r || 0, e);
     return { tex: slot.tex, xf: [fw, fh, cx, cy], box: [0, 1, 1], blur, geo, corr, foc };
   }
 
@@ -6471,6 +6654,26 @@ class Engine {
       return { zoom: 1 + 0.05 * k, dx: pos * a, dy: -Math.abs(pos) * a * 0.18, rot: pos * 0.011 * k * energy };
     }
     if (mode === 'pulse') return { zoom: 1 + 0.02 + 0.03 * k * bp.env * energy, dx: 0, dy: 0, rot: 0 };
+    if (mode === 'float') {
+      // Schweben: weiche Acht über zwei Takte, dazu ein Atmen im Taktmaß – keine Kante, kein Ruck
+      const bar = plan.beatDur * 4, w = (2 * Math.PI) / (bar * 2);
+      const a = 0.011 * k;
+      return { zoom: 1 + 0.045 * k + 0.012 * k * Math.sin(w * 2 * t), dx: Math.sin(w * t) * a, dy: Math.sin(w * 2 * t + 0.6) * a * 0.55, rot: Math.sin(w * t + 1.1) * 0.004 * k };
+    }
+    if (mode === 'tilt') {
+      // Neigen im Takt: auf jeder Eins kippt das Bild weich zur anderen Seite
+      const downs = plan.downs || [];
+      let i = bp.index || 0;
+      while (i > 0 && !downs[i]) i--;
+      let n = (bp.index || 0) + 1;
+      while (n < b.length && !downs[n]) n++;
+      const t0 = b[i] != null ? b[i] : 0, t1 = b[n] != null ? b[n] : t0 + plan.beatDur * 4;
+      const u = clamp01((t - t0) / Math.max(0.1, t1 - t0));
+      const side = (b.slice(0, i + 1).filter((_, j) => downs[j]).length % 2) ? 1 : -1;
+      const e = 1 - Math.pow(1 - clamp01(u / 0.35), 3);
+      const ang = 0.021 * k * energy * side * (2 * e - 1);
+      return { zoom: 1 + 0.06 * k, dx: 0, dy: 0, rot: ang };
+    }
     if (mode === 'handheld') {
       const a = 0.008 * k;
       const nx = Math.sin(t * 1.31) + 0.5 * Math.sin(t * 2.87 + 1.3) + 0.25 * Math.sin(t * 5.1 + 0.4);
@@ -6574,6 +6777,15 @@ class Engine {
           eb.zoom *= 1 + 0.16 * (1 - e); eb.pull = 0.5 * (1 - e);
         } else if (L.type === TR.INK || L.type === TR.DOUBLE) {
           ea.zoom *= 1 + 0.06 * p; eb.zoom *= 1 + 0.06 * (1 - p);
+        }
+      }
+      // Impact-Zoom: jede Einstellung setzt leicht vergrößert ein und gleitet in 0,4 s zurück (auf dem Schnitt = auf dem Beat)
+      if (plan.motion === 'snap') {
+        const k = { soft: 0.6, medium: 1, strong: 1.5 }[plan.motionAmt] || 1;
+        for (const [ex, c] of [[ea, L.a], [eb, L.b]]) {
+          if (!c || c.grid || c.split || c.flightAnim || c.strip) continue;
+          const since = Math.max(0, t - c.start);
+          ex.zoom *= 1 + 0.075 * k * Math.exp(-since / 0.14);
         }
       }
       const mv = this.motionFx(t);
@@ -7435,6 +7647,8 @@ function normalizeSettings(st, defaults) {
     morph: pick1(s.morph, ['off', 'on'], 'off'),
     ramp: pick1(s.ramp, ['off', 'drop'], 'off'),
     stamp: pick1(s.stamp, ['auto', 'on', 'off'], 'auto'),
+    midGrid: pick1(s.midGrid, ['off', 'on'], 'off'),
+    midCount: pick1(s.midCount, ['off', 'drop'], 'off'),
     length: s.length === 'auto' || s.length === 'full' || (+s.length > 0 && +s.length <= 600) ? s.length : 'auto',
     songStart: s.songStart == null ? 'auto' : s.songStart,
     frame: pick1(s.frame, ['auto', 'full', 'band'], 'auto'),
@@ -7446,7 +7660,7 @@ function normalizeSettings(st, defaults) {
     mapInk: pick1(s.mapInk, MAP_INKS, ''),
     mapLand: pick1(s.mapLand, ['dots', 'solid', 'off'], 'dots'),
     flightView: pick1(s.flightView, ['globe', 'flat'], 'globe'),
-    motion: pick1(s.motion, ['ken', 'sway', 'pulse', 'handheld'], 'ken'),
+    motion: pick1(s.motion, ['ken', 'snap', 'pulse', 'sway', 'float', 'tilt', 'handheld'], 'ken'),
     motionAmt: pick1(s.motionAmt, ['soft', 'medium', 'strong'], 'medium'),
     burst: pick1(s.burst, ['off', 'drop'], 'off'),
     showTitle: s.showTitle !== false,
@@ -7456,14 +7670,14 @@ function normalizeSettings(st, defaults) {
 }
 
 /* ---------- Stil-Vorlage: ein Stil für alle Filme der Reise ---------- */
-const STYLE_KEYS = ['look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
+const STYLE_KEYS = ['look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
 const styleOf = (st) => Object.fromEntries(STYLE_KEYS.map((k) => [k, st[k]]));
 /** Einstellungen für neue Filme: Standard, darüber die Vorlage der Reise */
 function baseSettings(defaults) {
   return normalizeSettings({ ...defaults, ...((S.trip && S.trip.style) || {}), seed: Math.floor(Math.random() * 1e6) }, defaults);
 }
 function styleSummary(st) {
-  const names = { sway: 'Pendeln', pulse: 'Puls', handheld: 'Handkamera' };
+  const names = { snap: 'Impact-Zoom', sway: 'Pendeln', pulse: 'Puls', float: 'Schweben', tilt: 'Neigen', handheld: 'Handkamera' };
   const intros = { reveal: 'Aufblende', countdown: 'Countdown', grid: '9er-Raster', knockout: 'Durch den Namen', cinema: 'Titelkarte', city: 'Ortsname', hook: 'Stärkstes Bild', type: 'Wort für Wort', split: 'Split-Screen' };
   return [st.look === 'auto' ? 'Look automatisch' : `Look ${LOOKS[st.look].label}`, `Schrift ${FONT_SETS[st.font].label}`, names[st.motion], st.pre !== 'off' ? (st.pre === 'rewind' ? 'Rewind' : 'Countdown') + ' +' : '', intros[st.intro], st.morph === 'on' ? 'Bild aus Bild' : '', st.burst === 'drop' ? 'Foto-Serie' : '', st.ramp === 'drop' ? 'Speed-Ramp' : '', st.km !== 'off' ? 'Koordinaten' : ''].filter(Boolean).join(' · ');
 }
@@ -9104,7 +9318,7 @@ function renderStyle() {
   setRadio($('motionChips'), st.motion);
   setRadio($('motionAmtChips'), st.motionAmt);
   $('motionAmtChips').hidden = st.motion === 'ken';
-  $('motionHint').textContent = { ken: 'Ruhige Fahrten und Zooms, passend zum Songteil.', sway: 'Die Bilder pendeln sanft von links nach rechts, der Wendepunkt sitzt genau auf dem Beat. Im Drop etwas stärker.', pulse: 'Jeder Beat gibt dem Bild einen kurzen Zoom-Impuls.', handheld: 'Ruhiges, organisches Schweben wie aus der Hand gefilmt.' }[st.motion];
+  $('motionHint').textContent = { ken: 'Gleitende Fahrten mit feiner Neigung; die Richtung fließt über die Schnitte weiter.', snap: 'Jeder Schnitt setzt mit einem kurzen Zoom-Impuls ein und gleitet zurück, genau auf dem Beat.', float: 'Schwereloses Gleiten in einer weichen Acht über zwei Takte.', tilt: 'Auf jeder Eins kippt das Bild weich zur anderen Seite.', sway: 'Die Bilder pendeln sanft von links nach rechts, der Wendepunkt sitzt genau auf dem Beat. Im Drop etwas stärker.', pulse: 'Jeder Beat gibt dem Bild einen kurzen Zoom-Impuls.', handheld: 'Ruhiges, organisches Schweben wie aus der Hand gefilmt.' }[st.motion];
   setRadio($('preChips'), st.pre);
   $('preField').hidden = isFlight(S.ctx.rec);
   const introR = st.intro === 'auto' && r ? r.intro : st.intro;
@@ -9150,13 +9364,16 @@ const FX_KEYS = {
   burst: { on: 'drop', off: 'off', is: (st) => st.burst === 'drop' },
   ramp: { on: 'drop', off: 'off', is: (st) => st.ramp === 'drop' },
   stamp: { on: 'on', off: 'off', is: (st, r) => st.stamp === 'on' || (st.stamp !== 'off' && ((r && r.look) || st.look) === 'digicam') },
+  midGrid: { on: 'on', off: 'off', is: (st) => st.midGrid === 'on' },
+  midCount: { on: 'drop', off: 'off', is: (st) => st.midCount === 'drop' },
 };
 function renderFx(st, r) {
   for (const b of $('fxChips').querySelectorAll('[data-fx]')) b.setAttribute('aria-pressed', String(FX_KEYS[b.dataset.fx].is(st, r)));
   const on = (k) => FX_KEYS[k].is(st, r);
   const parts = [];
   if (on('match') || on('morph')) parts.push(`Übergänge: ${[on('match') ? 'Match-Cuts bei ähnlichem Bildaufbau' : '', on('morph') ? 'Bild aus Bild in ruhigen Teilen' : ''].filter(Boolean).join(', ')}`);
-  if (on('split')) parts.push('Refrain: Split-Screens');
+  if (on('split') || on('midGrid')) parts.push(`Refrain: ${[on('midGrid') ? 'einmal das Raster, das im Takt farbig wird' : '', on('split') ? 'Split-Screens' : ''].filter(Boolean).join(', ')}`);
+  if (on('midCount')) parts.push('Vor dem Drop: Countdown 3 · 2 · 1');
   if (on('burst') || on('ramp')) parts.push(`Drop: ${[on('burst') ? 'Foto-Serie' : '', on('ramp') ? 'Videos beschleunigen hinein und landen in Zeitlupe' : ''].filter(Boolean).join(', ')}`);
   if (on('stamp')) parts.push('Datum wie bei einer alten Digicam unten rechts');
   $('fxHint').textContent = parts.length ? parts.join(' · ') + '.' : 'Tippe an, was im Film vorkommen soll. Die Regie setzt jedes Element an die Stelle im Song, wo es am besten wirkt.';

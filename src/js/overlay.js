@@ -26,14 +26,15 @@ const MAP_INKS = ['', '#efe6d2', '#ffffff', '#ff6a2b', '#e4c16b', '#7fb2ff', '#e
 
 /** Schrift für Filmtitel (Titelkarte, Ortsname, Route, Etappen, Abspann) */
 const FONT_SETS = {
-  klassisch: { label: 'Klassisch', css: OV_FONTS.serif, title: (s) => `400 ${s}px ${OV_FONTS.serif}` },
-  modern: { label: 'Modern', css: OV_FONTS.sans, weight: 500, title: (s) => `500 ${s * 0.72}px ${OV_FONTS.sans}`, upper: true, track: 0.16 },
-  grotesk: { label: 'Grotesk', css: OV_FONTS.cond, weight: 800, title: (s) => `800 ${s * 0.95}px ${OV_FONTS.cond}`, upper: true, track: 0.01 },
-  editorial: { label: 'Editorial', css: OV_FONTS.book, italic: true, title: (s) => `italic 400 ${s * 1.02}px ${OV_FONTS.book}` },
-  geo: { label: 'Geometrisch', css: OV_FONTS.geo, weight: 500, title: (s) => `500 ${s * 0.74}px ${OV_FONTS.geo}`, upper: true, track: 0.2 },
-  mono: { label: 'Mono', css: OV_FONTS.mono, weight: 500, title: (s) => `500 ${s * 0.56}px ${OV_FONTS.mono}`, upper: true, track: 0.12 },
+  // title: große Titel; small: kleine Zeilen (Untertitel, Datum, Kapitelnummer) passend zur Titelschrift
+  klassisch: { label: 'Klassisch', css: OV_FONTS.serif, title: (s) => `400 ${s}px ${OV_FONTS.serif}`, small: (s) => `500 ${s}px ${OV_FONTS.sans}` },
+  modern: { label: 'Modern', css: OV_FONTS.sans, weight: 500, title: (s) => `500 ${s * 0.72}px ${OV_FONTS.sans}`, upper: true, track: 0.16, small: (s) => `500 ${s}px ${OV_FONTS.sans}` },
+  grotesk: { label: 'Grotesk', css: OV_FONTS.cond, weight: 800, title: (s) => `800 ${s * 0.95}px ${OV_FONTS.cond}`, upper: true, track: 0.01, small: (s) => `600 ${s * 1.08}px ${OV_FONTS.cond}` },
+  editorial: { label: 'Editorial', css: OV_FONTS.book, italic: true, title: (s) => `italic 400 ${s * 1.02}px ${OV_FONTS.book}`, small: (s) => `500 ${s}px ${OV_FONTS.sans}` },
+  geo: { label: 'Geometrisch', css: OV_FONTS.geo, weight: 500, title: (s) => `500 ${s * 0.74}px ${OV_FONTS.geo}`, upper: true, track: 0.2, small: (s) => `500 ${s}px ${OV_FONTS.geo}` },
+  mono: { label: 'Mono', css: OV_FONTS.mono, weight: 500, title: (s) => `500 ${s * 0.56}px ${OV_FONTS.mono}`, upper: true, track: 0.12, small: (s) => `500 ${s * 0.92}px ${OV_FONTS.mono}` },
 };
-const OV_INK = '#efe6d2';
+const easeInCubic = (x) => x * x * x;
 
 const TEXT_STYLES = {
   modern: { label: 'Modern', css: OV_FONTS.sans, font: (s) => `600 ${s}px ${OV_FONTS.sans}`, upper: true, track: 0.16 },
@@ -56,20 +57,26 @@ const cl01 = (x) => Math.max(0, Math.min(1, x));
 const easeInOut3 = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
 
 
-function trackedWidth(ctx, text, track, size) {
+/** Zeichenbreite; Ziffern auf Wunsch gleich breit (Zahlen, die sich ändern, springen dann nicht). */
+function charW(ctx, ch, tab) {
+  return tab && ch >= '0' && ch <= '9' ? ctx.measureText('0').width : ctx.measureText(ch).width;
+}
+
+function trackedWidth(ctx, text, track, size, tab) {
   let w = 0;
-  for (const ch of text) w += ctx.measureText(ch).width;
+  for (const ch of text) w += charW(ctx, ch, tab);
   return w + Math.max(0, Array.from(text).length - 1) * track * size;
 }
 
-function drawTracked(ctx, text, x, y, track, size, align) {
-  const w = trackedWidth(ctx, text, track, size);
+function drawTracked(ctx, text, x, y, track, size, align, tab) {
+  const w = trackedWidth(ctx, text, track, size, tab);
   let cx = align === 'center' ? x - w / 2 : align === 'right' ? x - w : x;
   const prev = ctx.textAlign;
   ctx.textAlign = 'left';
   for (const ch of text) {
-    ctx.fillText(ch, cx, y);
-    cx += ctx.measureText(ch).width + track * size;
+    const cw = charW(ctx, ch, tab);
+    ctx.fillText(ch, cx + (cw - ctx.measureText(ch).width) / 2, y);
+    cx += cw + track * size;
   }
   ctx.textAlign = prev;
   return w;
@@ -122,6 +129,69 @@ class OverlayPainter {
 
   get fontSet() { return FONT_SETS[this.fontKey] || FONT_SETS.klassisch; }
   font(role, size) { return this.fontSet.title(size); }
+  /** kleine Zeilen: dieselbe Schriftfamilie im ganzen Film */
+  small(size) { return this.fontSet.small(size); }
+  /** Schriftfarbe des Looks mit Deckkraft */
+  inkA(a) { const h = this.ink; return `rgba(${parseInt(h.slice(1, 3), 16)},${parseInt(h.slice(3, 5), 16)},${parseInt(h.slice(5, 7), 16)},${a})`; }
+  toneA(a) { const c = this.pal.tone; return `rgba(${c[0]},${c[1]},${c[2]},${a})`; }
+
+  /** Kleine Zeile in Versalien, gesperrt. */
+  drawLabel(ctx, text, x, y, size, align, alpha = 1, track = 0.32) {
+    if (!text) return;
+    ctx.save();
+    ctx.globalAlpha *= alpha;
+    ctx.font = this.small(size);
+    ctx.fillStyle = this.ink;
+    ctx.textBaseline = 'alphabetic';
+    drawTracked(ctx, String(text).toLocaleUpperCase('de-DE'), x, y, track, size, align, true);
+    ctx.restore();
+  }
+
+  /**
+   * Zeitpunkte für Wörter: auf den Beats ab dem Start der Einblendung (bei schnellen Songs jeder zweite),
+   * damit Titel im Takt erscheinen. Ohne Beats gleichmäßig.
+   */
+  beatTimes(o, n, from = o.start) {
+    const b = (this.beats || []).filter((x) => x >= from - 0.03 && x < o.end - 0.3);
+    const gap = b.length > 1 ? b[1] - b[0] : 0.5;
+    const step = gap < 0.36 ? 2 : 1;
+    const out = [];
+    for (let i = 0; i < n; i++) out.push(b[i * step] != null ? b[i * step] : (out.length ? out[out.length - 1] + Math.max(0.2, gap * step) : from));
+    return out;
+  }
+  /** Ausstieg auf dem letzten Beat vor dem Ende (sonst kurz davor). */
+  beatExit(o) {
+    const b = (this.beats || []).filter((x) => x > o.start + 0.8 && x <= o.end - 0.28);
+    return b.length ? b[b.length - 1] : o.end - 0.4;
+  }
+
+  /**
+   * Titel wortweise im Takt: jedes Wort gleitet aus einer Maske nach oben ins Bild,
+   * beim Ausstieg (auf einem Beat) gleiten alle zusammen nach oben hinaus. Liefert die Breite.
+   */
+  maskTitle(ctx, text, x, y, size, track, align, times, exitT, t, fontFn) {
+    const words = String(text || '').split(/\s+/).filter(Boolean);
+    if (!words.length) return 0;
+    ctx.font = fontFn(size);
+    const space = ctx.measureText(' ').width + track * size;
+    const widths = words.map((w) => trackedWidth(ctx, w, track, size));
+    const total = widths.reduce((a, w) => a + w, 0) + space * (words.length - 1);
+    let wx = align === 'center' ? x - total / 2 : align === 'right' ? x - total : x;
+    const q = easeInCubic(cl01((t - exitT) / 0.32));
+    const top = y - size * 1.05, h = size * 1.4;
+    words.forEach((w, i) => {
+      const p = easeOutCubic(cl01((t - times[Math.min(i, times.length - 1)]) / 0.42));
+      if (p > 0 && q < 1) {
+        ctx.save();
+        ctx.beginPath(); ctx.rect(wx - size * 0.2, top, widths[i] + size * 0.4, h); ctx.clip();
+        ctx.globalAlpha *= Math.min(1, p * 1.4) * (1 - q);
+        drawTracked(ctx, w, wx, y + (1 - p) * size * 0.95 - q * size * 1.1, track, size, 'left');
+        ctx.restore();
+      }
+      wx += widths[i] + space;
+    });
+    return total;
+  }
   caseTitle(text) { return this.fontSet.upper ? String(text || '').toLocaleUpperCase('de-DE') : String(text || ''); }
   titleTrack(def) { return this.fontSet.track != null ? this.fontSet.track : def; }
 
@@ -130,10 +200,12 @@ class OverlayPainter {
     const res = { top: false, topDirty: false };
     this.fontKey = plan.font;
     this.beats = plan.beats || [];
+    this.pal = (LOOKS[plan.look] || LOOKS.natur).pal;
+    this.ink = this.pal.ink;
     const active = plan.overlays.filter((o) => t >= o.start - 0.001 && t < o.end);
     if (!active.length) { this.lastKey = ''; return res; }
     const anim = active.some((o) => (o.type !== 'usertext' && o.type !== 'sticker') || t - o.start < (o.anim === 'type' || o.anim === 'words' ? 6 : 1) || o.end - t < 0.4);
-    const key = anim ? 't' + t.toFixed(4) : 's' + JSON.stringify(active.map((o) => [o.id, o.text, o.x, o.y, o.size, o.style, o.kind, o.color, o.rot, o.bg, o.anim])) + '|' + (selectedId || '') + '|' + plan.band.join(',');
+    const key = anim ? 't' + t.toFixed(4) : 's' + JSON.stringify(active.map((o) => [o.id, o.text, o.x, o.y, o.size, o.style, o.kind, o.color, o.rot, o.bg, o.anim])) + '|' + (selectedId || '') + '|' + plan.band.join(',') + '|' + plan.look + '|' + plan.font;
     if (key !== this.lastKey) {
       const ctx = this.top.getContext('2d');
       ctx.clearRect(0, 0, this.w, this.h);
@@ -151,6 +223,7 @@ class OverlayPainter {
         else if (o.type === 'leader') this.drawLeader(ctx, o, t, geo);
         else if (o.type === 'rewind') this.drawRewind(ctx, o, t, geo);
         else if (o.type === 'reveal') this.drawReveal(ctx, o, t, geo);
+        else if (o.type === 'countin') this.drawCountIn(ctx, o, t, geo);
         else if (o.type === 'datestamp') this.drawDateStamp(ctx, o, t, geo);
         else if (o.type === 'usertext') this.drawUserText(ctx, o, t, geo, o.id === selectedId);
         else if (o.type === 'sticker') this.drawSticker(ctx, o, t, geo, o.id === selectedId);
@@ -183,117 +256,103 @@ class OverlayPainter {
   }
 
   drawTitleCard(ctx, o, t, g) {
-    const local = t - o.start, left = o.end - t;
-    const a = easeOutCubic(cl01(local / 0.9)) * (1 - cl01((0.6 - left) / 0.6));
-    if (a <= 0) return;
+    // Titelkarte: Titel wortweise im Takt, darüber das Datum, darunter eine feine Linie
     const title = this.caseTitle(o.text);
     const tr = this.titleTrack(0.04);
-    const size = fitSize(ctx, title, (s) => this.font('title', s), g.base * 0.12, g.W * 0.82, tr);
-    const drift = (1 - easeOutCubic(cl01(local / 1.4))) * size * 0.15;
-    ctx.globalAlpha = a;
-    ctx.fillStyle = OV_INK;
+    const size = fitSize(ctx, title, (sz) => this.font('title', sz), g.base * 0.12, g.W * 0.82, tr);
+    const times = this.beatTimes(o, Math.max(1, title.split(/\s+/).length));
+    const exitT = this.beatExit(o);
+    const out = cl01((t - exitT) / 0.32);
+    ctx.fillStyle = this.ink;
+    this.shadow(ctx, size * 0.5);
     ctx.textBaseline = 'alphabetic';
-    if (o.sub) {
-      const ss = g.base * 0.024;
-      ctx.font = `400 ${ss}px ${OV_FONTS.mono}`;
-      drawTracked(ctx, o.sub.toLocaleUpperCase('de-DE'), g.cx, g.cy - size * 0.95 + drift, 0.4, ss, 'center');
-    }
-    if (title) {
-      ctx.font = this.font('title', size);
-      drawTracked(ctx, title, g.cx, g.cy + size * 0.3 + drift, tr + 0.02 * cl01(local / 3), size, 'center');
-      const rw = g.W * 0.08 * easeOutCubic(cl01((local - 0.3) / 0.8));
-      ctx.fillRect(g.cx - rw / 2, g.cy + size * 0.72 + drift, rw, Math.max(1, g.base * 0.0022));
-      this.drawGeoLine(ctx, o, t, g.cx, g.cy + size * 0.72 + drift + g.base * 0.06, g.base * 0.022, 'center', a);
-    }
+    const y = g.cy + size * 0.3;
+    if (title) this.maskTitle(ctx, title, g.cx, y, size, tr, 'center', times, exitT, t, (sz) => this.font('title', sz));
+    const last = times[times.length - 1];
+    const lp = easeOutCubic(cl01((t - last) / 0.6)) * (1 - out);
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = lp * 0.8;
+    const rw = g.W * 0.1 * lp;
+    ctx.fillRect(g.cx - rw / 2, y + size * 0.42, rw, Math.max(1, g.base * 0.002));
+    ctx.globalAlpha = 1;
+    this.drawLabel(ctx, o.sub, g.cx, y - size * 1.15, g.base * 0.022, 'center', lp);
+    this.drawGeoLine(ctx, o, t, g.cx, y + size * 0.42 + g.base * 0.055, g.base * 0.021, 'center', lp);
   }
 
+
   drawEndCard(ctx, o, t, g) {
-    const local = t - o.start;
-    const a = easeOutCubic(cl01(local / 0.8));
-    if (a <= 0 || !(o.text || o.sub)) return;
-    ctx.globalAlpha = a;
-    ctx.fillStyle = OV_INK;
-    ctx.textBaseline = 'alphabetic';
+    if (!(o.text || o.sub)) return;
     const title = this.caseTitle(o.text);
     const tr = this.titleTrack(0.04);
-    const size = fitSize(ctx, title, (s) => this.font('title', s), g.base * 0.09, g.W * 0.78, tr);
-    if (title) {
-      ctx.font = this.font('title', size);
-      drawTracked(ctx, title, g.cx, g.cy, tr, size, 'center');
-    }
-    const rw = g.W * 0.06;
-    ctx.fillRect(g.cx - rw / 2, g.cy + size * 0.42, rw, Math.max(1, g.base * 0.0022));
-    if (o.sub) {
-      const ss = g.base * 0.022;
-      ctx.font = `400 ${ss}px ${OV_FONTS.mono}`;
-      drawTracked(ctx, o.sub.toLocaleUpperCase('de-DE'), g.cx, g.cy + size * 0.42 + ss * 2.4, 0.4, ss, 'center');
-    }
-    if (o.stats) {
-      const ss = g.base * 0.02;
-      ctx.globalAlpha = a * cl01((t - o.start - 0.4) / 0.6);
-      ctx.font = `400 ${ss}px ${OV_FONTS.mono}`;
-      ctx.fillStyle = 'rgba(239,230,210,0.7)';
-      drawTracked(ctx, o.stats.toLocaleUpperCase('de-DE'), g.cx, g.cy + size * 0.42 + ss * 5.2, 0.3, ss, 'center');
-    }
+    const size = fitSize(ctx, title, (sz) => this.font('title', sz), g.base * 0.09, g.W * 0.78, tr);
+    const times = this.beatTimes(o, Math.max(1, title.split(/\s+/).length));
+    ctx.fillStyle = this.ink;
+    ctx.textBaseline = 'alphabetic';
+    if (title) this.maskTitle(ctx, title, g.cx, g.cy, size, tr, 'center', times, Infinity, t, (sz) => this.font('title', sz));
+    const lp = easeOutCubic(cl01((t - times[times.length - 1]) / 0.6));
+    ctx.globalAlpha = lp * 0.8;
+    const rw = g.W * 0.07 * lp;
+    ctx.fillRect(g.cx - rw / 2, g.cy + size * 0.42, rw, Math.max(1, g.base * 0.002));
+    ctx.globalAlpha = 1;
+    const ss = g.base * 0.021;
+    this.drawLabel(ctx, o.sub, g.cx, g.cy + size * 0.42 + ss * 2.5, ss, 'center', lp);
+    if (o.stats) this.drawLabel(ctx, o.stats, g.cx, g.cy + size * 0.42 + ss * 5.2, ss * 0.92, 'center', 0.7 * cl01((t - o.start - 0.5) / 0.6), 0.26);
   }
+
 
   /** Ortsname groß im Bild: Stories starten nie auf Schwarz. */
   drawCity(ctx, o, t, g) {
-    const local = t - o.start, left = o.end - t;
-    const a = easeOutCubic(cl01(local / 0.6)) * (1 - cl01((0.5 - left) / 0.5));
-    if (a <= 0) return;
+    // Ortsname groß im Bild, wortweise im Takt; Datum und Koordinaten folgen auf dem nächsten Beat
     const title = this.caseTitle(o.text);
     const tr = this.titleTrack(0.02);
-    const size = fitSize(ctx, title, (s) => this.font('title', s), g.base * 0.19, g.W * 0.86, tr + 0.03);
-    const track = tr + 0.03 * easeOutCubic(cl01(local / 3));
-    ctx.globalAlpha = a;
-    ctx.fillStyle = OV_INK;
+    const size = fitSize(ctx, title, (sz) => this.font('title', sz), g.base * 0.19, g.W * 0.86, tr + 0.03);
+    const words = Math.max(1, title.split(/\s+/).length);
+    const times = this.beatTimes(o, words + 1);
+    const exitT = this.beatExit(o);
+    const out = cl01((t - exitT) / 0.32);
+    ctx.fillStyle = this.ink;
     this.shadow(ctx, size * 0.6);
     ctx.textBaseline = 'alphabetic';
-    ctx.font = this.font('title', size);
     const y = g.cy + size * 0.3;
-    drawTracked(ctx, title, g.cx, y, track, size, 'center');
-    if (o.sub) {
-      const ss = g.base * 0.026;
-      ctx.font = `400 ${ss}px ${OV_FONTS.mono}`;
-      ctx.globalAlpha = a * cl01((local - 0.3) / 0.5);
-      drawTracked(ctx, o.sub.toLocaleUpperCase('de-DE'), g.cx, y + ss * 2.8, 0.4, ss, 'center');
-    }
-    this.drawGeoLine(ctx, o, t, g.cx, y + g.base * 0.026 * (o.sub ? 5 : 2.8), g.base * 0.023, 'center', a);
+    const track = tr + 0.03 * easeOutCubic(cl01((t - o.start) / 3));
+    this.maskTitle(ctx, title, g.cx, y, size, track, 'center', times, exitT, t, (sz) => this.font('title', sz));
+    const sp = easeOutCubic(cl01((t - times[words]) / 0.5)) * (1 - out);
+    const ss = g.base * 0.024;
+    this.drawLabel(ctx, o.sub, g.cx, y + ss * 2.8 - (1 - sp) * ss * 0.8, ss, 'center', sp, 0.4);
+    this.drawGeoLine(ctx, o, t, g.cx, y + ss * (o.sub ? 5 : 2.8), g.base * 0.022, 'center', sp);
   }
+
 
   /**
    * Aufblende: schlichter, weit gesperrter Titel, eine feine Linie wächst aus der Mitte.
    * Die Sperrung zieht langsam zusammen, kurz vor dem Höhepunkt löst sich alles nach oben auf.
    */
   drawReveal(ctx, o, t, g) {
-    const local = t - o.start, left = o.end - t, dur = Math.max(0.5, o.end - o.start);
-    const a = smooth(cl01(local / 0.9)) * smooth(cl01(left / 0.35));
-    if (a <= 0) return;
+    // Aufblende: kleiner, weit gesperrter Titel; Wörter kommen auf den Beats, die Linie wächst mit,
+    // kurz vor dem Höhepunkt gleitet alles auf einem Beat nach oben hinaus
     const title = this.caseTitle(o.text);
-    const u = cl01(local / dur);
-    const track = 0.42 - 0.2 * easeOutCubic(u);
-    const size = fitSize(ctx, title, (s) => this.font('title', s), g.base * 0.075, g.W * 0.8, track);
-    const lift = (1 - smooth(cl01(left / 0.35))) * size * 0.35;
-    const y = g.cy + size * 0.3 - lift;
-    ctx.globalAlpha = a;
-    ctx.fillStyle = OV_INK;
+    const u = cl01((t - o.start) / Math.max(0.5, o.end - o.start));
+    const track = 0.42 - 0.18 * easeOutCubic(u);
+    const size = fitSize(ctx, title, (sz) => this.font('title', sz), g.base * 0.075, g.W * 0.8, track);
+    const words = Math.max(1, title.split(/\s+/).length);
+    const times = this.beatTimes(o, words + 1);
+    const exitT = this.beatExit(o);
+    const out = cl01((t - exitT) / 0.32);
+    ctx.fillStyle = this.ink;
     this.shadow(ctx, size * 0.8);
     ctx.textBaseline = 'alphabetic';
-    ctx.font = this.font('title', size);
-    drawTracked(ctx, title, g.cx, y, track, size, 'center');
-    // Linie wächst aus der Mitte
-    const lw = g.W * 0.16 * easeOutCubic(cl01((local - 0.3) / 1.4));
+    const y = g.cy + size * 0.3;
+    this.maskTitle(ctx, title, g.cx, y, size, track, 'center', times, exitT, t, (sz) => this.font('title', sz));
+    const lp = easeOutCubic(cl01((t - times[0]) / 1.6)) * (1 - out);
     ctx.shadowBlur = 0;
-    ctx.globalAlpha = a * 0.75;
+    ctx.globalAlpha = lp * 0.75;
+    const lw = g.W * 0.16 * lp;
     ctx.fillRect(g.cx - lw / 2, y + size * 0.55, lw, Math.max(1, g.base * 0.0016));
-    if (o.sub) {
-      const ss = g.base * 0.022;
-      ctx.font = `400 ${ss}px ${OV_FONTS.mono}`;
-      ctx.globalAlpha = a * 0.85 * cl01((local - 0.6) / 0.6);
-      drawTracked(ctx, o.sub.toLocaleUpperCase('de-DE'), g.cx, y + size * 0.55 + ss * 2.6, 0.45, ss, 'center');
-    }
+    ctx.globalAlpha = 1;
+    const ss = g.base * 0.022;
+    this.drawLabel(ctx, o.sub, g.cx, y + size * 0.55 + ss * 2.6, ss, 'center', 0.85 * easeOutCubic(cl01((t - times[words]) / 0.5)) * (1 - out), 0.45);
   }
+
 
   /** Flug: Globus oder flache Karte mit Kontinenten, Großkreis, Flugzeug, Zeiten. Deckt das Bild ab. */
   drawFlight(ctx, o, t, g) {
@@ -446,7 +505,7 @@ class OverlayPainter {
       ctx.restore();
     }
     const ls = g.base * 0.02;
-    ctx.font = `500 ${ls}px ${OV_FONTS.mono}`;
+    ctx.font = this.small(ls);
     ctx.fillStyle = text;
     ctx.textBaseline = 'middle';
     const lab = (q, label, other) => {
@@ -471,7 +530,7 @@ class OverlayPainter {
     drawTracked(ctx, title, W / 2, ty, this.titleTrack(0.03), size, 'center');
     ctx.shadowColor = 'transparent';
     const ss = g.base * 0.019;
-    ctx.font = `400 ${ss}px ${OV_FONTS.mono}`;
+    ctx.font = this.small(ss);
     const info = [];
     if (f.dep) info.push('ABFLUG ' + f.dep);
     if (f.arr) info.push('ANKUNFT ' + f.arr);
@@ -504,7 +563,7 @@ class OverlayPainter {
     ctx.save();
     ctx.beginPath(); ctx.rect(0, top, W, bh); ctx.clip();
     // kühler Videoton
-    ctx.fillStyle = 'rgba(30,48,96,0.14)';
+    ctx.fillStyle = this.toneA(0.18);
     ctx.fillRect(0, top, W, bh);
     // Zeilenstruktur
     ctx.fillStyle = 'rgba(0,0,0,0.13)';
@@ -530,11 +589,11 @@ class OverlayPainter {
     // Anzeige
     const m = g.margin;
     const fs = short * 0.06;
-    ctx.font = `600 ${fs}px ${OV_FONTS.mono}`;
+    ctx.font = this.small(fs);
     ctx.textBaseline = 'top';
     ctx.shadowColor = 'rgba(0,0,0,0.45)';
     ctx.shadowBlur = fs * 0.2;
-    ctx.fillStyle = 'rgba(246,242,232,0.95)';
+    ctx.fillStyle = this.inkA(0.95);
     const y = top + m * 0.8;
     if (frame % 16 < 12) {
       // ◀◀ als zwei Dreiecke (unabhängig von der Schrift)
@@ -550,8 +609,40 @@ class OverlayPainter {
     const tc = `0:${String(Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`;
     ctx.textAlign = 'right';
     ctx.textBaseline = 'bottom';
-    ctx.fillText(tc, W - m, top + bh - m * 0.9);
     ctx.textAlign = 'left';
+    drawTracked(ctx, tc, W - m, top + bh - m * 0.9, 0.08, fs, 'right', true);
+    ctx.textAlign = 'left';
+  }
+
+  /**
+   * Countdown vor dem Drop: große Ziffer in der Titelschrift auf jedem der letzten drei Beats,
+   * ein feiner Ring läuft pro Beat einmal herum. Das Bild läuft weiter, nur leicht abgedunkelt.
+   */
+  drawCountIn(ctx, o, t, g) {
+    const m = o.marks;
+    let k = 0;
+    while (k < m.length - 1 && t >= m[k + 1]) k++;
+    const t0 = m[k], t1 = k + 1 < m.length ? m[k + 1] : o.end;
+    const u = cl01((t - t0) / Math.max(0.05, t1 - t0));
+    const short = Math.min(g.W, g.bh);
+    const pop = easeOutCubic(cl01(u / 0.3));
+    ctx.fillStyle = this.toneA(0.18 + 0.1 * (1 - u));
+    ctx.fillRect(0, g.by, g.W, g.bh);
+    ctx.fillStyle = this.ink;
+    this.shadow(ctx, short * 0.04);
+    const size = short * 0.34 * (1.12 - 0.12 * pop);
+    ctx.globalAlpha = pop * (1 - cl01((u - 0.82) / 0.18));
+    ctx.font = this.font('title', size);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(m.length - k), g.cx, g.cy);
+    ctx.textAlign = 'left';
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = this.inkA(0.8);
+    ctx.lineWidth = Math.max(1.5, short * 0.004);
+    ctx.beginPath();
+    ctx.arc(g.cx, g.cy, short * 0.3, -Math.PI / 2, -Math.PI / 2 + easeInOut3(u) * Math.PI * 2);
+    ctx.stroke();
   }
 
   /** Datumsstempel wie auf einer Digitalkamera der 2000er: orange Ziffern unten rechts. */
@@ -589,8 +680,8 @@ class OverlayPainter {
     // Bildstand wackelt leicht wie im Projektor
     const jx = (rnd(frame) - 0.5) * short * 0.004, jy = (rnd(frame + 99) - 0.5) * short * 0.006;
     ctx.translate(jx, jy);
-    // warmer Sepia-Ton und Flackern
-    ctx.fillStyle = 'rgba(122,92,54,0.24)';
+    // Ton des Looks (statt festem Sepia) und Flackern: der Vorspann gehört farblich schon zum Film
+    ctx.fillStyle = this.toneA(0.22);
     ctx.fillRect(-10, -10, W + 20, H + 20);
     ctx.fillStyle = `rgba(10,8,6,${(0.04 + rnd(frame + 7) * 0.08).toFixed(3)})`;
     ctx.fillRect(-10, -10, W + 20, H + 20);
@@ -598,14 +689,14 @@ class OverlayPainter {
     vig.addColorStop(0, 'rgba(0,0,0,0)'); vig.addColorStop(1, 'rgba(8,6,4,0.62)');
     ctx.fillStyle = vig;
     ctx.fillRect(-10, -10, W + 20, H + 20);
-    const ink = 'rgba(246,239,226,0.92)';
+    const ink = this.inkA(0.92);
     const lw = Math.max(1.5, short * 0.005);
     const r1 = short * 0.3, r2 = short * 0.36;
     ctx.shadowColor = 'rgba(0,0,0,0.5)';
     ctx.shadowBlur = lw * 3;
     // Wischer: Fläche, die im Uhrzeigersinn einmal pro Ziffer umläuft
     const a0 = -Math.PI / 2, a1 = a0 + u * Math.PI * 2;
-    ctx.fillStyle = 'rgba(246,239,226,0.16)';
+    ctx.fillStyle = this.inkA(0.16);
     ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, r2, a0, a1); ctx.closePath(); ctx.fill();
     ctx.strokeStyle = ink;
     ctx.lineWidth = lw;
@@ -621,7 +712,7 @@ class OverlayPainter {
     // Ziffer
     const num = String(m.length - k);
     const size = r1 * 1.25 * (1.06 - 0.06 * easeOutCubic(cl01(u / 0.25)));
-    ctx.font = `700 ${size}px ${OV_FONTS.sans}`;
+    ctx.font = this.font('title', size * 1.15);
     ctx.fillStyle = ink;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -629,7 +720,7 @@ class OverlayPainter {
     ctx.textAlign = 'left';
     ctx.shadowColor = 'transparent';
     // Kratzer und Staub, jedes Bild anders
-    ctx.strokeStyle = 'rgba(250,245,235,0.35)';
+    ctx.strokeStyle = this.inkA(0.35);
     ctx.lineWidth = Math.max(1, short * 0.0015);
     for (let i = 0; i < 2; i++) {
       if (rnd(frame * 3 + i) < 0.45) continue;
@@ -668,48 +759,42 @@ class OverlayPainter {
     drawTracked(ctx, title, 0, 0, 0.0, size, 'center');
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalCompositeOperation = 'source-over';
-    if (o.sub && zp < 0.05) {
-      const ss = g.base * 0.024;
-      ctx.font = `400 ${ss}px ${OV_FONTS.mono}`;
-      ctx.fillStyle = OV_INK;
-      ctx.globalAlpha = cl01((local - 0.4) / 0.5);
-      ctx.textBaseline = 'alphabetic';
-      drawTracked(ctx, o.sub.toLocaleUpperCase('de-DE'), g.cx, g.cy + size * 0.75, 0.4, ss, 'center');
-    }
+    if (o.sub && zp < 0.05) this.drawLabel(ctx, o.sub, g.cx, g.cy + size * 0.75, g.base * 0.023, 'center', cl01((local - 0.4) / 0.5), 0.4);
     if (zp < 0.05) this.drawGeoLine(ctx, o, t, g.cx, g.cy + size * 0.75 + g.base * (o.sub ? 0.05 : 0), g.base * 0.022, 'center', 1);
   }
 
   drawLower(ctx, o, t, g) {
-    const local = t - o.start, left = o.end - t;
-    const pin = easeOutCubic(cl01(local / 0.7));
-    const a = pin * (1 - cl01((0.45 - left) / 0.45));
-    if (a <= 0) return;
+    // Bauchbinde: Titel in der Titelschrift, wortweise im Takt aus der Maske, Datum darunter
     const center = !!o.center;
-    const title = (o.text || '').toLocaleUpperCase('de-DE');
-    const size = fitSize(ctx, title, (s) => `600 ${s}px ${OV_FONTS.sans}`, g.base * 0.052, g.W - g.margin * 2, 0.2);
+    const title = this.caseTitle(o.text);
+    const tr = this.titleTrack(0.06);
+    const size = fitSize(ctx, title, (sz) => this.font('title', sz), g.base * 0.088, g.W - g.margin * 2, tr);
     const x = center ? g.cx : g.margin;
     const align = center ? 'center' : 'left';
     const y = g.lowerY;
-    ctx.globalAlpha = a;
-    ctx.fillStyle = OV_INK;
-    this.shadow(ctx, size);
+    const words = Math.max(1, title.split(/\s+/).length);
+    const times = this.beatTimes(o, words + 1);
+    const exitT = this.beatExit(o);
+    const out = cl01((t - exitT) / 0.32);
+    ctx.fillStyle = this.ink;
+    this.shadow(ctx, size * 0.6);
     ctx.textBaseline = 'alphabetic';
-    const lw = g.W * 0.07 * pin;
-    ctx.fillRect(center ? g.cx - lw / 2 : x, y - size * 1.55, lw, Math.max(1, g.base * 0.0025));
-    ctx.font = `600 ${size}px ${OV_FONTS.sans}`;
-    drawTracked(ctx, title, x + (1 - pin) * (center ? 0 : -size * 0.4), y, 0.2, size, align);
-    if (o.sub) {
-      const ss = size * 0.42;
-      ctx.font = `400 ${ss}px ${OV_FONTS.mono}`;
-      ctx.globalAlpha = a * cl01((local - 0.25) / 0.5);
-      drawTracked(ctx, o.sub.toLocaleUpperCase('de-DE'), x, y + ss * 2.3, 0.3, ss, align);
-    }
-    this.drawGeoLine(ctx, o, t, x, y + size * 0.42 * (o.sub ? 4.3 : 2.3), size * 0.4, align, a);
+    const lp = easeOutCubic(cl01((t - times[0]) / 0.5)) * (1 - out);
+    ctx.globalAlpha = lp * 0.85;
+    const lw = g.W * 0.07 * lp;
+    ctx.fillRect(center ? g.cx - lw / 2 : x, y - size * 1.25, lw, Math.max(1, g.base * 0.0022));
+    ctx.globalAlpha = 1;
+    this.maskTitle(ctx, title, x, y, size, tr, align, times, exitT, t, (sz) => this.font('title', sz));
+    const sp = easeOutCubic(cl01((t - times[words]) / 0.5)) * (1 - out);
+    const ss = g.base * 0.021;
+    this.drawLabel(ctx, o.sub, x, y + ss * 2.4, ss, align, sp);
+    this.drawGeoLine(ctx, o, t, x, y + ss * (o.sub ? 4.8 : 2.4), ss, align, sp);
   }
+
 
   /** Titel Wort für Wort auf den Beats, harte Schnitte, am Ende komplett mit Unterzeile. */
   drawType(ctx, o, t, g) {
-    const words = (o.text || '').toLocaleUpperCase('de-DE').split(/\s+/).filter(Boolean);
+    const words = this.caseTitle(o.text).split(/\s+/).filter(Boolean);
     if (!words.length) return;
     const beats = (o.beats && o.beats.length ? o.beats : [o.start]).filter((b) => b >= o.start - 0.01);
     let steps;
@@ -726,15 +811,15 @@ class OverlayPainter {
     const left = o.end - t;
     const a = 1 - cl01((0.45 - left) / 0.45);
     ctx.globalAlpha = a;
-    ctx.fillStyle = OV_INK;
+    ctx.fillStyle = this.ink;
     ctx.textBaseline = 'middle';
     this.shadow(ctx, g.base * 0.05);
     const bt = beats[Math.min(idx, beats.length - 1)];
     const sc = 1.03 - 0.03 * easeOutCubic(cl01((t - bt) / 0.35));
     if (!cur.final) {
       const full = words.length === 1 ? words[0] : cur.text;
-      const size = fitSize(ctx, full, (s) => `800 ${s}px ${OV_FONTS.cond}`, g.base * 0.26, g.W * 0.86, 0.02);
-      ctx.font = `800 ${size}px ${OV_FONTS.cond}`;
+      const size = fitSize(ctx, full, (sz) => this.font('title', sz), g.base * 0.26, g.W * 0.86, 0.02);
+      ctx.font = this.font('title', size);
       ctx.translate(g.cx, g.cy);
       ctx.scale(sc, sc);
       if (words.length === 1) {
@@ -743,39 +828,32 @@ class OverlayPainter {
       } else drawTracked(ctx, cur.text, 0, 0, 0.02, size, 'center');
       return;
     }
-    const size = fitSize(ctx, final.text, (s) => `800 ${s}px ${OV_FONTS.cond}`, g.base * 0.15, g.W * 0.86, 0.06);
-    ctx.font = `800 ${size}px ${OV_FONTS.cond}`;
+    const size = fitSize(ctx, final.text, (sz) => this.font('title', sz), g.base * 0.15, g.W * 0.86, 0.06);
+    ctx.font = this.font('title', size);
     drawTracked(ctx, final.text, g.cx, g.cy, 0.06, size, 'center');
-    if (o.sub) {
-      const ss = g.base * 0.024;
-      ctx.font = `400 ${ss}px ${OV_FONTS.mono}`;
-      ctx.globalAlpha = a * cl01((t - bt) / 0.4);
-      drawTracked(ctx, o.sub.toLocaleUpperCase('de-DE'), g.cx, g.cy + size * 0.72, 0.4, ss, 'center');
-    }
+    this.drawLabel(ctx, o.sub, g.cx, g.cy + size * 0.72, g.base * 0.023, 'center', a * cl01((t - bt) / 0.4), 0.4);
   }
 
   drawChapter(ctx, o, t, g) {
-    const local = t - o.start, left = o.end - t;
-    const pin = easeOutCubic(cl01(local / 0.6));
-    const a = pin * (1 - cl01((0.4 - left) / 0.4));
-    if (a <= 0) return;
-    const title = (o.text || '').toLocaleUpperCase('de-DE');
-    const size = fitSize(ctx, title, (s) => `600 ${s}px ${OV_FONTS.sans}`, g.base * 0.05, g.W - g.margin * 2, 0.2);
+    // Kapitel: Nummer als kleine Zeile, Ortsname in der Titelschrift wortweise im Takt
+    const title = this.caseTitle(o.text);
+    const tr = this.titleTrack(0.06);
+    const size = fitSize(ctx, title, (sz) => this.font('title', sz), g.base * 0.07, g.W - g.margin * 2, tr);
     const x = g.margin, y = g.lowerY;
-    ctx.globalAlpha = a;
-    ctx.fillStyle = OV_INK;
-    this.shadow(ctx, size);
+    const words = Math.max(1, title.split(/\s+/).length);
+    const times = this.beatTimes(o, words + 1);
+    const exitT = this.beatExit(o);
+    const out = cl01((t - exitT) / 0.32);
+    const lp = easeOutCubic(cl01((t - times[0]) / 0.45)) * (1 - out);
+    const ss = g.base * 0.02;
+    this.drawLabel(ctx, `${String(o.no).padStart(2, '0')} / ${String(o.total).padStart(2, '0')}`, x, y - size * 1.2, ss, 'left', lp, 0.3);
+    ctx.fillStyle = this.ink;
+    this.shadow(ctx, size * 0.6);
     ctx.textBaseline = 'alphabetic';
-    const ss = size * 0.42;
-    ctx.font = `400 ${ss}px ${OV_FONTS.mono}`;
-    const no = `${String(o.no).padStart(2, '0')} / ${String(o.total).padStart(2, '0')}`;
-    drawTracked(ctx, no, x, y - size * 1.3, 0.3, ss, 'left');
-    this.drawGeoLine(ctx, o, t, x, y + ss * 2.4, ss, 'left', a);
-    ctx.globalAlpha = a;
-    ctx.fillStyle = OV_INK;
-    ctx.font = `600 ${size}px ${OV_FONTS.sans}`;
-    drawTracked(ctx, title, x + (1 - pin) * -size * 0.4, y, 0.2, size, 'left');
+    this.maskTitle(ctx, title, x, y, size, tr, 'left', times, exitT, t, (sz) => this.font('title', sz));
+    this.drawGeoLine(ctx, o, t, x, y + ss * 2.4, ss, 'left', easeOutCubic(cl01((t - times[words]) / 0.5)) * (1 - out));
   }
+
 
   /**
    * Zeile unter dem Ortsnamen: Koordinaten erscheinen Ziffer für Ziffer,
@@ -789,8 +867,8 @@ class OverlayPainter {
     const sw = !hasPos ? o.start + 0.3 : hasKm ? o.start + Math.max(1.3, (o.end - o.start) * 0.45) : Infinity;
     const shift = cl01((t - sw) / 0.35);
     ctx.save();
-    ctx.font = `400 ${size}px ${OV_FONTS.mono}`;
-    ctx.fillStyle = OV_INK;
+    ctx.font = this.small(size);
+    ctx.fillStyle = this.ink;
     ctx.textBaseline = 'alphabetic';
     if (hasPos && shift < 1) {
       const deg = (v, p, n) => `${Math.abs(v).toFixed(4)}° ${v >= 0 ? p : n}`;
@@ -801,14 +879,14 @@ class OverlayPainter {
       let txt = '';
       Array.from(full).forEach((ch, i) => { txt += i >= lock && /\d/.test(ch) ? String((frame * 7 + i * 13) % 10) : ch; });
       ctx.globalAlpha = alpha * cl01(local / 0.25) * (1 - shift);
-      drawTracked(ctx, txt, x, y - shift * size * 0.7, 0.2, size, align);
+      drawTracked(ctx, txt, x, y - shift * size * 0.7, 0.2, size, align, true);
     }
     if (hasKm && t >= sw) {
       const p = easeOutCubic(cl01((t - sw) / 0.9));
       const v = geo.kmFrom + (geo.km - geo.kmFrom) * p;
       const txt = `${geo.mode === 'leg' ? '+' : ''}${Math.round(v).toLocaleString('de-DE')} KM${geo.mode === 'total' ? ' UNTERWEGS' : ''}`;
       ctx.globalAlpha = alpha * shift;
-      drawTracked(ctx, txt, x, y + (1 - shift) * size * 0.7, 0.25, size, align);
+      drawTracked(ctx, txt, x, y + (1 - shift) * size * 0.7, 0.25, size, align, true);
     }
     ctx.restore();
   }
@@ -844,7 +922,7 @@ class OverlayPainter {
     ctx.globalAlpha = alpha;
     const y0 = -((lines.length - 1) * lh) / 2;
     const bg = o.bg || 'none';
-    const color = o.color || OV_INK;
+    const color = o.color || this.ink;
     // sichtbarer Teil je Zeile (Tippen / Wort im Takt)
     let chars = budget >= 0 ? budget : Infinity, words = budget < 0 ? -budget : Infinity;
     const parts = lines.map((l) => {
@@ -885,15 +963,15 @@ class OverlayPainter {
     ctx.globalAlpha = Math.min(pin, pout);
     let bw, bh;
     if (o.kind === 'date') {
-      ctx.font = `400 ${size}px ${OV_FONTS.mono}`;
+      ctx.font = this.small(size);
       ctx.textBaseline = 'middle';
-      ctx.fillStyle = OV_INK;
+      ctx.fillStyle = this.ink;
       this.shadow(ctx, size);
       bw = drawTracked(ctx, String(o.text || ''), 0, 0, 0.25, size, 'center');
       bh = size * 1.4;
     } else {
       const label = String(o.text || 'Ort').toLocaleUpperCase('de-DE');
-      ctx.font = `600 ${size}px ${OV_FONTS.sans}`;
+      ctx.font = this.small(size * 1.05);
       const tw = trackedWidth(ctx, label, 0.18, size);
       bw = tw + size * 2.6; bh = size * 2.1;
       ctx.fillStyle = 'rgba(8,10,16,0.55)';
@@ -908,9 +986,9 @@ class OverlayPainter {
       ctx.arc(px, py, r, Math.PI * 0.8, Math.PI * 2.2);
       ctx.lineTo(px, py + r * 1.6);
       ctx.closePath();
-      ctx.strokeStyle = OV_INK;
+      ctx.strokeStyle = this.ink;
       ctx.stroke();
-      ctx.beginPath(); ctx.arc(px, py, r * 0.3, 0, Math.PI * 2); ctx.fillStyle = OV_INK; ctx.fill();
+      ctx.beginPath(); ctx.arc(px, py, r * 0.3, 0, Math.PI * 2); ctx.fillStyle = this.ink; ctx.fill();
       ctx.textBaseline = 'middle';
       drawTracked(ctx, label, -bw / 2 + size * 1.75, size * 0.05, 0.18, size, 'left');
     }

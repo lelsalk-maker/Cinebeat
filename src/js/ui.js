@@ -38,6 +38,8 @@ function normalizeSettings(st, defaults) {
     morph: pick1(s.morph, ['off', 'on'], 'off'),
     ramp: pick1(s.ramp, ['off', 'drop'], 'off'),
     stamp: pick1(s.stamp, ['auto', 'on', 'off'], 'auto'),
+    midGrid: pick1(s.midGrid, ['off', 'on'], 'off'),
+    midCount: pick1(s.midCount, ['off', 'drop'], 'off'),
     length: s.length === 'auto' || s.length === 'full' || (+s.length > 0 && +s.length <= 600) ? s.length : 'auto',
     songStart: s.songStart == null ? 'auto' : s.songStart,
     frame: pick1(s.frame, ['auto', 'full', 'band'], 'auto'),
@@ -49,7 +51,7 @@ function normalizeSettings(st, defaults) {
     mapInk: pick1(s.mapInk, MAP_INKS, ''),
     mapLand: pick1(s.mapLand, ['dots', 'solid', 'off'], 'dots'),
     flightView: pick1(s.flightView, ['globe', 'flat'], 'globe'),
-    motion: pick1(s.motion, ['ken', 'sway', 'pulse', 'handheld'], 'ken'),
+    motion: pick1(s.motion, ['ken', 'snap', 'pulse', 'sway', 'float', 'tilt', 'handheld'], 'ken'),
     motionAmt: pick1(s.motionAmt, ['soft', 'medium', 'strong'], 'medium'),
     burst: pick1(s.burst, ['off', 'drop'], 'off'),
     showTitle: s.showTitle !== false,
@@ -59,14 +61,14 @@ function normalizeSettings(st, defaults) {
 }
 
 /* ---------- Stil-Vorlage: ein Stil für alle Filme der Reise ---------- */
-const STYLE_KEYS = ['look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
+const STYLE_KEYS = ['look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
 const styleOf = (st) => Object.fromEntries(STYLE_KEYS.map((k) => [k, st[k]]));
 /** Einstellungen für neue Filme: Standard, darüber die Vorlage der Reise */
 function baseSettings(defaults) {
   return normalizeSettings({ ...defaults, ...((S.trip && S.trip.style) || {}), seed: Math.floor(Math.random() * 1e6) }, defaults);
 }
 function styleSummary(st) {
-  const names = { sway: 'Pendeln', pulse: 'Puls', handheld: 'Handkamera' };
+  const names = { snap: 'Impact-Zoom', sway: 'Pendeln', pulse: 'Puls', float: 'Schweben', tilt: 'Neigen', handheld: 'Handkamera' };
   const intros = { reveal: 'Aufblende', countdown: 'Countdown', grid: '9er-Raster', knockout: 'Durch den Namen', cinema: 'Titelkarte', city: 'Ortsname', hook: 'Stärkstes Bild', type: 'Wort für Wort', split: 'Split-Screen' };
   return [st.look === 'auto' ? 'Look automatisch' : `Look ${LOOKS[st.look].label}`, `Schrift ${FONT_SETS[st.font].label}`, names[st.motion], st.pre !== 'off' ? (st.pre === 'rewind' ? 'Rewind' : 'Countdown') + ' +' : '', intros[st.intro], st.morph === 'on' ? 'Bild aus Bild' : '', st.burst === 'drop' ? 'Foto-Serie' : '', st.ramp === 'drop' ? 'Speed-Ramp' : '', st.km !== 'off' ? 'Koordinaten' : ''].filter(Boolean).join(' · ');
 }
@@ -1707,7 +1709,7 @@ function renderStyle() {
   setRadio($('motionChips'), st.motion);
   setRadio($('motionAmtChips'), st.motionAmt);
   $('motionAmtChips').hidden = st.motion === 'ken';
-  $('motionHint').textContent = { ken: 'Ruhige Fahrten und Zooms, passend zum Songteil.', sway: 'Die Bilder pendeln sanft von links nach rechts, der Wendepunkt sitzt genau auf dem Beat. Im Drop etwas stärker.', pulse: 'Jeder Beat gibt dem Bild einen kurzen Zoom-Impuls.', handheld: 'Ruhiges, organisches Schweben wie aus der Hand gefilmt.' }[st.motion];
+  $('motionHint').textContent = { ken: 'Gleitende Fahrten mit feiner Neigung; die Richtung fließt über die Schnitte weiter.', snap: 'Jeder Schnitt setzt mit einem kurzen Zoom-Impuls ein und gleitet zurück, genau auf dem Beat.', float: 'Schwereloses Gleiten in einer weichen Acht über zwei Takte.', tilt: 'Auf jeder Eins kippt das Bild weich zur anderen Seite.', sway: 'Die Bilder pendeln sanft von links nach rechts, der Wendepunkt sitzt genau auf dem Beat. Im Drop etwas stärker.', pulse: 'Jeder Beat gibt dem Bild einen kurzen Zoom-Impuls.', handheld: 'Ruhiges, organisches Schweben wie aus der Hand gefilmt.' }[st.motion];
   setRadio($('preChips'), st.pre);
   $('preField').hidden = isFlight(S.ctx.rec);
   const introR = st.intro === 'auto' && r ? r.intro : st.intro;
@@ -1753,13 +1755,16 @@ const FX_KEYS = {
   burst: { on: 'drop', off: 'off', is: (st) => st.burst === 'drop' },
   ramp: { on: 'drop', off: 'off', is: (st) => st.ramp === 'drop' },
   stamp: { on: 'on', off: 'off', is: (st, r) => st.stamp === 'on' || (st.stamp !== 'off' && ((r && r.look) || st.look) === 'digicam') },
+  midGrid: { on: 'on', off: 'off', is: (st) => st.midGrid === 'on' },
+  midCount: { on: 'drop', off: 'off', is: (st) => st.midCount === 'drop' },
 };
 function renderFx(st, r) {
   for (const b of $('fxChips').querySelectorAll('[data-fx]')) b.setAttribute('aria-pressed', String(FX_KEYS[b.dataset.fx].is(st, r)));
   const on = (k) => FX_KEYS[k].is(st, r);
   const parts = [];
   if (on('match') || on('morph')) parts.push(`Übergänge: ${[on('match') ? 'Match-Cuts bei ähnlichem Bildaufbau' : '', on('morph') ? 'Bild aus Bild in ruhigen Teilen' : ''].filter(Boolean).join(', ')}`);
-  if (on('split')) parts.push('Refrain: Split-Screens');
+  if (on('split') || on('midGrid')) parts.push(`Refrain: ${[on('midGrid') ? 'einmal das Raster, das im Takt farbig wird' : '', on('split') ? 'Split-Screens' : ''].filter(Boolean).join(', ')}`);
+  if (on('midCount')) parts.push('Vor dem Drop: Countdown 3 · 2 · 1');
   if (on('burst') || on('ramp')) parts.push(`Drop: ${[on('burst') ? 'Foto-Serie' : '', on('ramp') ? 'Videos beschleunigen hinein und landen in Zeitlupe' : ''].filter(Boolean).join(', ')}`);
   if (on('stamp')) parts.push('Datum wie bei einer alten Digicam unten rechts');
   $('fxHint').textContent = parts.length ? parts.join(' · ') + '.' : 'Tippe an, was im Film vorkommen soll. Die Regie setzt jedes Element an die Stelle im Song, wo es am besten wirkt.';
