@@ -862,6 +862,7 @@ class OverlayPainter {
   drawGeoLine(ctx, o, t, x, y, size, align, alpha) {
     const geo = o.geo;
     if (!geo || alpha <= 0) return;
+    size *= 1.22; // Koordinaten und Kilometer etwas größer als die übrigen kleinen Zeilen
     const local = t - o.start;
     const hasPos = geo.lat != null, hasKm = geo.km != null;
     const sw = !hasPos ? o.start + 0.3 : hasKm ? o.start + Math.max(1.3, (o.end - o.start) * 0.45) : Infinity;

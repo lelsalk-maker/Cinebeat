@@ -180,7 +180,9 @@ async function scoreFrames(grab, W, H, duration) {
   res.sort((x, y) => y.score - x.score);
   if (res.length) layout = layoutSig(res[0].a);
   const top = res[0] && res[0].a;
-  return { score: res.length ? res[0].score : 0.3, hash: hash || [0, 0], avg, luma: +luma.toFixed(3), focus: top ? top.focus.map((v, i) => +(0.5 * v + 0.5 * [0.5, 0.45][i]).toFixed(3)) : undefined, layout, highlights: res.map((r) => ({ t: r.t, score: r.score })) };
+  // Bewegung im Video (Durchschnitt): entscheidet, ob es eher in ruhige Songteile oder in den Drop passt
+  const motion = res.length ? +(res.reduce((a, r) => a + r.motion, 0) / res.length).toFixed(4) : 0;
+  return { motion, score: res.length ? res[0].score : 0.3, hash: hash || [0, 0], avg, luma: +luma.toFixed(3), focus: top ? top.focus.map((v, i) => +(0.5 * v + 0.5 * [0.5, 0.45][i]).toFixed(3)) : undefined, layout, highlights: res.map((r) => ({ t: r.t, score: r.score })) };
 }
 
 /** Markiert Beinahe-Duplikate (nur das beste Bild einer Serie bleibt aktiv). */

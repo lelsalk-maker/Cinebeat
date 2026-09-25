@@ -27,6 +27,10 @@ Reisefilme im Kino-Look, geschnitten nach dem Aufbau deines Songs: für Instagra
 3. Optional anpassen: Format (Story, Beitrag, Film, Kino), Look, Einstieg, Ende, Texte, einzelne Einstellungen.
 4. **Film exportieren** und im Teilen-Menü **„Video sichern“** wählen: Dann liegt der Film in der Fotos-App.
 
+**Story oder Reel** (bei 9:16): Eine *Story* ist höchstens 60 s lang, ein *Reel* bis 90 s. Unter dem Format steht, wie viele Fotos zum gewählten Song passen. Jede Aufnahme kommt genau einmal vor: Bei wenig Material stehen die Bilder länger (bei Länge „Auto“ wird der Film kürzer), es wird nichts wiederholt. Passt nicht alles hinein, sagt die App, wie viele Aufnahmen draußen bleiben, und markiert sie im Material („passt nicht“); als Reel passen mehr.
+
+**Hochkant und quer**: Jede Aufnahme wird nach ihrem Format eingebunden. Passt sie gut, füllt sie das Bild. Wäre sonst mehr als die Hälfte abgeschnitten (Querfoto in der Story, Hochkantfoto im Kinoformat), steht sie vollständig im Bild, auf einer weichgezeichneten, abgedunkelten Fassung ihrer selbst mit leichtem Schatten, und bewegt sich ruhig innerhalb des Rahmens.
+
 **Gesamtfilm:** fasst die besten Momente aller Orte in Kapiteln zusammen, auf Wunsch mit Koordinaten und gefahrenen Kilometern je Kapitel und einem Abspann mit Statistik (Orte · km · Tage).
 
 **Einstiege ohne Schwarzbild:** *Countdown* (alter Filmvorspann über Bildern in Schwarzweiß), *9er-Raster*, *Durch den Namen*, *Ortsname*, *Titelkarte* (im Hochformat über dem abgedunkelten Bild), *Stärkstes Bild*, *Wort für Wort*, *Split-Screen*.
@@ -34,7 +38,8 @@ Reisefilme im Kino-Look, geschnitten nach dem Aufbau deines Songs: für Instagra
 ## Kreative Werkzeuge
 
 - **Aufblende** (Standard-Einstieg): zwei Takte ruhiger Aufbau aus Details deiner Bilder, gedämpft, die Schärfe zieht an, dazu ein schlichter, gesperrter Titel. Genau auf dem Drop öffnet sich das stärkste Bild. Der Songausschnitt wird so gewählt, dass der Höhepunkt direkt nach dem Aufbau kommt.
-- **Videos anders als Fotos**: Videos bekommen eigene, längere Plätze in ruhigen Songteilen, zeitlich dort, wo sie in der Reise liegen, und werden weich ausgeblendet statt abgeschnitten. Fotos werden in ihrer Reihenfolge verteilt, jeweils mit der Energie, die zum Songteil passt. Übergänge wechseln innerhalb ihrer Familie, nie zweimal derselbe Effekt hintereinander.
+- **Videos laufen (fast) ganz**: Jedes Video bekommt einen eigenen Platz, so lang wie das Video selbst (Story bis 7,5 s, Reel bis 10 s, Film bis 15 s), in Echtzeit, auf einem Taktanfang. Der Platz richtet sich nach Reisezeit und Charakter: ruhige Videos in Strophe und Break, bewegte in Drop und Refrain, möglichst ohne Abschnittswechsel mittendrin. Ist ein Video länger, zeigt die App einen Hinweis; im Material lässt sich per Antippen ein Ausschnitt (Start und Länge) wählen, der dann genau so läuft.
+- **Videos anders als Fotos**: Videos werden weich ausgeblendet statt abgeschnitten. Fotos werden in ihrer Reihenfolge verteilt, jeweils mit der Energie, die zum Songteil passt. Übergänge wechseln innerhalb ihrer Familie, nie zweimal derselbe Effekt hintereinander.
 - **9er-Raster** (Einstieg): neun Bilder in Schwarzweiß, Beat für Beat werden sie farbig, dann zoomt der Film ins mittlere Bild. Die App wählt den Songausschnitt so, dass der Zoom genau auf dem Drop landet.
 - **Originalton pro Video**: Standard ist stumm. Pro Video *Stumm / Leise / Normal*; die Musik wird dort automatisch abgesenkt. Beim Export „Ohne Song“ bleibt der Originalton im Film.
 - **Flüge**: In der Reiseansicht „Flug“ antippen, Von und Nach eintragen, dann die Videos vom Flug wie gewohnt aus der Galerie wählen. Die App ordnet sie nach Aufnahmezeit (erste = Abflug, letzte = Landung, dazwischen Aufnahmen an Bord); im Menü einer Aufnahme lässt sich das ändern. Dazwischen zeichnet sich die Flugroute als Großkreis über einem Globus oder einer flachen Karte, mit Uhrzeiten, Flugdauer und Kilometern.
@@ -43,7 +48,7 @@ Reisefilme im Kino-Look, geschnitten nach dem Aufbau deines Songs: für Instagra
 - **Durch den Namen** (Einstieg): Der Ortsname ist ein Fenster ins Bild, auf dem Beat zoomt die Kamera durch die Buchstaben.
 - **Foto-Serie im Drop**: einen Takt lang jeder halbe Beat ein neues Bild (Photo-Dump).
 - **Bewegung im Takt**: Kamerafahrt, Pendeln (links/rechts, Wendepunkt auf dem Beat), Puls, Handkamera – jeweils leicht, mittel oder stark.
-- **Unter dem Ortsnamen**: auf Wunsch Koordinaten, die Ziffer für Ziffer erscheinen und dann in die gefahrenen Kilometer wechseln (seit dem letzten Ort oder seit Reisebeginn; Flugstrecken zählen nicht).
+- **Ortsnamen und Kapitel**: schlicht in Weiß (bei warmen Looks Silber), ohne Gold; sie stehen über etwa zwei Einstellungen (3,4–5 s), lang genug zum Lesen. **Unter dem Ortsnamen** auf Wunsch etwas größere Koordinaten, die Ziffer für Ziffer erscheinen und dann in die gefahrenen Kilometer wechseln (seit dem letzten Ort oder seit Reisebeginn; Flugstrecken zählen nicht).
 - **Countdown** (Einstieg): 3 · 2 · 1 wie im alten Kino, mit umlaufendem Zeiger, Sepia, Kratzern und Flackern; darunter wechseln deine Bilder in Schwarzweiß, nach der 1 geht es in Farbe auf dem Drop los.
 - **Stil-Vorlage**: Stil eines Films speichern und mit einem Tipp auf alle Orte, Flüge und den Gesamtfilm übertragen; neue Orte übernehmen ihn automatisch.
 - **Kartenstile** für Flüge: Nacht, Papier, Schwarzweiß, Signal, Eis, Salbei; eigene Routenfarbe; Kontinente als Punkte, Fläche oder aus; Globus oder flache Karte. Die Küstenlinien sind vereinfacht (etwa 1° genau) und offline eingebettet.
@@ -51,13 +56,13 @@ Reisefilme im Kino-Look, geschnitten nach dem Aufbau deines Songs: für Instagra
 - **Im Film – beliebig kombinierbar**: Match-Cuts, Bild aus Bild, Split-Screens, Foto-Serie im Drop, Speed-Ramp, Datumsstempel. Jedes Element hat seinen festen Platz im Song (Split-Screens im Refrain, Foto-Serie und Speed-Ramp im Drop, Bild aus Bild in ruhigen Teilen), so ergänzen sie sich statt sich zu stören.
 - **Bewusste Reihenfolge**: grob chronologisch, innerhalb einer Szene folgt jedes Bild aus dem vorigen (Farbe, Helligkeit, Bildaufbau); Beinahe-Doppel stehen nie direkt hintereinander. Der Übergang richtet sich nach beiden Bildern: ähnlicher Aufbau → **Match-Cut** (die Kamerabewegung läuft weiter), Sprung ins Helle → Lichtblende, ins Dunkle → Schwarzblende.
 - **Bild aus Bild**: drei Übergänge, bei denen das nächste Motiv aus dem vorigen entsteht: *Bild aus Bild* (Formen wachsen vom Motiv aus), *Farbfluss* (breitet sich wie Tinte aus), *Doppelbelichtung*.
-- **Speed-Ramp**: Videos beschleunigen in den Drop hinein und landen auf dem Drop in Zeitlupe.
+- **Speed-Ramp**: Videos beschleunigen in den Drop hinein und landen auf dem Drop in Zeitlupe. Dafür bekommt ein längeres Video seinen Platz am Drop; Videos, die ganz laufen, bleiben in Echtzeit.
 - **Digicam-Look**: knackig und kühl wie eine Kamera der 2000er, kleiner Blitz auf Fotoschnitten und orangefarbener Datumsstempel aus dem Aufnahmedatum (Stempel auch einzeln schaltbar).
 - **Filmstreifen-Ende**: Das letzte Bild wird zum Einzelbild auf einem Filmstreifen mit Perforation, der rückwärts durch den Film läuft.
 - **Titelbild für Reels**: im Export-Dialog. Stärkstes Bild mit Titel in voller Größe als JPEG; der Titel sitzt im Bereich, den das Profilraster zeigt.
 - **Einstiegs-Elemente auch im Film** (Im Film): *Raster im Refrain* – beim Einsatz eines Refrains (oder am Anfang einer Phrase im Drop) werden 4 oder 9 Bilder im Takt farbig, dann zoomt der Film ins nächste Bild. *Countdown vor dem Drop* – 3 · 2 · 1 auf den letzten drei Beats, im Stil des Looks.
 - **Bewegung**: Kamerafahrten gleiten (keine Stopps an den Schnitten), mit feiner Neigung, die Richtung fließt über zwei Einstellungen. Dazu *Impact-Zoom* (jeder Schnitt setzt mit einem kurzen Zoom auf dem Beat ein), *Puls*, *Pendeln*, *Schweben* (weiche Acht über zwei Takte), *Neigen* (kippt auf jeder Eins zur anderen Seite) und *Handkamera*.
-- **Looks**: natürliches Grading mit eigenen Farbrädern für Schatten und Lichter, Vibrance und Farbtemperatur; jeder Look ist klar erkennbar, das Bild bleibt echt. Titel, Countdown, Rewind und Kapitel übernehmen Farbe und Ton des Looks.
+- **Looks**: natürliches Grading mit eigenen Farbrädern für Schatten und Lichter, Vibrance und Farbtemperatur; jeder Look ist klar erkennbar, das Bild bleibt echt. Countdown und Rewind übernehmen den Ton des Looks, Titel und Kapitel bleiben neutral weiß bzw. silbern.
 - **Einheitliche Titel**: Alle Einblendungen nutzen die gewählte Titelschrift und eine passende Schrift für kleine Zeilen. Titel gleiten wortweise auf den Beats aus einer Maske ins Bild und auf einem Beat wieder hinaus.
 - **Nichts ist fest**: Titel, Kapitel und Reise-Statistik lassen sich einzeln ausschalten; Koordinaten und Kilometer sind standardmäßig aus.
 

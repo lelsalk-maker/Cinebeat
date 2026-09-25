@@ -343,3 +343,10 @@ details.more[open] { display: grid; gap: 16px; }
 .sheet-actions .btn { white-space: normal; text-align: center; line-height: 1.3; padding-block: 10px; }
 .cover-preview { width: min(100%, 220px); aspect-ratio: auto; border-radius: 12px; display: block; margin: 4px auto 8px; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
 .field-label .muted { color: var(--muted); font-weight: 400; }
+.tile .badge.warn { color: #ffb4a8; }
+.tile .out { position: absolute; inset: auto 0 0 0; padding: 14px 4px 4px; font: 600 9.5px/1 var(--f-sans); letter-spacing: 0.04em; text-align: center; color: var(--beige); background: linear-gradient(transparent, rgba(5, 6, 8, 0.85)); }
+.trim { display: grid; gap: 8px; }
+.trim-bar { position: relative; height: 34px; border-radius: 8px; background: var(--navy-2); overflow: hidden; }
+.trim-sel { position: absolute; top: 0; bottom: 0; background: rgba(228, 213, 183, 0.28); border: 2px solid var(--beige); border-radius: 8px; }
+.trim input[type=range] { width: 100%; }
+.trim-row { display: flex; justify-content: space-between; font: 500 12px/1.2 var(--f-mono); color: var(--muted); font-variant-numeric: tabular-nums; }

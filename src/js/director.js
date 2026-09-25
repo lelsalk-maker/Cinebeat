@@ -4,12 +4,18 @@
  * aus Material und Songaufbau. Liefert Regie-Notizen in Klartext.
  * ============================================================ */
 
+/**
+ * Regeln je Ziel: shot = übliche Länge einer Foto-Einstellung, shotMin = kürzeste, die noch ruhig wirkt,
+ * max = längster Film (Story: Instagram zeigt ein Video bis 60 s am Stück), vmax = längster Platz für ein Video.
+ */
 const FORMAT_RULES = {
-  '9:16': { shot: 1.9, min: 8, max: 45, kind: 'story' },
-  '4:5': { shot: 2.1, min: 10, max: 60, kind: 'post' },
-  '16:9': { shot: 2.8, min: 15, max: 150, kind: 'film' },
-  '2.39': { shot: 3.0, min: 15, max: 150, kind: 'film' },
+  '9:16': { shot: 1.9, shotMin: 1.35, min: 8, max: 60, vmax: 7.5, kind: 'story', label: 'Story' },
+  reel: { shot: 1.9, shotMin: 1.35, min: 8, max: 90, vmax: 10, kind: 'story', label: 'Reel' },
+  '4:5': { shot: 2.1, shotMin: 1.5, min: 10, max: 60, vmax: 8, kind: 'post', label: 'Beitrag' },
+  '16:9': { shot: 2.8, shotMin: 2, min: 15, max: 150, vmax: 15, kind: 'film', label: 'Film' },
+  '2.39': { shot: 3.0, shotMin: 2.2, min: 15, max: 150, vmax: 15, kind: 'film', label: 'Film' },
 };
+const formatRule = (s) => (s.format === '9:16' && s.target === 'reel' ? FORMAT_RULES.reel : FORMAT_RULES[s.format] || FORMAT_RULES['9:16']);
 
 const SEC_DE = { intro: 'Intro', verse: 'Strophe', build: 'Aufbau', chorus: 'Refrain', drop: 'Drop', break: 'Break', outro: 'Outro' };
 
@@ -26,10 +32,11 @@ function isLandscape(m) { return m.w && m.h && m.w > m.h * 1.15; }
 function isPortrait(m) { return m.w && m.h && m.h > m.w * 1.15; }
 
 /** Anzahl sinnvoller Einstellungen, die das Material hergibt. */
-function shotsAvailable(list) {
-  let n = 0;
-  for (const m of list) n += m.kind === 'video' ? Math.max(1, Math.min(3, (m.duration || 3) / 2.5)) : 1;
-  return n;
+/** Zeit, die das Material braucht: Fotos je eine Einstellung, Videos (fast) ihre ganze Länge bis zum Videoplatz-Maximum. */
+function materialTime(list, fr) {
+  let t = 0;
+  for (const m of list) t += m.kind === 'video' ? videoPlay(m, fr.vmax) : fr.shot;
+  return t;
 }
 
 /**
@@ -37,7 +44,7 @@ function shotsAvailable(list) {
  * beginnt auf einem Abschnitt oder einer Phrase, lässt den Refrain/Drop früh
  * kommen (bei kurzen Stories fast sofort) und endet auf einer Grenze.
  */
-function smartWindow(an, T, lead = 0) {
+function smartWindow(an, T, lead = 0, maxLen = Infinity, minFrac = 0.8) {
   const first = Math.max(0, an.firstSound), last = Math.min(an.duration, an.lastSound + 0.2);
   const bars = an.barStart && an.barStart.length ? an.barStart : Array.from(an.beats).filter((_, i) => downSet(an).has(i));
   const barDur = an.beatPeriod * 4;
@@ -56,7 +63,7 @@ function smartWindow(an, T, lead = 0) {
     // bestes Ende in der Nähe von s + T
     let e = null, eScore = -Infinity;
     for (const x of ends) {
-      if (x < s + T * 0.8 || x > s + T * 1.25 || x > last + 0.01) continue;
+      if (x < s + T * minFrac || x > s + T * 1.25 || x > last + 0.01 || x - s > maxLen + 0.01) continue;
       let sc = -Math.abs(x - (s + T)) / T;
       if (near(x, secStarts, 0.1) || Math.abs(x - last) < 0.3) sc += 0.3;
       else if (near(x, phraseStarts, 0.1)) sc += 0.15;
@@ -158,10 +165,10 @@ function direct(an, media, s, chapters, flight) {
   const rs = { ...s };
   const list = goodMedia(media);
   const all = media.filter((m) => !m.bad && !m.loading);
-  const fr = FORMAT_RULES[s.format] || FORMAT_RULES['9:16'];
+  const fr = formatRule(s);
   const first = Math.max(0, an.firstSound), last = Math.min(an.duration, an.lastSound + 0.2);
   const songLen = last - first;
-  const shots = shotsAvailable(list);
+  const need = materialTime(list, fr) + an.beatPeriod * 4;
   const imgs = list.filter((m) => m.kind === 'image').length, vids = list.length - imgs;
   const sorted = all.length - list.length;
 
@@ -169,9 +176,13 @@ function direct(an, media, s, chapters, flight) {
   let T;
   if (s.length === 'full') T = songLen;
   else if (s.length === 'auto') {
-    if (chapters && chapters.length) T = Math.max(30, Math.min(120, shots * fr.shot * 0.8));
-    else T = Math.max(fr.min, Math.min(fr.max, shots * fr.shot));
+    if (chapters && chapters.length) T = Math.max(30, Math.min(fr.max, need * 0.85));
+    else T = Math.max(fr.min, Math.min(fr.max, need));
+    // Nachplanung: länger als der vorige Versuch, damit die übrigen Aufnahmen Platz finden
+    if (s._minT) T = Math.max(T, Math.min(fr.max, s._minT));
   } else T = +s.length;
+  // Story: nie länger als Instagram am Stück zeigt
+  if (fr.kind === 'story' && s.target !== 'reel' && s.format === '9:16') T = Math.min(T, fr.max);
   if (flight && s.length === 'auto') {
     // Takte: Abflug 2 · je Aufnahme an Bord 1 · Flug 2 · Landung 3
     const ex = Math.min(4, (flight.extraIds || []).length);
@@ -180,9 +191,13 @@ function direct(an, media, s, chapters, flight) {
   T = Math.min(T, songLen);
 
   // Songausschnitt
+  // Story: der ganze Song passt nicht in 60 s – dann der beste 60-s-Ausschnitt
+  const storyCap = fr.kind === 'story' && s.target !== 'reel' && s.format === '9:16';
+  const full = s.length === 'full' && !(storyCap && songLen > fr.max);
+  if (s.length === 'full' && !full) notes.push(`Eine Story zeigt höchstens ${fr.max} s am Stück: der Film nimmt den besten ${fr.max}-s-Ausschnitt. Den ganzen Song bekommst du als Reel.`);
   let win;
-  if (s.length === 'full' || s.songStart === 'start') {
-    win = pickWindow(an, { length: s.length === 'full' ? 'full' : T, songStart: 'start' });
+  if (full || s.songStart === 'start') {
+    win = pickWindow(an, { length: full ? 'full' : T, songStart: 'start' });
   } else if (s.songStart === 'auto' || s.songStart == null) {
     // Raster-Einstieg: der Zoom soll auf dem Drop/Refrain landen
     // Raster und Countdown: der Übergang ins erste Vollbild soll auf dem Drop/Refrain landen
@@ -190,9 +205,16 @@ function direct(an, media, s, chapters, flight) {
     const preLead = s.pre === 'countdown' && s.intro !== 'countdown' ? 3 : s.pre === 'rewind' ? 4 : 0;
     const willReveal = s.intro === 'reveal' || (s.intro === 'auto' && autoReveal(an, chapters, flight, fr));
     const lead = (willReveal ? revealBeats(an) * an.beatPeriod : 0) + (s.intro === 'grid' && list.length >= 4 ? (list.length >= 9 ? 9 : 4) * step * an.beatPeriod : s.intro === 'countdown' ? 3 * step * an.beatPeriod : 0) + (flight || s.intro === 'split' ? 0 : preLead * step * an.beatPeriod);
-    win = smartWindow(an, T, lead);
+    // Nachplanung für mehr Material: das Ende darf nicht wieder auf dieselbe kürzere Stelle einrasten
+    win = smartWindow(an, T, lead, storyCap ? fr.max : Infinity, s._minT ? 0.97 : 0.8);
   } else {
     win = pickWindow(an, { length: T, songStart: s.songStart });
+  }
+  // Story: harte Grenze, Ende auf einem Taktanfang davor
+  if (storyCap && win.end - win.start > fr.max) {
+    const lim = win.start + fr.max;
+    const bar = (an.barStart || []).filter((b) => b > win.start + fr.max * 0.8 && b <= lim).pop();
+    win = { ...win, end: bar || lim };
   }
   const D = win.end - win.start;
 
@@ -204,13 +226,12 @@ function direct(an, media, s, chapters, flight) {
 
   // Tempo
   if (s.pace === 'auto') {
-    const density = shots / Math.max(1, D);
+    // Tempo folgt der Musik; wie viel Material in den Film passt, regelt die Schnittlängen-Suche des Planers
     let en = 0, cnt = 0;
     for (let i = 0; i < an.beats.length; i++) if (an.beats[i] >= win.start && an.beats[i] < win.end) { en += an.energy[i]; cnt++; }
     en /= Math.max(1, cnt);
-    const busy = density > 0.8, energetic = en > 0.8 && density > 0.6;
-    rs.pace = busy || energetic ? 'schnell' : density < 0.36 || en < 0.4 ? 'ruhig' : 'mittel';
-    const why = rs.pace === 'schnell' ? (busy ? 'viel Material für die Länge' : 'ein energiegeladener Songteil') : rs.pace === 'ruhig' ? (en < 0.4 ? 'ein ruhiger Songteil, die Bilder bekommen Zeit' : 'wenig Material, die Bilder bekommen Zeit') : 'Material und Song halten sich die Waage';
+    rs.pace = en > 0.8 ? 'schnell' : en < 0.4 ? 'ruhig' : 'mittel';
+    const why = rs.pace === 'schnell' ? 'ein energiegeladener Songteil' : rs.pace === 'ruhig' ? 'ein ruhiger Songteil, die Bilder bekommen Zeit' : 'Song und Bilder halten sich die Waage';
     notes.push(`Schnitttempo ${rs.pace}: ${why}.`);
   }
 

@@ -34,6 +34,7 @@ function normalizeSettings(st, defaults) {
     intro: pick1(s.intro, ['auto', 'reveal', 'countdown', 'grid', 'knockout', 'cinema', 'city', 'hook', 'type', 'split'], 'auto'),
     outro: pick1(s.outro, ['auto', 'credits', 'loop', 'freeze', 'split', 'strip'], 'auto'),
     pre: pick1(s.pre, ['off', 'countdown', 'rewind'], 'off'),
+    target: pick1(s.target, ['story', 'reel'], 'story'),
     match: pick1(s.match, ['auto', 'off'], 'auto'),
     morph: pick1(s.morph, ['off', 'on'], 'off'),
     ramp: pick1(s.ramp, ['off', 'drop'], 'off'),
@@ -216,6 +217,8 @@ function closeSheet() {
   if (S.exporting) return;
   $('sheet').hidden = true;
   $('sheetBackdrop').hidden = true;
+  // Videos im Blatt sofort freigeben (Dekoder), bevor das Blatt geleert wird
+  for (const v of $('sheetBody').querySelectorAll('video')) { v.removeAttribute('src'); try { v.load(); } catch (e) { /* egal */ } }
   $('sheetBody').innerHTML = '';
   if (sheetOnClose) { const f = sheetOnClose; sheetOnClose = null; f(); }
 }
@@ -666,7 +669,7 @@ async function ingestFiles(fileList, onProgress) {
 
 function applyFlags(rec, items) {
   const fl = rec.flags || {};
-  for (const m of items) { const f = fl[m.id]; m.fav = !!(f && f.fav); m.excluded = !!(f && f.excluded); m.sound = (f && f.sound) || 0; }
+  for (const m of items) { const f = fl[m.id]; m.fav = !!(f && f.fav); m.excluded = !!(f && f.excluded); m.sound = (f && f.sound) || 0; m.trim = (f && f.trim) || null; }
   markDuplicates(items);
 }
 
@@ -691,7 +694,7 @@ function saveMediaFlags(item) {
   const rec = S.ctx && S.ctx.kind === 'place' ? S.ctx.rec : S.places.find((p) => (p.fps || []).includes(item.id));
   if (!rec) return;
   rec.flags = rec.flags || {};
-  if (item.fav || item.excluded || item.sound) rec.flags[item.id] = { fav: !!item.fav, excluded: !!item.excluded, sound: item.sound || 0 };
+  if (item.fav || item.excluded || item.sound || item.trim) rec.flags[item.id] = { fav: !!item.fav, excluded: !!item.excluded, sound: item.sound || 0, trim: item.trim || null };
   else delete rec.flags[item.id];
   if (rec === (S.ctx && S.ctx.rec)) savePlaceSoon(); else S.store.put('places', rec).catch(() => {});
 }
@@ -1177,6 +1180,7 @@ async function rebuild(opts = {}) {
   buildStripBase();
   drawStrip();
   if (S.tab === 'cut') renderCut();
+  if (S.tab === 'material') renderMaterial();
   if (S.tab === 'music') renderMusic();
   if (S.tab === 'text') renderText();
   if (ctx.kind === 'place') savePlaceSoon();
@@ -1578,13 +1582,18 @@ function renderMaterial() {
   if (isFlight(ctx.rec) && n) $('mediaHint').textContent = `${n} Aufnahmen vom Flug, nach Aufnahmezeit geordnet: die erste ist der Abflug, die letzte die Landung, dazwischen die Aufnahmen an Bord. Antippen, um das zu ändern oder den Originalton einzuschalten.`;
   const hookId = ctx.rec.hookId;
   const autoHook = S.plan && S.plan.clips[0] ? S.plan.clips[0].mediaId : null;
+  // was nicht in den Film passt und welche Videos zu lang sind (aus der Planung)
+  const cap = S.plan && S.plan.capacity;
+  const dropped = new Set(cap ? cap.droppedIds : []), tooLong = new Set(cap ? cap.tooLong.map((v) => v.id) : []);
+  if (n && !isFlight(ctx.rec) && cap) $('mediaHint').textContent += ' ' + capacityText();
   g.innerHTML = ctx.media.map((m) => {
     const cls = ['tile', m.loading ? 'loading' : '', m.bad ? 'bad' : '', m.excluded ? 'excluded' : '', !m.fav && m.dupOf ? 'dim' : ''].join(' ');
     const isStart = !roles && (hookId ? hookId === m.id : autoHook === m.id);
     const role = roles ? (roles.takeoff === m.id ? 'ABFLUG' : roles.landing === m.id ? 'LANDUNG' : '') : '';
     return `<button class="${cls}" type="button" data-id="${esc(m.id)}" aria-label="${esc(m.name)}${m.fav ? ', Favorit' : ''}${isStart ? ', Startbild' : ''}">
       ${m.thumb ? `<img src="${m.thumb}" alt="" draggable="false">` : ''}
-      ${m.kind === 'video' && m.duration ? `<span class="badge">▶ ${fmtClock(m.duration)}</span>` : ''}
+      ${m.kind === 'video' && m.duration ? `<span class="badge${tooLong.has(m.id) ? ' warn' : ''}">▶ ${m.trim ? '✂ ' + fmtClock(videoSpan(m)) : fmtClock(m.duration)}</span>` : ''}
+      ${dropped.has(m.id) && !m.excluded ? '<span class="out">nicht im Film</span>' : ''}
       ${m.fav ? '<span class="flag fav">♥</span>' : ''}
       ${m.kind === 'video' && m.sound ? '<span class="flag snd" aria-label="Originalton an"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z" fill="currentColor"/><path d="M15.5 9a4 4 0 010 6M17.8 6.8a7 7 0 010 10.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>' : ''}
       ${isStart ? '<span class="flag start">START</span>' : ''}
@@ -1605,6 +1614,7 @@ function openMediaSheet(id) {
     <img class="preview-img" src="${m.thumb || ''}" alt="">
     <h3 id="sheetTitle">${m.kind === 'video' ? 'Video' : 'Foto'}${m.duration ? ' · ' + fmtClock(m.duration) : ''}</h3>
     ${quality != null ? `<p class="hint">Bewertung ${quality} von 100${m.dupOf ? ' · ähnelt einer besseren Aufnahme' : ''}${m.sharp != null && m.sharp < 0.35 ? ' · eher unscharf' : ''}</p>` : ''}
+    ${m.kind === 'video' && m.duration ? trimHTML(m) : ''}
     ${m.kind === 'video' ? `<div class="field"><span class="field-label">Originalton</span><div id="sndPick">${radioHTML('Originalton', VOICE_LEVELS, String(m.sound || 0))}</div>
       <p class="hint small">Mit Ton läuft das Video in Echtzeit, die Musik wird dort automatisch leiser.</p></div>` : ''}
     <div class="sheet-actions">
@@ -1614,6 +1624,7 @@ function openMediaSheet(id) {
       <button class="btn" data-act="excl" type="button">${m.excluded ? 'Wieder im Film verwenden' : 'Nicht im Film verwenden'}</button>
       <button class="btn danger" data-act="del" type="button">Aus diesem Film nehmen</button>
     </div>`);
+  if (m.kind === 'video' && m.duration) setupTrim(body, m);
   body.addEventListener('click', async (e) => {
     const r = e.target.closest('#sndPick [role="radio"]');
     if (r) { setRadio(r.closest('.chips'), r.dataset.v); await setVoice(m, +r.dataset.v); if (!m.audio) setRadio(r.closest('.chips'), '0'); return; }
@@ -1638,6 +1649,59 @@ function openMediaSheet(id) {
     renderMaterial();
     rebuild();
   });
+}
+
+/** Ausschnitt eines Videos: Start und Länge; im Film läuft das Video dann (fast) genau diesen Teil. */
+function trimHTML(m) {
+  const vmax = S.plan && S.plan.capacity ? S.plan.capacity.vmax : 8;
+  const long = m.duration > vmax * 1.15;
+  return `<div class="field trim" id="trimBox">
+    <span class="field-label">Ausschnitt</span>
+    <p class="hint small">${long ? `Das Video ist ${fmtClock(m.duration)} lang, im Film laufen höchstens ${Math.round(vmax)} s am Stück. Wähle den Teil, der zählt.` : 'Das Video läuft im Film fast ganz. Hier kannst du es auf einen Teil begrenzen.'}</p>
+    <video id="trimVid" src="${m.url}" muted playsinline preload="metadata" style="width:100%;max-height:30vh;border-radius:10px;background:#000"></video>
+    <div class="trim-bar"><div class="trim-sel" id="trimSel"></div></div>
+    <label class="trim-row"><span>Start</span><span id="trimInT"></span></label>
+    <input type="range" id="trimIn" min="0" max="${m.duration.toFixed(2)}" step="0.05">
+    <label class="trim-row"><span>Länge</span><span id="trimLenT"></span></label>
+    <input type="range" id="trimLen" min="1.5" max="${Math.max(1.5, m.duration).toFixed(2)}" step="0.05">
+    <div class="sheet-actions"><button class="btn" data-trim="full" type="button">Ganzes Video</button><button class="btn" data-trim="best" type="button">Vorschlag der App</button></div>
+  </div>`;
+}
+
+function setupTrim(body, m) {
+  const vmax = S.plan && S.plan.capacity ? S.plan.capacity.vmax : 8;
+  const d = m.duration;
+  const inEl = body.querySelector('#trimIn'), lenEl = body.querySelector('#trimLen'), vid = body.querySelector('#trimVid');
+  let tin = m.trim ? m.trim[0] : 0, len = m.trim ? m.trim[1] - m.trim[0] : d;
+  const show = () => {
+    len = Math.max(1.5, Math.min(len, d)); tin = Math.max(0, Math.min(tin, d - len));
+    inEl.value = tin; lenEl.value = len;
+    body.querySelector('#trimInT').textContent = fmtClock(tin);
+    body.querySelector('#trimLenT').textContent = `${len.toFixed(1).replace('.', ',')} s${len > vmax * 1.15 ? ` · im Film ${Math.round(vmax)} s` : ''}`;
+    const sel = body.querySelector('#trimSel');
+    sel.style.left = `${(tin / d) * 100}%`; sel.style.width = `${(len / d) * 100}%`;
+  };
+  let seekT = 0;
+  const seek = (t) => { clearTimeout(seekT); seekT = setTimeout(() => { try { vid.currentTime = Math.min(d - 0.05, t); } catch (e) { /* noch nicht geladen */ } }, 60); };
+  const save = () => {
+    m.trim = tin < 0.05 && len > d - 0.05 ? null : [+tin.toFixed(2), +(tin + len).toFixed(2)];
+    saveMediaFlags(m); commit(); savePlaceSoon(); renderMaterial(); scheduleRebuild(250);
+  };
+  inEl.addEventListener('input', () => { tin = +inEl.value; show(); seek(tin); });
+  lenEl.addEventListener('input', () => { len = +lenEl.value; show(); seek(tin + len); });
+  inEl.addEventListener('change', save); lenEl.addEventListener('change', save);
+  body.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-trim]');
+    if (!b) return;
+    if (b.dataset.trim === 'full') { tin = 0; len = d; } else {
+      // bester Moment in der Mitte, Länge = was im Film läuft
+      const best = m.highlights && m.highlights[0] ? m.highlights[0].t : d * 0.4;
+      len = Math.min(d, vmax); tin = best - len * 0.4;
+    }
+    show(); seek(tin); save();
+  });
+  show();
+  vid.addEventListener('loadedmetadata', () => seek(tin), { once: true });
 }
 
 function renderMusic() {
@@ -1710,6 +1774,9 @@ function renderStyle() {
   setRadio($('motionAmtChips'), st.motionAmt);
   $('motionAmtChips').hidden = st.motion === 'ken';
   $('motionHint').textContent = { ken: 'Gleitende Fahrten mit feiner Neigung; die Richtung fließt über die Schnitte weiter.', snap: 'Jeder Schnitt setzt mit einem kurzen Zoom-Impuls ein und gleitet zurück, genau auf dem Beat.', float: 'Schwereloses Gleiten in einer weichen Acht über zwei Takte.', tilt: 'Auf jeder Eins kippt das Bild weich zur anderen Seite.', sway: 'Die Bilder pendeln sanft von links nach rechts, der Wendepunkt sitzt genau auf dem Beat. Im Drop etwas stärker.', pulse: 'Jeder Beat gibt dem Bild einen kurzen Zoom-Impuls.', handheld: 'Ruhiges, organisches Schweben wie aus der Hand gefilmt.' }[st.motion];
+  setRadio($('targetChips'), st.target);
+  $('targetChips').hidden = st.format !== '9:16';
+  $('capHint').textContent = capacityText();
   setRadio($('preChips'), st.pre);
   $('preField').hidden = isFlight(S.ctx.rec);
   const introR = st.intro === 'auto' && r ? r.intro : st.intro;
@@ -1745,6 +1812,19 @@ function renderStyle() {
   const autoBlurb = st.look === 'auto' && r && LOOKS[r.look] ? LOOKS[r.look].label : 'passend zum Material';
   g.innerHTML = [['auto', { label: 'Auto', blurb: autoBlurb }], ...Object.entries(LOOKS)].map(([k, l]) => `<button class="look-card" type="button" role="radio" data-v="${k}" aria-checked="${k === st.look}"><span class="sw" style="background:${LOOK_SWATCH[k]}"></span><span class="tx"><strong>${l.label}</strong><span>${esc(l.blurb)}</span></span></button>`).join('');
   setRadio(g, st.look);
+}
+
+/** Wie viele Aufnahmen passen in diesen Film (Story/Reel) und was bleibt draußen. */
+function capacityText() {
+  const c = S.plan && S.plan.capacity;
+  if (!c || !S.ctx || isFlight(S.ctx.rec)) return '';
+  const len = fmtClock(S.plan.duration);
+  const parts = [`Zu diesem Song passen in ${c.story ? 'eine Story' : c.label === 'Reel' ? 'ein Reel' : 'diesen Film'} etwa ${c.imgFit} Fotos${c.videos ? ` neben ${c.videos} ${c.videos === 1 ? 'Video' : 'Videos'}` : ''}.`];
+  if (c.droppedIds.length) parts.push(`${c.droppedIds.length} ${c.droppedIds.length === 1 ? 'Aufnahme bleibt' : 'Aufnahmen bleiben'} draußen (${len} voll)${c.story ? '; als Reel passen mehr' : ''}.`);
+  else parts.push(`Alle ${c.images + c.videos} Aufnahmen sind im Film (${len}), keine doppelt.`);
+  if (c.repeats) parts.push(`${c.repeats} ${c.repeats === 1 ? 'Einstellung wiederholt' : 'Einstellungen wiederholen'} ein Bild: für diese Länge fehlen Aufnahmen.`);
+  if (c.tooLong.length) parts.push(`${c.tooLong.length === 1 ? 'Ein Video ist' : c.tooLong.length + ' Videos sind'} länger als ${Math.round(c.vmax)} s: im Material antippen und einen Ausschnitt wählen.`);
+  return parts.join(' ');
 }
 
 /** „Im Film“: mehrere Elemente gleichzeitig; jedes hat seinen festen Platz, damit sie sich ergänzen statt stören. */
@@ -2416,6 +2496,7 @@ async function init() {
   bindSetting('motionChips', 'motion');
   bindSetting('motionAmtChips', 'motionAmt');
   bindSetting('preChips', 'pre');
+  bindSetting('targetChips', 'target');
   $('fxChips').addEventListener('click', (e) => {
     const b = e.target.closest('[data-fx]');
     if (!b) return;

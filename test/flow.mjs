@@ -63,7 +63,32 @@ const res = await p.evaluate(async (b64) => {
     const bs = pg.beats;
     if (ci.marks.some((m) => !bs.some((x) => Math.abs(x - m) < 0.005))) fails.push('Countdown nicht auf den Beats');
   }
-  return { midGrid: gm ? +gm.start.toFixed(2) : null, countIn: ci ? ci.marks.map((m) => +m.toFixed(2)) : null, order: ids.join(' '), matches: mc.length, continued: cont, morphs: morphs.map((c) => TR_NAMES[c.tin.type]), ramps: ramps.map((c) => c.rp.map((q) => q[1]).join('→')), pre: preClips.map((c) => c.pre).join(','), notes: plan.notes.filter((n) => /Match/.test(n)), fails };
+  // 7. Story/Reel und Kapazität: keine Doppelungen, zu viele Aufnahmen werden benannt, Story höchstens 60 s
+  const many = [];
+  for (let k = 0; k < 70; k++) { const src = base[k % base.length]; many.push({ ...media[k % media.length], id: 'n' + k, time: T0 + k * 30000, hash: [k * 7919, k * 104729], avg: [(k * 37) % 255, (k * 91) % 255, (k * 53) % 255], canvas: src }); }
+  const ps = buildPlan({ an, media: many, settings: { ...S0, length: 'auto' }, overrides: { texts: [], stickers: [] } });
+  const pReel = buildPlan({ an, media: many, settings: { ...S0, length: 'auto', target: 'reel' }, overrides: { texts: [], stickers: [] } });
+  const repOf = (pl) => pl.capacity.repeats;
+  if (ps.duration > 60.5) fails.push('Story länger als 60 s');
+  if (!ps.capacity.droppedIds.length || !ps.notes.some((n) => /passen nicht mehr/.test(n))) fails.push('zu viele Aufnahmen nicht benannt');
+  if (repOf(ps) || repOf(pReel)) fails.push('Doppelungen');
+  if (pReel.duration <= ps.duration) fails.push('Reel nicht länger als Story');
+  const few = buildPlan({ an, media: media.slice(0, 6), settings: { ...S0, length: 'auto' }, overrides: { texts: [], stickers: [] } });
+  if (repOf(few) || few.capacity.droppedIds.length) fails.push('wenig Material: Doppelung oder weggelassen');
+  // 8. Videos laufen fast ganz; zu lange werden gemeldet; Ausschnitt wird genutzt
+  const vShort = { id: 'vs', kind: 'video', name: 'Kurz', url: '', w: 1080, h: 1920, duration: 5.2, time: T0 + 150000, score: 0.8, highlights: [{ t: 2, score: 1 }], avg: [90, 120, 140], luma: 0.45, motion: 0.01 };
+  const vLong = { id: 'vl', kind: 'video', name: 'Lang', url: '', w: 1080, h: 1920, duration: 24, time: T0 + 250000, score: 0.8, highlights: [{ t: 15, score: 1 }], avg: [140, 90, 60], luma: 0.5, motion: 0.08 };
+  const pv = buildPlan({ an, media: [...media.slice(0, 8), vShort, vLong], settings: { ...S0, length: 'auto' }, overrides: { texts: [], stickers: [] } });
+  const cs = pv.clips.find((c) => c.mediaId === 'vs'), cl = pv.clips.find((c) => c.mediaId === 'vl');
+  const played = (c, m) => (c ? Math.min(c.freezeAt != null ? c.freezeAt : c.visEnd, c.visEnd) - c.visStart : 0) * (c ? c.rate || 1 : 1) / m.duration;
+  if (!cs || played(cs, vShort) < 0.8) fails.push(`kurzes Video nur ${(played(cs, vShort) * 100).toFixed(0)} % gespielt`);
+  if (!pv.capacity.tooLong.some((v) => v.id === 'vl') || !pv.notes.some((n) => /Ausschnitt/.test(n))) fails.push('zu langes Video nicht gemeldet');
+  const vTrim = { ...vLong, trim: [10, 17] };
+  const pt = buildPlan({ an, media: [...media.slice(0, 8), vShort, vTrim], settings: { ...S0, length: 'auto' }, overrides: { texts: [], stickers: [] } });
+  const ct = pt.clips.find((c) => c.mediaId === 'vl');
+  if (!ct || ct.srcOffset < 9.99 || srcTimeOf(ct, ct.visEnd - 0.01) > 17.01) fails.push('Ausschnitt nicht eingehalten');
+  if (pt.capacity.tooLong.length) fails.push('Ausschnitt gilt noch als zu lang');
+  return { story: +ps.duration.toFixed(1), reel: +pReel.duration.toFixed(1), storyDropped: ps.capacity.droppedIds.length, fit: ps.capacity.imgFit, shortPlayed: +(played(cs, vShort) * 100).toFixed(0), trimClip: ct ? [+ct.srcOffset.toFixed(2), +srcTimeOf(ct, ct.visEnd - 0.01).toFixed(2)] : null, midGrid: gm ? +gm.start.toFixed(2) : null, countIn: ci ? ci.marks.map((m) => +m.toFixed(2)) : null, order: ids.join(' '), matches: mc.length, continued: cont, morphs: morphs.map((c) => TR_NAMES[c.tin.type]), ramps: ramps.map((c) => c.rp.map((q) => q[1]).join('→')), pre: preClips.map((c) => c.pre).join(','), notes: plan.notes.filter((n) => /Match/.test(n)), fails };
 }, wav);
 console.log(JSON.stringify(res, null, 1));
 if (!res.matches || res.continued !== res.matches) res.fails.push('Match-Cut-Bewegung');

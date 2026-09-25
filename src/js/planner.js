@@ -26,23 +26,23 @@ const TR_NAMES = { 0: 'Schnitt', 1: 'Blende', 2: 'Schwarzblende', 4: 'Zoom', 5: 
  * Looks: natürliches Grading (das Bild bleibt echt), aber klar erkennbar.
  * sh/hi: Tönung der Schatten/Lichter, vib: Vibrance (hebt blasse Farben, schont Hauttöne), temp: Farbtemperatur,
  * lift/crush: Schwarz- und Weißpunkt, glow: Halation der Lichter.
- * pal: Farben für alles, was darüber liegt (Titel, Countdown, Rewind), damit der ganze Film einen Stil hat.
+ * pal: Farben für alles, was darüber liegt: Schrift immer schlicht weiß bzw. silbern, tone tönt Countdown und Rewind im Look.
  */
 const LOOKS = {
   natur: { label: 'Natürlich', blurb: 'Klare, echte Farben mit Tiefe', grade: { sat: 1.0, vib: 0.3, contrast: 0.3, temp: 0.08, sh: [-0.012, 0.0, 0.018], hi: [0.02, 0.012, -0.01], lift: 0.01, crush: 0.012, bw: 0, grain: 0.012, vig: 0.24, tint: [1, 1, 1], glow: 0.05, leak: 0 },
-    pal: { ink: '#f1e9d8', tone: [40, 34, 28], accent: '#e4d5b7' } },
+    pal: { ink: '#f4f5f7', tone: [40, 34, 28] } },
   golden: { label: 'Golden Hour', blurb: 'Warmes Licht, weiche Lichter', grade: { sat: 0.98, vib: 0.22, contrast: 0.22, temp: 0.42, sh: [0.028, 0.004, -0.03], hi: [0.08, 0.022, -0.06], lift: 0.026, crush: 0.02, bw: 0, grain: 0.016, vig: 0.34, tint: [1.02, 1, 0.95], glow: 0.3, leak: 0 },
-    pal: { ink: '#fbe7c6', tone: [96, 58, 22], accent: '#f0b36a' } },
+    pal: { ink: '#eceef1', tone: [96, 58, 22] } },
   kino: { label: 'Teal & Orange', blurb: 'Blockbuster-Kontrast', grade: { sat: 0.9, vib: 0.38, contrast: 0.44, temp: 0.06, sh: [-0.075, 0.02, 0.085], hi: [0.085, 0.025, -0.075], lift: 0.02, crush: 0.03, bw: 0, grain: 0.02, vig: 0.44, tint: [1, 1, 1], glow: 0.06, leak: 0 },
-    pal: { ink: '#f4e4cf', tone: [18, 52, 60], accent: '#f08a3c' } },
+    pal: { ink: '#f4f5f7', tone: [18, 52, 60] } },
   blau: { label: 'Blue Hour', blurb: 'Kühle Nacht, satte Tiefen', grade: { sat: 0.86, vib: 0.18, contrast: 0.38, temp: -0.4, sh: [-0.035, 0.008, 0.075], hi: [-0.01, 0.02, 0.045], lift: 0.02, crush: 0.03, bw: 0, grain: 0.022, vig: 0.44, tint: [0.97, 1, 1.05], glow: 0.16, leak: 0 },
-    pal: { ink: '#e6eefb', tone: [22, 36, 70], accent: '#8fb4ee' } },
+    pal: { ink: '#f4f5f7', tone: [22, 36, 70] } },
   film: { label: 'Film 35', blurb: 'Analoges Korn, sanfte Farben', grade: { sat: 0.8, vib: 0.12, contrast: 0.2, temp: 0.2, sh: [-0.02, 0.035, 0.022], hi: [0.06, 0.035, -0.04], lift: 0.07, crush: 0.045, bw: 0, grain: 0.055, vig: 0.4, tint: [1.02, 0.99, 0.93], glow: 0.2, leak: 0.05 },
-    pal: { ink: '#f1e4c8', tone: [92, 70, 40], accent: '#e2b877' } },
+    pal: { ink: '#eceef1', tone: [92, 70, 40] } },
   digicam: { label: 'Digicam', blurb: '2000er-Kamera: knackig, kühl, mit Blitz', grade: { sat: 1.1, vib: 0.1, contrast: 0.5, temp: -0.16, sh: [-0.01, 0.02, 0.03], hi: [0.0, 0.004, 0.02], lift: 0.0, crush: 0.0, bw: 0, grain: 0.018, vig: 0.08, tint: [0.99, 1.01, 1.03], glow: 0, leak: 0 },
-    pal: { ink: '#ffffff', tone: [20, 32, 44], accent: '#ffa23a' } },
+    pal: { ink: '#ffffff', tone: [20, 32, 44] } },
   noir: { label: 'Noir', blurb: 'Schwarzweiß mit Charakter', grade: { sat: 0, vib: 0, contrast: 0.55, temp: 0, sh: [0, 0, 0], hi: [0, 0, 0], lift: 0.02, crush: 0.02, bw: 1, grain: 0.05, vig: 0.5, tint: [1, 1, 1], glow: 0.05, leak: 0 },
-    pal: { ink: '#f2f2f2', tone: [30, 30, 30], accent: '#d9d9d9' } },
+    pal: { ink: '#f2f2f2', tone: [30, 30, 30] } },
 };
 
 const FORMATS = {
@@ -129,7 +129,7 @@ function pickWindow(an, { length, songStart }) {
  * Schnittpunkte per dynamischer Programmierung auf Beats, Takten, Phrasen,
  * Abschnittswechseln und Akzenten. Zieldauer je Einstellung folgt dem Songteil.
  */
-function planCuts(an, win, pace, lengthScale, shotBase) {
+function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0) {
   const D = win.end - win.start;
   const beatDur = an.beatPeriod;
   const bars = an.barStart || [];
@@ -157,8 +157,10 @@ function planCuts(an, win, pace, lengthScale, shotBase) {
   for (const s of stops) add(snap(s.end), 10, true);
   const pts = [{ t: 0, w: 0, forced: true }, ...Array.from(cands.values()).sort((a, b) => a.t - b.t), { t: D, w: 0, forced: true }];
 
-  const minLen = Math.max(0.34, beatDur * 0.98);
-  const maxLen = pace === 'ruhig' ? 7.5 : 6;
+  // Mindestlänge je Einstellung (Format); nur die Akzent-Schnitte auf den ersten Beats des Drops dürfen kürzer sein
+  const beatMin = Math.max(0.34, beatDur * 0.98);
+  const minLen = Math.max(beatMin, minShot);
+  const maxLen = (pace === 'ruhig' ? 7.5 : 6) * Math.max(1, Math.min(1.6, lengthScale));
   const pf = PACES[pace] * lengthScale * (shotBase || 1);
   const tgt = (t) => {
     const abs = win.start + t;
@@ -171,7 +173,7 @@ function planCuts(an, win, pace, lengthScale, shotBase) {
       v *= 1.4 - prog * 0.9;
     }
     // Einsatz des Drops: zwei Schnitte genau auf den ersten Beats, danach wieder ruhiger
-    if (sec.label === 'drop' && abs - sec.start < beatDur * 2.1) v = beatDur * (pace === 'ruhig' ? 2 : 1);
+    if (sec.label === 'drop' && abs - sec.start < beatDur * 2.1) return Math.max(beatMin, beatDur * (pace === 'ruhig' ? 2 : 1));
     return Math.max(minLen, Math.min(maxLen, v));
   };
   const n = pts.length;
@@ -189,8 +191,10 @@ function planCuts(an, win, pace, lengthScale, shotBase) {
       }
       if (dp[i] === Infinity) continue;
       const g = tgt(pts[i].t);
-      let c = 4 * ((len - g) / g) ** 2 - 0.32 * pts[j].w;
-      if (len < minLen) c += 50 + (minLen - len) * 100;
+      // Bonus für Schnitte auf Takt/Phrase nur anteilig bei kurzen Einstellungen: sonst gewinnen viele kurze Schnitte gegen die Wunschlänge
+      let c = 4 * ((len - g) / g) ** 2 - 0.32 * pts[j].w * Math.min(1, len / g);
+      const lo = g < minLen ? beatMin : minLen;
+      if (len < lo) c += 50 + (lo - len) * 100;
       if (len > maxLen) c += 20;
       if (dp[i] + c < dp[j]) { dp[j] = dp[i] + c; from[j] = i; }
     }
@@ -205,6 +209,50 @@ function planCuts(an, win, pace, lengthScale, shotBase) {
     const t = s.t - win.start;
     const seg = segs.find((x) => t > x.start + 0.1 && t < x.end);
     if (seg) seg.freezeAt = t;
+  }
+  return segs;
+}
+
+/**
+ * Feinabstimmung der Schnittzahl: das Taktraster lässt die Zahl der Einstellungen springen (z. B. 6 → 4).
+ * delta > 0 teilt die längsten Einstellungen auf dem Beat nahe ihrer Mitte, delta < 0 legt die kürzesten
+ * Nachbarn zusammen – nie über eine Abschnittsgrenze oder einen Stopp hinweg.
+ */
+function adjustCuts(segs, an, win, delta, minLen, from = 1, to = segs.length) {
+  segs = segs.slice();
+  const fixed = (g) => g.burst || g.leader || g.knock || g.gridSeg || g.gridMid || g.pre || g.reveal || g.vslot;
+  const bts = Array.from(an.beats, (b) => b - win.start);
+  for (let k = 0; k < delta; k++) {
+    let bi = -1, bt = 0, bl = 0;
+    for (let i = from; i < Math.min(to, segs.length); i++) {
+      const g = segs[i], len = g.end - g.start;
+      if (fixed(g) || len < 2 * minLen || len <= bl) continue;
+      const mid = (g.start + g.end) / 2;
+      let t = null, d = Infinity;
+      for (const b of bts) {
+        if (b < g.start + minLen - 1e-3 || b > g.end - minLen + 1e-3) continue;
+        const x = Math.abs(b - mid);
+        if (x < d) { d = x; t = b; }
+      }
+      if (t != null) { bi = i; bt = t; bl = len; }
+    }
+    if (bi < 0) break;
+    to++;
+    const g = segs[bi], fz = g.freezeAt;
+    segs.splice(bi, 1, { ...g, end: bt, freezeAt: fz != null && fz < bt ? fz : undefined }, { start: bt, end: g.end, w: 1, freezeAt: fz != null && fz >= bt ? fz : undefined });
+  }
+  for (let k = 0; k < -delta; k++) {
+    let bi = -1, bc = Infinity;
+    for (let i = from; i < Math.min(to, segs.length) - 1; i++) {
+      const a = segs[i], b = segs[i + 1];
+      if (b.w >= 10 || fixed(a) || fixed(b)) continue;
+      const c = b.end - a.start + b.w * 0.3;
+      if (c < bc) { bc = c; bi = i; }
+    }
+    if (bi < 0) break;
+    to--;
+    const a = segs[bi], b = segs[bi + 1];
+    segs.splice(bi, 2, { ...a, end: b.end, freezeAt: a.freezeAt != null ? a.freezeAt : b.freezeAt });
   }
   return segs;
 }
@@ -281,6 +329,17 @@ function rampRate(pts, t) {
   return pts[pts.length - 1][1];
 }
 
+/** Spielbarer Teil eines Videos (gewählter Ausschnitt oder ganz), in Sekunden. */
+function videoSpan(m) {
+  const d = m.duration || 3;
+  if (m.trim && m.trim[1] > m.trim[0]) return Math.max(0.5, Math.min(d, m.trim[1]) - Math.max(0, m.trim[0]));
+  return d;
+}
+/** So lange soll ein Video im Film laufen: fast ganz, höchstens vmax. */
+function videoPlay(m, vmax) {
+  return Math.max(1.5, Math.min(vmax, videoSpan(m) * 0.96));
+}
+
 /** Energie einer Aufnahme (0 … 1): kräftige Farben, Schärfe und bei Videos Bewegung. */
 function mediaEnergy(m) {
   const hl = m.kind === 'video' && m.highlights && m.highlights[0] ? 0.2 : 0;
@@ -292,30 +351,46 @@ const isCalmLabel = (l) => l !== 'drop' && l !== 'chorus';
  * Eigene Plätze für Videos: in ruhigen Songteilen, lang genug, dass sie nicht mitten in der Bewegung abreißen,
  * und zeitlich dort, wo sie in der Reise liegen. Benachbarte Schnitte werden dafür zusammengelegt (bleiben auf Beats).
  */
-function videoSlots(segs, an, win, vids, all, barDur, startAt, endAt) {
+function videoSlots(segs, an, win, vids, all, barDur, startAt, endAt, vmax, rampDrop = false) {
   const special = (g) => g.burst || g.leader || g.knock || g.gridSeg || g.gridMid || g.pre || g.reveal || g.vslot;
   const labelAt = (t) => sectionAt(an, win.start + t + 0.01).label;
+  const bars = (an.barStart || []).map((b) => b - win.start);
+  const onBar = (t) => bars.some((b) => Math.abs(b - t) < 0.04);
   const span = Math.max(1, endAt - startAt);
-  let budget = (endAt - startAt) * 0.45;
+  let budget = (endAt - startAt) * 0.7;
+  // Speed-Ramp an: ein längeres Video darf auf den Drop zulaufen (beschleunigt) oder auf ihm landen (Zeitlupe)
+  const peaks = (an.sections || []).filter((x) => x.label === 'drop' || x.label === 'chorus').map((x) => x.start - win.start);
+  const atPeak = (t) => peaks.some((x) => Math.abs(x - t) < 0.06);
+  let rampLeft = rampDrop ? 1 : 0;
   for (const v of vids) {
-    const vd = v.duration || 3;
-    if (vd < 1.4 || budget <= 0) continue;
-    const want = Math.max(Math.min(vd * 0.9, 2 * barDur, 4.8), Math.min(vd * 0.9, Math.max(2.2, barDur)));
+    // fast die ganze Länge (bzw. der gewählte Ausschnitt), höchstens vmax
+    const want = videoPlay(v, vmax);
+    if (videoSpan(v) < 1.2 || budget < want * 0.6) continue;
     const p = all.length > 1 ? all.indexOf(v) / (all.length - 1) : 0.5;
     const target = startAt + p * span;
+    // bewegte Videos (Action) passen in Drop/Refrain, ruhige in Strophe und Break
+    const lively = (v.motion || 0) > 0.05;
     let best = null;
     for (let k = 0; k < segs.length - 1; k++) {
       const g = segs[k];
       if (special(g) || g.start < startAt - 0.01 || g.end > endAt + 0.01) continue;
       const lab = labelAt(g.start);
-      let j = k, end = g.end;
-      while (end - g.start < want * 0.92 && j + 1 < segs.length - 1 && !special(segs[j + 1]) && labelAt(segs[j + 1].start) === lab && segs[j + 1].end - g.start <= want * 1.35) { j++; end = segs[j].end; }
+      let j = k, end = g.end, cross = 0;
+      while (end - g.start < want * 0.95 && j + 1 < segs.length - 1 && !special(segs[j + 1]) && segs[j + 1].end - g.start <= want * 1.2) {
+        j++; end = segs[j].end;
+        if (labelAt(segs[j].start) !== lab) cross++;
+      }
       const len = end - g.start;
-      if (len < Math.min(want, 1.5)) continue;
-      const cost = Math.abs(g.start - target) / span + (isCalmLabel(lab) ? 0 : 0.9) + Math.abs(len - want) / want * 0.3;
-      if (!best || cost < best.cost) best = { k, j, cost, end };
+      if (len < Math.min(want * 0.8, 1.5)) continue;
+      const calm = isCalmLabel(lab);
+      const cost = (Math.abs(g.start - target) / span) * 0.8 + Math.abs(len - want) / want * 0.7 + (onBar(g.start) ? 0 : 0.25) + cross * 0.15
+        + (lively ? (calm ? 0.3 : 0) : (calm ? 0 : 0.6));
+      const ramp = rampLeft > 0 && videoSpan(v) > want * 1.15 && (atPeak(end) || atPeak(g.start));
+      const c2 = cost - (ramp ? 1.2 : 0);
+      if (!best || c2 < best.cost) best = { k, j, cost: c2, end, ramp };
     }
     if (!best) continue;
+    if (best.ramp) rampLeft--;
     const g0 = segs[best.k];
     segs.splice(best.k, best.j - best.k + 1, { start: g0.start, end: best.end, w: g0.w, vslot: true, vid: v.id, freezeAt: undefined });
     budget -= best.end - g0.start;
@@ -361,11 +436,14 @@ function assignStream(clips, idxs, list, byId) {
     const c = clips[i];
     const want = Math.max(0, Math.min(1, c.energy != null ? c.energy : 0.5));
     let bk = -1, bv = Infinity;
-    for (let k = 0; k < Math.min(3, stream.length); k++) {
+    // nur unter den in dieser Runde noch nicht gezeigten wählen: sonst verdrängte ein Wiederholer eine neue Aufnahme
+    for (let k = 0; k < Math.min(3, stream.length - pos); k++) {
       const m = stream[(pos + k) % stream.length];
       if (m.kind === 'video' && c.end - c.start < 1.5) continue;
       if (recent.slice(-3).includes(m.id) && stream.length > 3) continue;
-      const v = Math.abs(mediaEnergy(m) - want) + k * 0.16;
+      // ähnlicher Bildaufbau direkt nach dem vorigen Bild (Match-Cut) hat Vorrang vor der Energie
+      const prevM = byId.get(recent[recent.length - 1]);
+      const v = Math.abs(mediaEnergy(m) - want) + k * 0.16 - (prevM && layoutSim(prevM.layout, m.layout) > 0.78 ? 0.3 : 0);
       if (v < bv) { bv = v; bk = k; }
     }
     if (bk < 0) bk = 0;
@@ -496,7 +574,54 @@ function imageMotion(rng, m, outAspect, visDur, role, prevDir) {
  * opts: {an, media, settings, overrides, chapters}
  * overrides: {clips: {[i]: {mediaId?, srcOffset?, trans?, speed?}}, texts: [], stickers: []}
  */
+/**
+ * Plan mit passender Schnittlänge: jede Aufnahme genau einmal – keine Wiederholungen, um Zeit zu füllen,
+ * und nichts weglassen, solange es in die Höchstlänge passt. Sucht die Schnittlänge per Bisektion
+ * (die Zahl der Einstellungen springt, weil z. B. Split-Screens mehrere Bilder zeigen) und verlängert
+ * den Film bei Länge „Auto“ erst, wenn selbst die ruhige Mindestlänge nicht reicht.
+ */
 function buildPlan(opts) {
+  let best = planOnce(opts);
+  if (opts.flight) return best;
+  const bad = (p) => p._m.repeats * 3 + p._m.dropped;
+  const better = (p, q) => bad(p) < bad(q) || (bad(p) === bad(q) && !p._m.repeats && p._m.scale < q._m.scale);
+  let cur = best;
+  for (let ext = 0; ext < 3 && bad(best); ext++) {
+    // Bisektion über die Schnittlänge bei dieser Filmlänge
+    let lb = cur;
+    const m0 = cur._m;
+    let lo = m0.floor, hi = 5, cand = m0.scale;
+    if (m0.repeats) lo = m0.scale; else hi = m0.scale;
+    let pLo = cur._m.repeats ? cur : null, pHi = cur._m.repeats ? null : cur;
+    for (let it = 0; it < 8 && bad(lb); it++) {
+      cand = (lo + hi) / 2;
+      const p = planOnce({ ...opts, settings: m0.settings, _scale: cand });
+      if (better(p, lb)) lb = p;
+      if (p._m.repeats) { lo = cand; pLo = p; } else { hi = cand; pHi = p; }
+      if (hi - lo < 0.01) break;
+    }
+    // das Taktraster springt über die passende Zahl hinweg: einzelne Einstellungen teilen bzw. zusammenlegen
+    const fine = (base, dir) => {
+      for (let k = 1; k <= 6 && bad(lb); k++) {
+        const p = planOnce({ ...opts, settings: m0.settings, _scale: base._m.scale, _adj: dir * k });
+        if (better(p, lb)) lb = p;
+        if (dir > 0 ? p._m.repeats : p._m.dropped) break;
+      }
+    };
+    if (bad(lb) && pHi && pHi._m.dropped) fine(pHi, 1);
+    if (bad(lb) && pLo) fine(pLo, -1);
+    if (better(lb, best)) best = lb;
+    // weiterhin Aufnahmen übrig, obwohl schon so dicht wie ruhig möglich: bei „Auto“ den Film verlängern
+    const m = lb._m;
+    if (!bad(best) || !m.dropped || m.repeats || opts.settings.length !== 'auto' || m.D >= m.max - 1) break;
+    cur = planOnce({ ...opts, settings: { ...m.settings, _minT: m.D + Math.max(m.extraNeed, 1) }, _scale: m.scale });
+    if (cur._m.D <= m.D + 0.05) break;
+    if (better(cur, best)) best = cur;
+  }
+  return best;
+}
+
+function planOnce(opts) {
   const { an, media, settings, overrides = {}, chapters = null, trip = null, flight = null } = opts;
   const pool = media.filter((m) => !m.bad && !m.loading);
   const dir = direct(an, pool, settings, chapters, flight);
@@ -514,10 +639,23 @@ function buildPlan(opts) {
   const intro = s.intro, outro = s.outro;
 
   // Schnittpunkte, ausbalanciert gegen die Menge des Materials
-  const shotBase = (FORMAT_RULES[s.format] || FORMAT_RULES['9:16']).shot / 1.7;
-  let segs = planCuts(an, win, s.pace, 1, shotBase);
-  const M = Math.max(1, goodMedia(usable).length);
-  if (segs.length > M * 1.7 && M < 40) segs = planCuts(an, win, s.pace, Math.min(2.2, segs.length / (M * 1.4)), shotBase);
+  const fr = formatRule(s);
+  const shotBase = fr.shot / 1.7;
+  // Schnittlänge nach Material: Videos bekommen (fast) ihre ganze Länge, die übrige Zeit teilen sich die Fotos.
+  // Viel Material → dichter (nie kürzer als shotMin), wenig Material → ruhiger statt Bilder zu wiederholen.
+  const good = goodMedia(usable);
+  const vidT = good.filter((m) => m.kind === 'video').reduce((a, m) => a + videoPlay(m, fr.vmax), 0);
+  const imgN = Math.max(1, good.filter((m) => m.kind === 'image').length);
+  const minShot = flight ? 0 : fr.shotMin * (settings.pace === 'schnell' ? 0.5 : 0.7);
+  let segs = planCuts(an, win, s.pace, opts._scale || 1, shotBase, minShot);
+  let usedScale = opts._scale || 1;
+  // erste Schätzung; die Suche in buildPlan gibt die Schnittlänge danach direkt vor
+  if (!flight && !opts._scale) {
+    const imgTime = Math.max(barDur, D - Math.min(vidT, D * 0.7) - barDur);
+    const haveShot = D / Math.max(1, segs.length), wantShot = imgTime / imgN;
+    const scale = Math.max(fr.shotMin / fr.shot, Math.min(3, wantShot / haveShot));
+    if (Math.abs(scale - 1) > 0.12) { segs = planCuts(an, win, s.pace, scale, shotBase, minShot); usedScale = scale; }
+  }
 
   // Flug: Abflug (2 Takte) · Aufnahmen an Bord (je 1 Takt) · Fluganimation (2 Takte) · Landung (Rest)
   let flightRoles = null;
@@ -724,10 +862,11 @@ function buildPlan(opts) {
   // Videos: eigene, längere Plätze in ruhigen Songteilen (nicht bei Flügen: dort legt die Rolle die Videos fest)
   if (!flight) {
     const all = orderChrono(goodMedia(usable));
-    const vids = all.filter((m) => m.kind === 'video');
+    // das vom Nutzer gewählte Startbild läuft als Einstieg, nicht zusätzlich auf einem eigenen Platz
+    const vids = all.filter((m) => m.kind === 'video' && m.id !== settings.hookId);
     // erst nach dem Einstieg und seiner ersten Vollbild-Einstellung (dem Highlight)
     const afterIntro = segs[forced.length] ? segs[forced.length].end : segs[0] ? segs[0].end : 0;
-    if (vids.length) segs = videoSlots(segs, an, win, vids, all, barDur, afterIntro, D);
+    if (vids.length) segs = videoSlots(segs, an, win, vids, all, barDur, afterIntro, D, fr.vmax, s.ramp === 'drop');
   }
   // Ende: letzte Einstellung lang genug für Schlusstitel/Standbild
   const lastMin = outro === 'strip' ? Math.min(D * 0.32, Math.max(3.8, barDur * 2)) : outro === 'credits' ? Math.min(D * 0.3, Math.max(3.4, barDur * 1.5)) : outro === 'freeze' ? Math.min(D * 0.3, Math.max(2.6, barDur)) : outro === 'split' ? Math.min(D * 0.3, Math.max(2.2, barDur)) : 0;
@@ -736,6 +875,8 @@ function buildPlan(opts) {
     while (k > 1 && D - segs[k].start < lastMin) k--;
     segs = [...segs.slice(0, k), { start: segs[k].start, end: D, w: segs[k].w }];
   }
+  // Feinabstimmung aus buildPlan: nach dem Einstieg und vor einem langen Schluss, Videoplätze bleiben unberührt
+  if (opts._adj && !flight) segs = adjustCuts(segs, an, win, opts._adj, Math.max(beatDur * 0.98, fr.shotMin), forced.length + 1, lastMin ? segs.length - 1 : segs.length);
 
   const clips = segs.map((g, i) => {
     const abs = win.start + g.start;
@@ -814,7 +955,9 @@ function buildPlan(opts) {
   } else {
     for (const c of clips) if (c.vid) mustIds.add(c.vid);
     const chosen = selectMedia(pool, clips.length - splitClips.length + 2, mustIds);
-    hook = settings.hookId && byId.get(settings.hookId) ? byId.get(settings.hookId) : chosen.slice().sort((a, b) => (b.score || 0) - (a.score || 0))[0] || null;
+    // automatisches Startbild: kein Video, das ohnehin einen eigenen Platz hat (es liefe sonst doppelt oder der Platz bliebe leer)
+    const hookCand = chosen.filter((m) => !clips.some((c) => c.vid === m.id));
+    hook = settings.hookId && byId.get(settings.hookId) ? byId.get(settings.hookId) : (hookCand.length ? hookCand : chosen).slice().sort((a, b) => (b.score || 0) - (a.score || 0))[0] || null;
     const rest = spreadSimilar(flowOrder(chosen.filter((m) => m !== hook), s.match !== 'off'));
     order = hook ? [hook, ...rest] : rest;
     // zweitbestes Motiv auf den ersten Drop/Refrain
@@ -824,8 +967,13 @@ function buildPlan(opts) {
       const at = order.indexOf(best2);
       if (at > 0) { order.splice(at, 1); order.splice(Math.min(dropIdx, order.length), 0, best2); }
     }
-    const idxs = clips.map((c) => c.i).filter((i) => !(splitClips.includes(i) && i !== 0) && !clips[i].gridMid);
-    if (order.length) assignStream(clips, idxs, order, byId);
+    // Einstellungen, die der Einstieg ohnehin fest belegt (Startbild, Aufblende, Countdown, Vorspann), nicht verteilen:
+    // sonst würde ein Bild dort vergeben, gleich überschrieben und fehlte dann im Film
+    const hookAt = hook && intro !== 'split' ? (reveal ? P + clips.filter((c) => c.reveal).length : leader ? P + 3 : gridPlan ? P + 1 : P) : -1;
+    const fixedIdx = (c) => c.i === hookAt || c.reveal || c.pre || (leader && c.i >= P && c.i < P + 3) || (gridPlan && c.i === P);
+    const idxs = clips.map((c) => c.i).filter((i) => !(splitClips.includes(i) && i !== 0) && !clips[i].gridMid && !fixedIdx(clips[i]));
+    if (order.length) assignStream(clips, idxs, hookAt >= 0 ? order.filter((m) => m !== hook) : order, byId);
+    if (hookAt >= 0 && clips[hookAt]) clips[hookAt].mediaId = hook.id;
     if (hook && intro !== 'split' && clips[P]) { clips[P].mediaId = hook.id; clips[P].role = 'hook'; }
     if (leader && hook && clips[P + 3]) {
       // Nach dem Countdown kommt das stärkste Bild in Farbe; der Vorspann zeigt andere Motive
@@ -891,9 +1039,16 @@ function buildPlan(opts) {
     // Videos mit eigenem Platz nicht zusätzlich im Split-Screen
     const pool2 = goodMedia(usable).filter((m) => !(m.kind === 'video' && clips.some((x) => x.vid === m.id)));
     const fitting = pool2.filter(splitFit);
-    const src = (fitting.length >= splitN ? fitting : pool2).slice().sort((a, b) => (useCount.get(a.id) || 0) - (useCount.get(b.id) || 0) || (b.score || 0) - (a.score || 0));
+    // nur Aufnahmen, die sonst nicht zu sehen sind (sonst wäre es eine Doppelung)
+    const unusedFit = fitting.filter((m) => !useCount.get(m.id)), unused = pool2.filter((m) => !useCount.get(m.id));
+    const src = (unusedFit.length >= 2 ? unusedFit : unused).slice().sort((a, b) => (b.score || 0) - (a.score || 0));
     const ids = orderChrono(src.slice(0, splitN)).map((m) => m.id);
-    if (ids.length < 2) continue;
+    if (ids.length < 2) {
+      // zu wenig freie Aufnahmen: normale Einstellung mit der am wenigsten gezeigten Aufnahme
+      const pick = pool2.slice().sort((a, b) => (useCount.get(a.id) || 0) - (useCount.get(b.id) || 0) || (b.score || 0) - (a.score || 0))[0];
+      if (pick) { c.mediaId = pick.id; useCount.set(pick.id, (useCount.get(pick.id) || 0) + 1); }
+      continue;
+    }
     for (const id of ids) useCount.set(id, (useCount.get(id) || 0) + 1);
     const bts = [];
     for (const b of an.beats) { const t = b - win.start; if (t >= c.start - 0.01 && t < c.end - 0.3) bts.push(t); }
@@ -1063,19 +1218,24 @@ function buildPlan(opts) {
     const srcAspect = m.w && m.h ? m.w / m.h : outAspect;
     const o = ov[c.i] || {};
     if (m.kind === 'video') {
-      const vd = Math.max(0.1, m.duration || visDur);
+      // gewählter Ausschnitt: Beginn und spielbare Länge
+      const tIn = m.trim && m.trim[1] > m.trim[0] ? Math.max(0, m.trim[0]) : 0;
+      const vd = Math.max(0.1, videoSpan(m) || visDur);
       let rate = 1;
       const withSound = m.sound > 0 && m.audio;
       if (o.speed) rate = o.speed;
       else if (withSound) rate = 1; // Originalton: kein Zeitlupen-Effekt, damit Ton und Bild zusammenpassen
+      else if (c.vid) rate = vd >= visDur ? 1 : Math.max(0.8, vd / visDur); // eigener Platz: in Echtzeit, fast ganz
       else if (c.label === 'break' && vd >= visDur * 0.5) rate = 0.5;
       else if ((c.label === 'intro' || c.label === 'outro' || s.pace === 'ruhig' || c.i === 0) && vd >= visDur * 0.75) rate = 0.75;
       let needS = visDur * rate;
       if (vd < needS) { rate = Math.max(0.5, vd / visDur); needS = visDur * rate; }
       // Speed-Ramp: ins Drop hinein beschleunigen, auf dem Drop in Zeitlupe abbremsen
+      // ein Video, das auf seinem Platz ganz läuft, bleibt in Echtzeit; ist es länger, darf die Ramp wirken
+      const fullPlay = c.vid && vd <= visDur * 1.15;
       const nextC = clips[c.i + 1];
-      const rampOut = s.ramp === 'drop' && !o.speed && !withSound && nextC && nextC.sectionChange && (nextC.label === 'drop' || nextC.label === 'chorus') && visDur > 0.8;
-      const rampIn = s.ramp === 'drop' && !o.speed && !withSound && c.sectionChange && (c.label === 'drop' || c.label === 'chorus') && visDur > 0.8;
+      const rampOut = s.ramp === 'drop' && !o.speed && !withSound && !fullPlay && nextC && nextC.sectionChange && (nextC.label === 'drop' || nextC.label === 'chorus') && visDur > 0.8;
+      const rampIn = s.ramp === 'drop' && !o.speed && !withSound && !fullPlay && c.sectionChange && (c.label === 'drop' || c.label === 'chorus') && visDur > 0.8;
       if (rampOut || rampIn) {
         const pts = rampOut
           ? [[c.visStart, 1], [c.visStart + visDur * 0.45, 1], [c.visEnd, 2.6]]
@@ -1084,35 +1244,54 @@ function buildPlan(opts) {
         if (vd >= need + 0.05) { c.rp = pts; rate = 1; needS = need; }
       }
       let off;
-      if (o.srcOffset != null) off = o.srcOffset;
+      if (o.srcOffset != null) off = o.srcOffset - tIn;
+      else if (c.vid) {
+        // läuft (fast) ganz: Anfang so, dass der beste Moment sicher drin ist
+        const hl = (m.highlights || []).map((h) => h.t - tIn).filter((t) => t >= 0 && t <= vd);
+        const best = hl.length ? hl[0] : vd * 0.4;
+        off = Math.min(Math.max(0, best - needS * 0.4), Math.max(0, vd - needS));
+      }
       else if (c.role === 'takeoff') off = vd - needS - Math.min(1, vd * 0.05); // Abheben liegt meist gegen Ende
       else if (c.role === 'landing') off = Math.min(0.5, vd * 0.05);
       else {
         const hl = (m.highlights || []).map((h) => h.t);
         const used = videoCursor.get(m.id) || 0;
-        const center = hl.length ? hl[used % hl.length] : vd * 0.4;
+        const hlIn = hl.map((t) => t - tIn).filter((t) => t >= 0 && t <= vd);
+        const center = hlIn.length ? hlIn[used % hlIn.length] : vd * 0.4;
         off = center - needS / 2;
         videoCursor.set(m.id, used + 1);
       }
-      c.srcOffset = Math.max(0, Math.min(off, Math.max(0, vd - needS)));
+      c.srcOffset = tIn + Math.max(0, Math.min(off, Math.max(0, vd - needS)));
       c.rate = rate;
+      // kürzer als der Platz (auch nach leichter Verlangsamung): das letzte Bild bleibt stehen statt schwarz zu werden
+      if (c.vid && vd / rate < visDur - 0.05) c.freezeAt = c.visStart + vd / rate - 0.04;
       if (withSound && Math.abs(rate - 1) < 0.01 && !c.rp) {
-        const t1 = Math.min(c.freezeAt != null ? c.freezeAt : c.visEnd, c.visStart + (vd - c.srcOffset));
+        const t1 = Math.min(c.freezeAt != null ? c.freezeAt : c.visEnd, c.visStart + (vd - (c.srcOffset - tIn)));
         if (t1 - c.visStart > 0.15) voice.push({ mediaIndex: media.indexOf(m), mediaId: m.id, t0: Math.max(0, c.visStart), t1: Math.min(D, t1), src: c.srcOffset + Math.max(0, -c.visStart), gain: m.sound });
       }
       const fitFrac = srcAspect > outAspect ? outAspect / srcAspect : srcAspect / outAspect;
       c.contain = fitFrac < 0.5;
       const push = c.label === 'drop' || c.label === 'chorus' ? 0.025 : 0.045;
-      c.motion = { from: { s: 1, x: 0, y: 0 }, to: { s: 1 + push, x: 0, y: 0 } };
+      c.motion = c.contain ? { from: { s: 0.93, x: 0, y: 0 }, to: { s: 0.965, x: 0, y: 0 } } : { from: { s: 1, x: 0, y: 0 }, to: { s: 1 + push, x: 0, y: 0 } };
     } else {
       c.srcOffset = 0; c.rate = 1; c.contain = false;
+      // Ausrichtung passt nicht zum Format (Querfoto in 9:16, Hochformat im Film): ganz zeigen statt mehr als die Hälfte abzuschneiden
+      const fitFrac = srcAspect > outAspect ? outAspect / srcAspect : srcAspect / outAspect;
+      const framed = fitFrac < 0.5 && !c.burst && !c.reveal && !c.pre && !(clips[c.i - 1] && clips[c.i - 1].reveal);
       const role = c.label === 'drop' || c.label === 'chorus' ? 'burst' : 'normal';
       const mo = imageMotion(rng, m, outAspect, visDur, role, prevDir);
       prevDir = mo.dir;
       c.motion = mo.m;
       c.dir = mo.dir;
-      const pc = c.matchCut ? clips[c.i - 1] : null;
-      if (pc && pc.motion && !pc.contain && media[pc.mediaIndex] && media[pc.mediaIndex].kind === 'image') {
+      if (framed) {
+        // schwebt knapp innerhalb des Rahmens und wächst langsam: nichts vom Bild geht verloren
+        c.contain = true;
+        c.motion = { from: { s: 0.93, x: 0, y: 0 }, to: { s: 0.975, x: 0, y: 0 } };
+      }
+      let pc = c.matchCut ? clips[c.i - 1] : null;
+      // gerahmte Bilder haben keinen Ausschnitt, an den die Bewegung anschließen könnte
+      if (pc && (framed || pc.contain)) { c.matchCut = false; pc = null; }
+      if (pc && pc.motion && media[pc.mediaIndex] && media[pc.mediaIndex].kind === 'image') {
         // Match-Cut: gleicher Ausschnitt wie am Ende des vorigen Bilds, die Kamerabewegung läuft weiter
         const f = pc.motion.from, to = pc.motion.to, k = 0.7;
         const cl = (v) => Math.max(-1, Math.min(1, v));
@@ -1186,7 +1365,8 @@ function buildPlan(opts) {
     if (t >= -0.01 && t <= D + 0.01) { beatsRel.push(t); downs.push(downSet(an).has(i)); beatEnergy.push(an.energy[i]); }
   }
   const beatsIn = (a, b) => beatsRel.filter((t) => t >= a - 0.01 && t < b);
-  const tEnd = T0 + Math.min(D * 0.45, Math.max(2.6, barDur * 1.4));
+  // Titel lange genug zum Lesen (Ortsname, Datum, Koordinaten), aber dezent: etwa zwei Takte, mindestens 3,4 s
+  const tEnd = T0 + Math.min(D * 0.45, Math.max(3.4, barDur * 2));
 
   // Aufblende: gedämpft, leicht entsättigt, Schärfe zieht an; auf dem Höhepunkt Licht und Farbe
   if (reveal) {
@@ -1283,7 +1463,10 @@ function buildPlan(opts) {
     if (chEnd - st < 1.4) continue;
     if (s.showChapters === false) continue;
     const chIdx = trip && trip.stops ? trip.stops.findIndex((x) => x.name === c.chapter) : -1;
-    overlays.push({ type: 'chapter', text: c.chapter, no: c.chapterNo, total: chapterCount, geo: chIdx >= 0 ? geoFor(chIdx) : null, start: st, end: Math.min(chEnd - 0.2, st + Math.max(2.4, barDur)) });
+    // Kapitel steht über zwei Einstellungen (mindestens 3,4 s), damit Ort und Kilometer in Ruhe lesbar sind
+    const second = clips.slice(ci + 1, ci + 3).filter((x) => x.start < chEnd).pop();
+    const chDur = Math.max(3.4, barDur * 2, second ? second.end - st : 0);
+    overlays.push({ type: 'chapter', text: c.chapter, no: c.chapterNo, total: chapterCount, geo: chIdx >= 0 ? geoFor(chIdx) : null, start: st, end: Math.min(chEnd - 0.2, st + Math.min(chDur, 5)) });
   }
 
   // Ende
@@ -1368,13 +1551,40 @@ function buildPlan(opts) {
   }
   for (const st of overrides.stickers || []) if (st.kind !== 'emoji') overlays.push({ ...st, type: 'sticker', start: st.start != null ? st.start : 0, end: st.end != null ? st.end : D });
 
+  // Keine Doppelungen: wiederholt sich eine Aufnahme nur, weil sonst Zeit übrig wäre, wird mit längeren Einstellungen neu geplant
+  const plain = clips.filter((c) => c.mediaId && !c.pre && !c.leader && !c.reveal && !c.grid && !c.burst && !c.split && !c.strip && !c.loop && !c.flightAnim);
+  const seen = new Map();
+  for (const c of plain) seen.set(c.mediaId, (seen.get(c.mediaId) || 0) + 1);
+  // Bilder im Split-Screen zählen mit: dasselbe Bild einzeln und im Split wäre auch eine Doppelung
+  for (const c of clips) if (c.split) for (const id of c.split.ids) seen.set(id, (seen.get(id) || 0) + 1);
+  const repeats = [...seen.values()].reduce((a, n) => a + Math.max(0, n - 1), 0);
+  // Kapazität: wie viele Aufnahmen passen, welche bleiben draußen, welche Videos sind zu lang
+  const usedSet = new Set(clips.flatMap((c) => (c.split ? c.split.ids : c.grid && c.grid.ids ? c.grid.ids.concat([c.mediaId]) : [c.mediaId])).filter(Boolean));
+  const droppedIds = good.filter((m) => !usedSet.has(m.id)).map((m) => m.id);
+  // Nachplanen, bis jede Aufnahme genau einmal vorkommt: ideale Zahl der Einstellungen = jetzige − Wiederholungen + fehlende.
+  // Daraus folgt die Schnittlänge; wird sie kürzer als die ruhige Mindestlänge, wird der Film (bei „Auto“) länger.
+  const tooLong = good.filter((m) => m.kind === 'video' && videoSpan(m) > fr.vmax * 1.15).map((m) => ({ id: m.id, name: m.name, dur: videoSpan(m) }));
+  const songLen = Math.max(1, (an.lastSound || an.duration) - (an.firstSound || 0));
+  // passt nicht alles hinein, zählt, was der Film tatsächlich zeigt; sonst die Schätzung aus Songlänge und Mindestlänge
+  const imgUsed = good.filter((m) => m.kind === 'image' && usedSet.has(m.id)).length;
+  const imgFit = droppedIds.length ? Math.max(1, imgUsed) : Math.max(1, Math.floor((Math.min(fr.max, songLen) - barDur - Math.min(vidT, fr.max * 0.7)) / fr.shotMin));
+  const capacity = { label: fr.label, story: fr.kind === 'story' && s.target !== 'reel' && s.format === '9:16', maxFilm: fr.max, vmax: fr.vmax, imgFit, images: good.filter((m) => m.kind === 'image').length, videos: good.length - good.filter((m) => m.kind === 'image').length, droppedIds, tooLong, repeats };
+  if (!flight) {
+    if (droppedIds.length) dir.notes.push(`${droppedIds.length} ${droppedIds.length === 1 ? 'Aufnahme passt' : 'Aufnahmen passen'} nicht mehr in ${capacity.story ? 'diese Story' : 'diesen Film'} (${fmtMS(D)}): zu diesem Song passen etwa ${imgFit} Fotos${capacity.videos ? ' neben den Videos' : ''}. Die schwächsten bleiben draußen, im Material markiert.${capacity.story ? ' Als Reel passen mehr.' : ''}`);
+    for (const v of tooLong) dir.notes.push(`Video „${v.name}“ ist ${Math.round(v.dur)} s lang, im Film laufen höchstens ${Math.round(fr.vmax)} s: tippe es im Material an und wähle einen Ausschnitt.`);
+    if (repeats) dir.notes.push(`Für die gewählte Länge sind es zu wenig Aufnahmen: ${repeats} ${repeats === 1 ? 'Einstellung wiederholt' : 'Einstellungen wiederholen'} ein Bild. Wähle die Länge „Auto“ oder füge Aufnahmen hinzu.`);
+  }
+
+  const extraNeed = droppedIds.reduce((a, id) => { const m = good.find((x) => x.id === id); return a + (m.kind === 'video' ? videoPlay(m, fr.vmax) : fr.shotMin); }, 0);
   return {
+    _m: { repeats, dropped: droppedIds.length, scale: usedScale, floor: fr.shotMin / fr.shot, D, max: fr.max, settings, extraNeed },
+    capacity,
     duration: D, win, clips: all, visibleClips: clips.length,
     look: s.look, format: s.format, frame: s.frame, band, pace: s.pace, split: s.split, font: s.font || 'klassisch', motion: s.motion || 'ken', motionAmt: s.motionAmt || 'medium',
     intro, outro, fx, overlays, notes: dir.notes, resolved: s, voice,
     beats: beatsRel, downs, beatEnergy, beatDur,
     sections: (an.sections || []).filter((x) => x.end > win.start && x.start < win.end).map((x) => ({ ...x, start: Math.max(0, x.start - win.start), end: Math.min(D, x.end - win.start) })),
-    usedMedia: new Set(clips.flatMap((c) => (c.split ? c.split.ids : c.grid ? c.grid.ids.concat([c.mediaId]) : [c.mediaId])).filter(Boolean)).size,
+    usedMedia: usedSet.size,
   };
 }
 

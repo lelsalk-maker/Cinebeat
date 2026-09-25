@@ -80,12 +80,16 @@ vec3 sampleSrc(sampler2D tex, vec4 xf, vec3 box, vec4 geo, vec2 uv) {
     return mix(back, mix(vec3(0.95, 0.93, 0.89), img, inner), inside);
   }
   if (box.x > 0.5) {
+    // gerahmt: ganzes Bild vorn, dahinter dasselbe Bild weich, ruhig und abgedunkelt, dazu ein weicher Schatten
     vec2 q = (uv - 0.5) / box.yz + 0.5;
     vec2 bg = xf.zw + (uv - 0.5) * xf.xy;
-    vec3 back = texture2D(tex, bg, uLod).rgb * 0.4;
+    vec3 back = texture2D(tex, bg, uLod).rgb;
+    back = mix(vec3(luma(back)), back, 0.75) * 0.46;
     vec2 edge = min(q, 1.0 - q);
-    float inside = smoothstep(-0.004, 0.004, min(edge.x, edge.y));
-    vec3 fg = texture2D(tex, clamp(q, 0.0, 1.0), geo.y).rgb;
+    float e = min(edge.x * box.y * asp, edge.y * box.z);
+    back *= 1.0 - 0.45 * exp(min(e, 0.0) * 28.0);
+    float inside = smoothstep(-0.0025, 0.0025, e);
+    vec3 fg = texture2D(tex, clamp(q, 0.0, 1.0), geo.y - 0.5).rgb;
     return mix(back, fg, inside);
   }
   vec2 p = uv - 0.5;
