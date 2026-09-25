@@ -256,7 +256,28 @@ function spreadSimilar(order) {
 }
 
 /** Ken-Burns-Fahrt, die auf dem Bildschwerpunkt landet. */
-function imageMotion(rng, m, outAspect, visDur, role, prevDir) {
+function imageMotion(rng, m, outAspect, visDur, role, prevDir, hint) {
+  const mo = imageMotionRaw(rng, m, outAspect, visDur, role, prevDir, hint);
+  return fitSubject(mo, m, outAspect);
+}
+
+/**
+ * Motiv im Bild halten: der Ausschnitt wird nie so eng, dass das Motiv (Gesichter, Person, auffälliger Bereich)
+ * angeschnitten würde. Liegt ein Horizont vor, bleibt er beim Schweben waagerecht (keine Neigung).
+ */
+function fitSubject(mo, m, outAspect) {
+  const sub = m.subject;
+  if (m.horizon != null) { mo.m.from.r = 0; mo.m.to.r = 0; }
+  if (!sub) return mo;
+  const srcAspect = m.w && m.h ? m.w / m.h : outAspect;
+  const fw = srcAspect > outAspect ? outAspect / srcAspect : 1, fh = srcAspect > outAspect ? 1 : srcAspect / outAspect;
+  const cap = Math.min(fw / Math.max(0.05, sub[2] * 1.08), fh / Math.max(0.05, sub[3] * 1.08));
+  if (cap < 1.02) return mo;
+  for (const k of ['from', 'to']) if (mo.m[k].s > cap) mo.m[k].s = Math.max(1.0, cap);
+  return mo;
+}
+
+function imageMotionRaw(rng, m, outAspect, visDur, role, prevDir, hint) {
   const srcAspect = m.w && m.h ? m.w / m.h : outAspect;
   const fw = srcAspect > outAspect ? outAspect / srcAspect : 1;
   const fh = srcAspect > outAspect ? 1 : srcAspect / outAspect;
@@ -269,21 +290,45 @@ function imageMotion(rng, m, outAspect, visDur, role, prevDir) {
   const tilt = (rng() < 0.5 ? -1 : 1) * 0.0065 * speed;
   // Richtung bleibt meist über zwei Einstellungen gleich: ruhiger Fluss statt Hin und Her
   const keep = rng() < 0.55;
+  // Anschluss an ein Video: die Fahrt nimmt dessen Schwenk-Richtung auf
+  if (hint === 'left' || hint === 'right' || hint === 'up' || hint === 'down') prevDir = hint;
   if (fh < 0.72) {
-    const down = prevDir === 'up' ? !keep : prevDir === 'down' ? keep : rng() < 0.5;
+    const down = hint === 'down' ? true : hint === 'up' ? false : prevDir === 'up' ? !keep : prevDir === 'down' ? keep : rng() < 0.5;
     const a = Math.max(-1, Math.min(1, py + (down ? -0.6 : 0.6)));
     return { dir: down ? 'down' : 'up', m: { from: { s: 1.03, x: 0, y: a, r: tilt }, to: { s: 1.03 + z * 0.6, x: 0, y: py, r: 0 } } };
   }
   if (fw < 0.72) {
-    const right = prevDir === 'left' ? !keep : prevDir === 'right' ? keep : rng() < 0.5;
+    const right = hint === 'right' ? true : hint === 'left' ? false : prevDir === 'left' ? !keep : prevDir === 'right' ? keep : rng() < 0.5;
     const a = Math.max(-1, Math.min(1, px + (right ? -0.65 : 0.65)));
     return { dir: right ? 'right' : 'left', m: { from: { s: 1.03, x: a, y: 0, r: tilt }, to: { s: 1.03 + z * 0.6, x: px, y: 0, r: 0 } } };
   }
   const zin = prevDir === 'in' ? keep || rng() < 0.3 : prevDir === 'out' ? !keep : rng() < 0.7;
   const tx = px * 0.8, ty = py * 0.8;
   // leichter Versatz quer zur Zoomrichtung: die Fahrt bekommt eine Kurve statt einer geraden Linie
-  const sx = (rng() - 0.5) * 0.35;
+  const sx = hint === 'right' ? -0.3 : hint === 'left' ? 0.3 : (rng() - 0.5) * 0.35;
   return zin
     ? { dir: 'in', m: { from: { s: 1.02, x: tx * 0.2 + sx, y: ty * 0.2, r: tilt }, to: { s: 1.02 + z, x: tx, y: ty, r: -tilt * 0.3 } } }
     : { dir: 'out', m: { from: { s: 1.02 + z, x: tx, y: ty, r: -tilt * 0.3 }, to: { s: 1.02, x: tx * 0.2 + sx, y: ty * 0.2, r: tilt } } };
+}
+
+/**
+ * Szenen der Reise: eine neue Szene beginnt nach einer längeren Pause (45 min), an einem anderen Ort (> 1,5 km)
+ * oder bei deutlich anderem Licht nach einer kurzen Pause (z. B. Strand → Altstadt am Abend).
+ * Liefert die Ids der Aufnahmen, mit denen eine Szene beginnt.
+ */
+function sceneStarts(list) {
+  const out = new Set();
+  const km = (a, b) => {
+    if (!a || !b) return 0;
+    const R = 6371, dLat = ((b.lat - a.lat) * Math.PI) / 180, dLon = ((b.lon - a.lon) * Math.PI) / 180;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos((a.lat * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+  };
+  const colorD = (a, b) => (a.avg && b.avg ? Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) : 0);
+  for (let i = 1; i < list.length; i++) {
+    const a = list[i - 1], b = list[i];
+    const gap = a.time && b.time ? (b.time - a.time) / 60000 : 0;
+    if (gap > 45 || km(a.pos, b.pos) > 1.5 || (gap > 10 && colorD(a, b) > 95)) out.add(b.id);
+  }
+  return out;
 }

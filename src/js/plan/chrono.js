@@ -6,7 +6,9 @@
  * Foto-Serie, Polaroid-Stapel und Raster nehmen die nächsten Fotos der Reihe.
  */
 function layoutChrono(ctx, segs0, queue, bias) {
-  const { s, an, win, fr, level, allOn, intro, outro, rush, reveal, leader, gridPlan, special, splitFit, splitN, barDur, beatDur, isPeakSec } = ctx;
+  const { s, an, win, fr, level, allOn, intro, outro, rush, reveal, leader, gridPlan, special, splitFit, splitN, barDur, beatDur, isPeakSec, scenes } = ctx;
+  const bars = (an.barStart || []).map((b) => b - win.start);
+  const onBar = (t) => bars.some((b) => Math.abs(b - t) < 0.04);
   const sg = segs0.map((g) => ({ ...g }));
   const q = queue.slice();
   let qi = 0;
@@ -84,6 +86,20 @@ function layoutChrono(ctx, segs0, queue, bias) {
     }
     if (videoNext && (g.burst || g.stackSeg || g.gridMid)) { delete g.burst; delete g.stackSeg; delete g.gridMid; }
     if (!head) { const m = repeatImg(); if (m) { g.mediaId = m.id; g.repeat = true; } continue; }
+    // neue Szene (anderer Ort, andere Tageszeit): beginnt auf einem Taktanfang – das Bild davor steht dafür etwas länger
+    if (scenes.has(head.id) && !onBar(g.start) && i > 0) {
+      const prev = sg[i - 1];
+      let k = i;
+      while (k < sg.length && normal(sg[k]) && !onBar(sg[k].end) && sg[k].end - g.start < barDur) k++;
+      if (k < sg.length && normal(sg[k]) && onBar(sg[k].end) && sg[k].end - g.start <= barDur * 0.8 && k + 1 < sg.length && normal(sg[k + 1])
+        && prev && (prev.mediaId || prev.splitIds) && !prev.vslot && !special(prev) && !skipSeg(prev) && prev.end - prev.start + (sg[k].end - g.start) <= barDur * 2.2) {
+        prev.end = sg[k].end;
+        sg.splice(i, k - i + 1);
+        i--;
+        continue;
+      }
+    }
+    if (scenes.has(head.id)) g.sceneStart = true;
     const len = g.end - g.start;
     const peak = !isCalmLabel(sectionAt(an, win.start + g.start + 0.01).label);
     // Einstieg oder Ende als Split-Screen
@@ -148,6 +164,7 @@ function layoutChrono(ctx, segs0, queue, bias) {
       const k = needSplit ? Math.min(splitN, Math.max(2, Math.ceil(need) + 1)) : splitN;
       const ids = [];
       for (let j = qi; j < q.length && ids.length < Math.min(k, Math.max(2, Math.floor(beatsIn + 0.2))); j++) {
+        if (ids.length && scenes.has(q[j].id)) break; // eine neue Szene teilt sich keinen Split-Screen mit der vorigen
         if (fitSplit(q[j]) || (needSplit && level >= 1 && q[j].kind === 'image' && ids.length < 2)) ids.push(q[j].id); else break;
       }
       if (ids.length >= 2) { g.splitIds = ids; qi += ids.length; sinceSplit = 0; continue; }

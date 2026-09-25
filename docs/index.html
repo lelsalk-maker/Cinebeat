@@ -1529,7 +1529,7 @@ function percentile(arr, p) {
  * Taktphase (Downbeats), Energie je Beat und eine Hüllkurve für die Anzeige.
  */
 /** Version der Analyse: gespeicherte Songs mit älterer Version werden einmal neu analysiert. */
-const AN_VER = 3;
+const AN_VER = 4;
 
 async function analyzeAudio(buffer, onProgress) {
   const sr0 = buffer.sampleRate;
@@ -1870,6 +1870,7 @@ async function analyzeAudio(buffer, onProgress) {
     beatLow[i] = lf;
   }
   const drums = detectDrums(beats, pSec, lowE, hiE, toFrame, nFrames);
+  const vocal = detectVocals(beats, pSec, timbreF, chromaF, toFrame, nFrames);
   const db = Array.from(beatRms, (v) => 20 * Math.log10(v + 1e-7));
   const lo = percentile(db, 0.05), hi = percentile(db, 0.97);
   const energyRaw = db.map((v) => Math.max(0, Math.min(1, (v - lo) / Math.max(1e-6, hi - lo))));
@@ -1918,12 +1919,48 @@ async function analyzeAudio(buffer, onProgress) {
     beats: Float64Array.from(beats),
     energy,
     kicks: drums.kicks,
+    vocal: vocal.level,
+    vocalOn: vocal.onsets,
     snares: drums.snares,
     duration,
     firstSound,
     lastSound: Math.max(firstSound + 1, lastSound),
     env,
   };
+}
+
+/**
+ * Gesang (Näherung ohne KI): Anteil der Stimmlage (≈ 250 Hz – 2,5 kHz) an der Gesamtenergie mal
+ * Tonhaftigkeit (ausgeprägte Tonklassen statt Rauschen). Je Beat 0–1; Einsätze = neue Gesangszeilen.
+ */
+function detectVocals(beats, pSec, timbreF, chromaF, toFrame, nFrames) {
+  const n = beats.length;
+  const raw = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const a = toFrame(beats[i]), b = Math.max(a + 1, toFrame(i + 1 < n ? beats[i + 1] : beats[i] + pSec));
+    let acc = 0, cnt = 0;
+    for (let f = a; f < b && f < nFrames; f++) {
+      let mid = 0, all = 0;
+      for (let g = 0; g < 12; g++) { const v = timbreF[f * 12 + g]; all += v; if (g >= 4 && g <= 9) mid += v; }
+      let mx = 0, sum = 0;
+      for (let k = 0; k < 12; k++) { const c = chromaF[f * 12 + k]; mx = Math.max(mx, c); sum += c; }
+      const tonal = sum > 0 ? (mx * 12) / sum : 1;
+      acc += (mid / 6 - all / 12) + 0.8 * Math.log(tonal);
+      cnt++;
+    }
+    raw[i] = cnt ? acc / cnt : 0;
+  }
+  const arr = Array.from(raw);
+  const lo = percentile(arr, 0.2), hi = percentile(arr, 0.92);
+  const level = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let s = 0, c = 0;
+    for (let k = i - 1; k <= i + 1; k++) if (k >= 0 && k < n) { s += raw[k]; c++; }
+    level[i] = Math.max(0, Math.min(1, (s / c - lo) / Math.max(1e-6, hi - lo)));
+  }
+  const onsets = [];
+  for (let i = 2; i < n; i++) if (level[i] > 0.55 && level[i - 1] < 0.4 && level[i - 2] < 0.4) onsets.push(beats[i]);
+  return { level, onsets: Float64Array.from(onsets) };
 }
 
 /** Anstieg der Energie am Anschlag gegenüber den Frames kurz davor. */
@@ -2335,7 +2372,10 @@ function imageMetrics(px) {
       fxs += wgt * (x / w); fys += wgt * (y / h); fw += wgt;
     }
   }
-  const focus = fw > 0 ? [fxs / fw, fys / fw] : [0.5, 0.45];
+  let focus = fw > 0 ? [fxs / fw, fys / fw] : [0.5, 0.45];
+  const scene = sceneMetrics(data, g, w, h, focus);
+  // Menschen sind das Motiv: der Schwerpunkt rückt zur Haut-Region (Gesicht/Person)
+  if (scene.people > 0.25) focus = [0.4 * focus[0] + 0.6 * scene.skin[0], 0.4 * focus[1] + 0.6 * scene.skin[1]];
   const lapVar = Math.max(0, lq / Math.max(1, lc) - lm * lm);
   const meanL = sumL / n / 255;
   const sharpN = Math.max(0, Math.min(1, (Math.log10(lapVar + 1) - 1.2) / 1.6));
@@ -2343,7 +2383,7 @@ function imageMetrics(px) {
   const colorN = Math.max(0, Math.min(1, colorful / 85));
   let ar = 0, ag = 0, ab = 0;
   for (let i = 0; i < n; i++) { ar += data[i * 4]; ag += data[i * 4 + 1]; ab += data[i * 4 + 2]; }
-  return { sharp: sharpN, expo: expoN, color: colorN, luma: meanL, focus, gray: g, w, h, avg: [Math.round(ar / n), Math.round(ag / n), Math.round(ab / n)] };
+  return { sharp: sharpN, expo: expoN, color: colorN, luma: meanL, focus, scene, gray: g, w, h, avg: [Math.round(ar / n), Math.round(ag / n), Math.round(ab / n)] };
 }
 
 /** 64-Bit-Differenzhash (9x8) als zwei 32-Bit-Zahlen */
@@ -2371,13 +2411,86 @@ function hamming(a, b) {
   return c;
 }
 
+/**
+ * Bildinhalt ohne KI-Modell, lokal und schnell (auf 160 px):
+ * Horizont (stärkste durchgehende waagerechte Kante), Himmelsanteil, Haut-Regionen (Menschen)
+ * und der Motivbereich (gewichtete Ausdehnung der auffälligen Bildteile).
+ */
+function sceneMetrics(data, g, w, h, focus) {
+  // Horizont: Zeile mit der stärksten, über die Breite gleichmäßigen Helligkeitskante
+  const rowGrad = new Float32Array(h);
+  for (let y = 2; y < h; y++) {
+    let sgn = 0, sum = 0;
+    for (let x = 0; x < w; x++) { const d = g[y * w + x] - g[(y - 2) * w + x]; sum += Math.abs(d); sgn += d; }
+    rowGrad[y] = (sum / w) * (0.4 + 0.6 * Math.min(1, Math.abs(sgn) / Math.max(1, sum)));
+  }
+  let hy = -1, hv = 0;
+  const sorted = Array.from(rowGrad).sort((a, b) => a - b), med = sorted[Math.floor(h / 2)] || 1;
+  for (let y = Math.floor(h * 0.18); y < Math.floor(h * 0.82); y++) {
+    const v = (rowGrad[y - 1] + rowGrad[y] * 2 + rowGrad[y + 1]) / 4;
+    if (v > hv) { hv = v; hy = y; }
+  }
+  const horizon = hv > med * 2.2 && hv > 6 ? +(hy / h).toFixed(3) : null;
+  // Himmel: helle, blaue oder sehr gleichmäßige Flächen im oberen Bilddrittel
+  let sky = 0, skinN = 0, sx = 0, sy = 0;
+  const top = Math.floor(h * 0.4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4, r = data[i], gg = data[i + 1], b = data[i + 2];
+      if (y < top && ((b > r + 12 && b > gg - 10 && b > 90) || (r > 205 && gg > 205 && b > 205))) sky++;
+      // Haut (YCbCr-Bereich), unabhängig vom Hautton
+      const cb = 128 - 0.1687 * r - 0.3313 * gg + 0.5 * b, cr = 128 + 0.5 * r - 0.4187 * gg - 0.0813 * b, yy = 0.299 * r + 0.587 * gg + 0.114 * b;
+      if (yy > 45 && cb > 77 && cb < 127 && cr > 135 && cr < 175) { skinN++; sx += x; sy += y; }
+    }
+  }
+  const skinFrac = skinN / (w * h);
+  // Menschen: zusammenhängende Haut in mittlerem Umfang (nicht Sand, nicht Holz: dann ist sie meist großflächig)
+  const people = skinFrac > 0.008 && skinFrac < 0.3 ? Math.min(1, skinFrac * 18) : 0;
+  const skin = skinN ? [sx / skinN / w, sy / skinN / h] : focus;
+  // Motivbereich: um den Schwerpunkt, so weit, dass die auffälligen Teile hineinpassen
+  let vx = 0, vy = 0, wv = 0;
+  for (let y = 2; y < h - 2; y += 2) {
+    for (let x = 2; x < w - 2; x += 2) {
+      const i = y * w + x;
+      const lap = Math.abs(4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w]);
+      if (lap < 18) continue;
+      const dx = x / w - focus[0], dy = y / h - focus[1];
+      vx += lap * dx * dx; vy += lap * dy * dy; wv += lap;
+    }
+  }
+  const sw = wv ? Math.min(0.9, Math.max(0.2, 2.4 * Math.sqrt(vx / wv))) : 0.5, sh = wv ? Math.min(0.9, Math.max(0.2, 2.4 * Math.sqrt(vy / wv))) : 0.5;
+  return { horizon, sky: +(sky / (w * top)).toFixed(3), people: +people.toFixed(2), skin: skin.map((v) => +v.toFixed(3)), subject: [+focus[0].toFixed(3), +focus[1].toFixed(3), +sw.toFixed(3), +sh.toFixed(3)] };
+}
+
+/**
+ * Kameraschwenk zwischen zwei Graubildern (Block-Matching über die Bildmitte, ±5 px auf 160 px).
+ * Liefert die Verschiebung des Inhalts als Anteil der Bildbreite/-höhe.
+ */
+function panShift(a, b, w, h) {
+  let best = [0, 0], bs = Infinity;
+  const R = 5, x0 = Math.floor(w * 0.2), x1 = Math.floor(w * 0.8), y0 = Math.floor(h * 0.2), y1 = Math.floor(h * 0.8);
+  for (let dy = -R; dy <= R; dy++) {
+    for (let dx = -R; dx <= R; dx++) {
+      let sad = 0;
+      for (let y = y0; y < y1; y += 2) for (let x = x0; x < x1; x += 2) sad += Math.abs(a[y * w + x] - b[(y + dy) * w + x + dx]);
+      if (sad < bs) { bs = sad; best = [dx, dy]; }
+    }
+  }
+  return [best[0] / w, best[1] / h];
+}
+
 function combineScore(m) {
   return 0.42 * m.sharp + 0.3 * m.expo + 0.28 * m.color;
 }
 
 function scoreImage(src, sw, sh) {
   const m = imageMetrics(samplePixels(src, sw, sh));
-  return { score: combineScore(m), sharp: m.sharp, expo: m.expo, color: m.color, avg: m.avg, luma: +m.luma.toFixed(3), focus: m.focus.map((v) => +v.toFixed(3)), hash: dHash(src, sw, sh), layout: layoutSig(m) };
+  return { score: combineScore(m), sharp: m.sharp, expo: m.expo, color: m.color, avg: m.avg, luma: +m.luma.toFixed(3), focus: m.focus.map((v) => +v.toFixed(3)), hash: dHash(src, sw, sh), layout: layoutSig(m), ...sceneFields(m.scene) };
+}
+
+/** Motiv-Felder für die Aufnahme (werden mit gespeichert). */
+function sceneFields(sc) {
+  return sc ? { horizon: sc.horizon, sky: sc.sky, people: sc.people, subject: sc.subject } : {};
 }
 
 /**
@@ -2438,23 +2551,28 @@ async function scoreFrames(grab, W, H, duration) {
     const a = imageMetrics(samplePixels(src, W, H));
     if (!hash) { hash = dHash(src, W, H); avg = a.avg; luma = a.luma; }
     src = await grab(Math.min(duration - 0.05, t + 0.2));
-    let motion = 0;
+    let motion = 0, pan = [0, 0];
     if (src) {
       const g2 = imageMetrics(samplePixels(src, W, H)).gray;
       let s = 0;
       for (let i = 0; i < g2.length; i++) s += Math.abs(g2[i] - a.gray[i]);
       motion = s / g2.length / 255;
+      // Kameraschwenk (Inhalt wandert um pan je 0,2 s): Richtung für Anschlüsse an Fotos und Übergänge
+      pan = panShift(a.gray, g2, a.w, a.h);
     }
     // Moderate Bewegung ist spannend, extremes Wackeln nicht
     const motionN = Math.max(0, Math.min(1, motion / 0.06)) * (motion > 0.2 ? 0.5 : 1);
-    res.push({ t, score: 0.7 * combineScore(a) + 0.3 * motionN, motion, a });
+    res.push({ t, score: 0.7 * combineScore(a) + 0.3 * motionN, motion, pan, a });
   }
   res.sort((x, y) => y.score - x.score);
   if (res.length) layout = layoutSig(res[0].a);
   const top = res[0] && res[0].a;
   // Bewegung im Video (Durchschnitt): entscheidet, ob es eher in ruhige Songteile oder in den Drop passt
   const motion = res.length ? +(res.reduce((a, r) => a + r.motion, 0) / res.length).toFixed(4) : 0;
-  return { motion, score: res.length ? res[0].score : 0.3, hash: hash || [0, 0], avg, luma: +luma.toFixed(3), focus: top ? top.focus.map((v, i) => +(0.5 * v + 0.5 * [0.5, 0.45][i]).toFixed(3)) : undefined, layout, highlights: res.map((r) => ({ t: r.t, score: r.score })) };
+  // Schwenk über die Zeit (in Aufnahme-Reihenfolge): Inhalt bewegt sich je Sekunde um diesen Bildanteil
+  const byT = res.slice().sort((x, y) => x.t - y.t);
+  const pans = byT.map((r) => ({ t: r.t, x: +(r.pan[0] * 5).toFixed(3), y: +(r.pan[1] * 5).toFixed(3) }));
+  return { pans, ...sceneFields(top && top.scene), motion, score: res.length ? res[0].score : 0.3, hash: hash || [0, 0], avg, luma: +luma.toFixed(3), focus: top ? top.focus.map((v, i) => +(0.5 * v + 0.5 * [0.5, 0.45][i]).toFixed(3)) : undefined, layout, highlights: res.map((r) => ({ t: r.t, score: r.score })) };
 }
 
 /** Markiert Beinahe-Duplikate (nur das beste Bild einer Serie bleibt aktiv). */
@@ -2625,6 +2743,10 @@ function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0
     const k = Math.round(b * 1000);
     add(b, phraseSet.has(k) ? 5 : barSet.has(k) ? 3 : 1);
   }
+  // feiner Songbogen: Bassdrum-Schläge und neue Gesangszeilen sind bevorzugte Schnittpunkte (nur auf Beats)
+  const beatIdx = (t) => { let lo = 0, hi = an.beats.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (an.beats[m] <= t) lo = m; else hi = m - 1; } return lo; };
+  for (const kt of an.kicks || []) { const b = an.beats[beatIdx(kt + 0.02)]; if (b != null && Math.abs(b - kt) < 0.03) add(b, 1.5); }
+  for (const vt of an.vocalOn || []) add(vt, 4);
   // Schnitte nur auf Beats: Abschnitte und Stopps rasten auf den nächsten Beat ein
   const snap = (t) => { let m = t, d = Infinity; for (const b of an.beats) { const x = Math.abs(b - t); if (x < d) { d = x; m = b; } else if (b > t) break; } return d < beatDur * 0.35 ? m : t; };
   for (const s of secStarts) add(snap(s), 12, true);
@@ -2642,6 +2764,10 @@ function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0
     // ruhig genug, dass jedes Bild wirkt; auch im Drop nicht hektisch
     const base = { intro: 2.6, verse: 2.1, build: 1.7, chorus: 1.35, drop: 1.2, break: 3.3, outro: 2.7 }[sec.label] || 2;
     let v = base * pf;
+    // Energie Schlag für Schlag: lautere Stellen dichter, leisere länger; beim Gesang dürfen Bilder etwas stehen
+    const bi = beatIdx(abs);
+    const e = an.energy ? an.energy[bi] || 0.5 : 0.5, voc = an.vocal ? an.vocal[bi] || 0 : 0;
+    v *= (1.12 - 0.24 * e) * (1 + 0.12 * voc);
     if (sec.label === 'build') {
       const prog = Math.max(0, Math.min(1, (abs - sec.start) / Math.max(0.1, sec.end - sec.start)));
       v *= 1.4 - prog * 0.9;
@@ -3045,7 +3171,28 @@ function spreadSimilar(order) {
 }
 
 /** Ken-Burns-Fahrt, die auf dem Bildschwerpunkt landet. */
-function imageMotion(rng, m, outAspect, visDur, role, prevDir) {
+function imageMotion(rng, m, outAspect, visDur, role, prevDir, hint) {
+  const mo = imageMotionRaw(rng, m, outAspect, visDur, role, prevDir, hint);
+  return fitSubject(mo, m, outAspect);
+}
+
+/**
+ * Motiv im Bild halten: der Ausschnitt wird nie so eng, dass das Motiv (Gesichter, Person, auffälliger Bereich)
+ * angeschnitten würde. Liegt ein Horizont vor, bleibt er beim Schweben waagerecht (keine Neigung).
+ */
+function fitSubject(mo, m, outAspect) {
+  const sub = m.subject;
+  if (m.horizon != null) { mo.m.from.r = 0; mo.m.to.r = 0; }
+  if (!sub) return mo;
+  const srcAspect = m.w && m.h ? m.w / m.h : outAspect;
+  const fw = srcAspect > outAspect ? outAspect / srcAspect : 1, fh = srcAspect > outAspect ? 1 : srcAspect / outAspect;
+  const cap = Math.min(fw / Math.max(0.05, sub[2] * 1.08), fh / Math.max(0.05, sub[3] * 1.08));
+  if (cap < 1.02) return mo;
+  for (const k of ['from', 'to']) if (mo.m[k].s > cap) mo.m[k].s = Math.max(1.0, cap);
+  return mo;
+}
+
+function imageMotionRaw(rng, m, outAspect, visDur, role, prevDir, hint) {
   const srcAspect = m.w && m.h ? m.w / m.h : outAspect;
   const fw = srcAspect > outAspect ? outAspect / srcAspect : 1;
   const fh = srcAspect > outAspect ? 1 : srcAspect / outAspect;
@@ -3058,23 +3205,47 @@ function imageMotion(rng, m, outAspect, visDur, role, prevDir) {
   const tilt = (rng() < 0.5 ? -1 : 1) * 0.0065 * speed;
   // Richtung bleibt meist über zwei Einstellungen gleich: ruhiger Fluss statt Hin und Her
   const keep = rng() < 0.55;
+  // Anschluss an ein Video: die Fahrt nimmt dessen Schwenk-Richtung auf
+  if (hint === 'left' || hint === 'right' || hint === 'up' || hint === 'down') prevDir = hint;
   if (fh < 0.72) {
-    const down = prevDir === 'up' ? !keep : prevDir === 'down' ? keep : rng() < 0.5;
+    const down = hint === 'down' ? true : hint === 'up' ? false : prevDir === 'up' ? !keep : prevDir === 'down' ? keep : rng() < 0.5;
     const a = Math.max(-1, Math.min(1, py + (down ? -0.6 : 0.6)));
     return { dir: down ? 'down' : 'up', m: { from: { s: 1.03, x: 0, y: a, r: tilt }, to: { s: 1.03 + z * 0.6, x: 0, y: py, r: 0 } } };
   }
   if (fw < 0.72) {
-    const right = prevDir === 'left' ? !keep : prevDir === 'right' ? keep : rng() < 0.5;
+    const right = hint === 'right' ? true : hint === 'left' ? false : prevDir === 'left' ? !keep : prevDir === 'right' ? keep : rng() < 0.5;
     const a = Math.max(-1, Math.min(1, px + (right ? -0.65 : 0.65)));
     return { dir: right ? 'right' : 'left', m: { from: { s: 1.03, x: a, y: 0, r: tilt }, to: { s: 1.03 + z * 0.6, x: px, y: 0, r: 0 } } };
   }
   const zin = prevDir === 'in' ? keep || rng() < 0.3 : prevDir === 'out' ? !keep : rng() < 0.7;
   const tx = px * 0.8, ty = py * 0.8;
   // leichter Versatz quer zur Zoomrichtung: die Fahrt bekommt eine Kurve statt einer geraden Linie
-  const sx = (rng() - 0.5) * 0.35;
+  const sx = hint === 'right' ? -0.3 : hint === 'left' ? 0.3 : (rng() - 0.5) * 0.35;
   return zin
     ? { dir: 'in', m: { from: { s: 1.02, x: tx * 0.2 + sx, y: ty * 0.2, r: tilt }, to: { s: 1.02 + z, x: tx, y: ty, r: -tilt * 0.3 } } }
     : { dir: 'out', m: { from: { s: 1.02 + z, x: tx, y: ty, r: -tilt * 0.3 }, to: { s: 1.02, x: tx * 0.2 + sx, y: ty * 0.2, r: tilt } } };
+}
+
+/**
+ * Szenen der Reise: eine neue Szene beginnt nach einer längeren Pause (45 min), an einem anderen Ort (> 1,5 km)
+ * oder bei deutlich anderem Licht nach einer kurzen Pause (z. B. Strand → Altstadt am Abend).
+ * Liefert die Ids der Aufnahmen, mit denen eine Szene beginnt.
+ */
+function sceneStarts(list) {
+  const out = new Set();
+  const km = (a, b) => {
+    if (!a || !b) return 0;
+    const R = 6371, dLat = ((b.lat - a.lat) * Math.PI) / 180, dLon = ((b.lon - a.lon) * Math.PI) / 180;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos((a.lat * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+  };
+  const colorD = (a, b) => (a.avg && b.avg ? Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) : 0);
+  for (let i = 1; i < list.length; i++) {
+    const a = list[i - 1], b = list[i];
+    const gap = a.time && b.time ? (b.time - a.time) / 60000 : 0;
+    if (gap > 45 || km(a.pos, b.pos) > 1.5 || (gap > 10 && colorD(a, b) > 95)) out.add(b.id);
+  }
+  return out;
 }
 
 /* Planer · Suche nach Schnittlänge und Verdichtungsstufe (buildPlan) */
@@ -3156,7 +3327,9 @@ function searchPlan(opts) {
  * Foto-Serie, Polaroid-Stapel und Raster nehmen die nächsten Fotos der Reihe.
  */
 function layoutChrono(ctx, segs0, queue, bias) {
-  const { s, an, win, fr, level, allOn, intro, outro, rush, reveal, leader, gridPlan, special, splitFit, splitN, barDur, beatDur, isPeakSec } = ctx;
+  const { s, an, win, fr, level, allOn, intro, outro, rush, reveal, leader, gridPlan, special, splitFit, splitN, barDur, beatDur, isPeakSec, scenes } = ctx;
+  const bars = (an.barStart || []).map((b) => b - win.start);
+  const onBar = (t) => bars.some((b) => Math.abs(b - t) < 0.04);
   const sg = segs0.map((g) => ({ ...g }));
   const q = queue.slice();
   let qi = 0;
@@ -3234,6 +3407,20 @@ function layoutChrono(ctx, segs0, queue, bias) {
     }
     if (videoNext && (g.burst || g.stackSeg || g.gridMid)) { delete g.burst; delete g.stackSeg; delete g.gridMid; }
     if (!head) { const m = repeatImg(); if (m) { g.mediaId = m.id; g.repeat = true; } continue; }
+    // neue Szene (anderer Ort, andere Tageszeit): beginnt auf einem Taktanfang – das Bild davor steht dafür etwas länger
+    if (scenes.has(head.id) && !onBar(g.start) && i > 0) {
+      const prev = sg[i - 1];
+      let k = i;
+      while (k < sg.length && normal(sg[k]) && !onBar(sg[k].end) && sg[k].end - g.start < barDur) k++;
+      if (k < sg.length && normal(sg[k]) && onBar(sg[k].end) && sg[k].end - g.start <= barDur * 0.8 && k + 1 < sg.length && normal(sg[k + 1])
+        && prev && (prev.mediaId || prev.splitIds) && !prev.vslot && !special(prev) && !skipSeg(prev) && prev.end - prev.start + (sg[k].end - g.start) <= barDur * 2.2) {
+        prev.end = sg[k].end;
+        sg.splice(i, k - i + 1);
+        i--;
+        continue;
+      }
+    }
+    if (scenes.has(head.id)) g.sceneStart = true;
     const len = g.end - g.start;
     const peak = !isCalmLabel(sectionAt(an, win.start + g.start + 0.01).label);
     // Einstieg oder Ende als Split-Screen
@@ -3298,6 +3485,7 @@ function layoutChrono(ctx, segs0, queue, bias) {
       const k = needSplit ? Math.min(splitN, Math.max(2, Math.ceil(need) + 1)) : splitN;
       const ids = [];
       for (let j = qi; j < q.length && ids.length < Math.min(k, Math.max(2, Math.floor(beatsIn + 0.2))); j++) {
+        if (ids.length && scenes.has(q[j].id)) break; // eine neue Szene teilt sich keinen Split-Screen mit der vorigen
         if (fitSplit(q[j]) || (needSplit && level >= 1 && q[j].kind === 'image' && ids.length < 2)) ids.push(q[j].id); else break;
       }
       if (ids.length >= 2) { g.splitIds = ids; qi += ids.length; sinceSplit = 0; continue; }
@@ -3673,7 +3861,7 @@ function planOnce(opts) {
     // innerhalb eines Moments (wenige Minuten) darf ein Bild aus dem vorigen hervorgehen (Match-Cuts, Farbfluss)
     const flowed = spreadSimilar(flowOrder(all0.filter((m) => m !== hk), s.match !== 'off'));
     let queue = hk ? [hk, ...flowed] : flowed;
-    const chronoCtx = { s, an, win, fr, level, allOn, intro, outro, rush, reveal, leader, gridPlan, special, splitFit, splitN, barDur, beatDur, isPeakSec };
+    const chronoCtx = { s, an, win, fr, level, allOn, intro, outro, rush, reveal, leader, gridPlan, special, splitFit, splitN, barDur, beatDur, isPeakSec, scenes: sceneStarts(all0) };
     let res = layoutChrono(chronoCtx, segs, queue, 0);
     // alle Aufnahmen: fehlen am Ende noch welche, früher etwas mehr zusammenfassen (Split-Screens)
     for (let k = 0; k < 2 && allOn && res.dropped.length; k++) {
@@ -3696,7 +3884,7 @@ function planOnce(opts) {
     const sec = sectionAt(an, abs + 0.01);
     return {
       i, start: g.start, end: g.end, label: sec.label, energy: sec.energy, weight: g.w, freezeAt: g.freezeAt, burst: !!g.burst, leader: !!g.leader, pre: g.pre || null, reveal: !!g.reveal, vid: g.vid || null, gridMid: g.gridMid || null, grid: !!g.gridMid, miniRew: !!g.miniRew, rush: !!g.rush, stack: g.stackSeg ? { times: g.stackSeg.times, reserved: g.stackIds || null } : null,
-      pre_mediaId: g.mediaId || null, splitIds: g.splitIds || g.vsplitIds || null, gridIds: g.gridIds || null, replaySeg: !!g.replaySeg, repeatSeg: !!g.repeat,
+      pre_mediaId: g.mediaId || null, sceneStart: !!g.sceneStart, splitIds: g.splitIds || g.vsplitIds || null, gridIds: g.gridIds || null, replaySeg: !!g.replaySeg, repeatSeg: !!g.repeat,
       sectionChange: i > 0 && (an.sections || []).some((x) => Math.abs(x.start - abs) < 0.05),
       mediaId: null, role: 'normal',
     };
@@ -4066,6 +4254,10 @@ function planOnce(opts) {
     if (tr.match) { B.matchCut = true; matches++; }
     if (tr.type === TR.MORPH || tr.type === TR.INK || tr.type === TR.DOUBLE) morphs++;
     if (fixedCut) tr = { type: TR.CUT, dur: 0, punch: false };
+    // Szenenwechsel (anderer Ort/Tageszeit): im Drop ein harter Schnitt mit Impuls, in ruhigen Teilen eine Lichtblende
+    else if (B.sceneStart && B.role !== 'chapter' && !tr.match && !B.vid && !A.vid) {
+      tr = isCalmLabel(B.label) ? { type: TR.LUMA, dur: Math.min(beatDur * 1.2, 0.45 * (A.end - A.start), 0.45 * (B.end - B.start)), punch: false } : { type: TR.CUT, dur: 0, punch: true };
+    }
     // in den Polaroid-Stapel weich hinein; nach dem Mini-Rewind hart auf den Einsatz
     if (B.stack && !A.split && !A.grid && !A.burst) tr = { type: TR.DISSOLVE, dur: Math.min(beatDur, 0.45 * (A.end - A.start), 0.4 * (B.end - B.start)), punch: false };
     if ((A.miniRew && !B.miniRew) || (A.rush && !B.rush)) tr = { type: TR.CUT, dur: 0, punch: true };
@@ -4115,6 +4307,15 @@ function planOnce(opts) {
       if (cost < bestCost) { bestCost = cost; bestOff = Math.max(0, Math.min(hi, o)); }
     }
     return bestOff;
+  };
+
+  // Bewegung im Video weiterführen: ein Foto neben einem Video fährt in dessen Schwenk-Richtung
+  // (Inhalt wandert nach links = Kamera schwenkt nach rechts)
+  const panHint = (c) => {
+    const vPrev = byId.get(clips[c.i - 1] && clips[c.i - 1].mediaId), vNext = byId.get(clips[c.i + 1] && clips[c.i + 1].mediaId);
+    const p = vPrev && vPrev.kind === 'video' && vPrev.pans && vPrev.pans.length ? vPrev.pans[vPrev.pans.length - 1] : vNext && vNext.kind === 'video' && vNext.pans && vNext.pans.length ? vNext.pans[0] : null;
+    if (!p || Math.max(Math.abs(p.x), Math.abs(p.y)) < 0.04) return null;
+    return Math.abs(p.x) >= Math.abs(p.y) ? (p.x < 0 ? 'right' : 'left') : (p.y < 0 ? 'down' : 'up');
   };
 
   // Quellen, Tempo, Bewegung, Farbangleichung
@@ -4237,7 +4438,7 @@ function planOnce(opts) {
       const fitFrac = srcAspect > outAspect ? outAspect / srcAspect : srcAspect / outAspect;
       const framed = fitFrac < 0.5 && !c.burst && !c.reveal && !c.pre && !(clips[c.i - 1] && clips[c.i - 1].reveal);
       const role = c.label === 'drop' || c.label === 'chorus' ? 'burst' : 'normal';
-      const mo = imageMotion(rng, m, outAspect, visDur, role, prevDir);
+      const mo = imageMotion(rng, m, outAspect, visDur, role, prevDir, panHint(c));
       prevDir = mo.dir;
       c.motion = mo.m;
       c.dir = mo.dir;
@@ -5086,6 +5287,7 @@ uniform vec2 uFocA;     // Bildschwerpunkt im Ausgabebild (für Bild-aus-Bild-Ü
 uniform vec2 uFocB;
 uniform vec2 uParA;     // Parallax: Versatz der nahen Bildteile (Ausschnitt-Einheiten)
 uniform vec2 uParB;
+uniform vec2 uHor;      // Horizont je Ebene im Ausgabebild (−1: keiner erkannt)
 uniform vec4 uCol;      // Schwarzweiß → Farbe: Modus, Fortschritt, Motiv (x, y)
 
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
@@ -5103,13 +5305,13 @@ float fbm(vec2 p) {
 vec2 rot2(vec2 p, float a) { float c = cos(a), s = sin(a); return vec2(c * p.x - s * p.y, s * p.x + c * p.y); }
 
 // Tiefe ohne Tiefenkarte: unten und am Motiv nah, oben (Himmel, Horizont) fern. Weich, ohne Kanten.
-float nearness(vec2 uv, vec2 foc) {
-  float v = smoothstep(0.2, 1.0, uv.y);
+float nearness(vec2 uv, vec2 foc, float hor) {
+  float v = hor > -0.5 ? smoothstep(hor - 0.04, min(1.0, hor + 0.5), uv.y) : smoothstep(0.2, 1.0, uv.y);
   float m = 1.0 - smoothstep(0.0, 0.5, distance(uv, foc));
   return 0.65 * v + 0.35 * m;
 }
 
-vec3 sampleSrc(sampler2D tex, vec4 xf, vec3 box, vec4 geo, vec2 uv, vec2 par, vec2 foc) {
+vec3 sampleSrc(sampler2D tex, vec4 xf, vec3 box, vec4 geo, vec2 uv, vec2 par, vec2 foc, float hor) {
   float asp = uRes.x / (uRes.y * uBand.y);
   if (geo.z > 0.5) {
     // Standbild als Abzug: leicht gedreht, weißer Rand, dunkler Grund
@@ -5144,7 +5346,7 @@ vec3 sampleSrc(sampler2D tex, vec4 xf, vec3 box, vec4 geo, vec2 uv, vec2 par, ve
   vec2 p = uv - 0.5;
   if (geo.x != 0.0) p = rot2(p * vec2(asp, 1.0), -geo.x) / vec2(asp, 1.0);
   vec2 s = xf.zw + p * xf.xy;
-  if (par.x != 0.0 || par.y != 0.0) s = clamp(s + par * (nearness(uv, foc) - 0.4) * xf.xy, 0.0, 1.0);
+  if (par.x != 0.0 || par.y != 0.0) s = clamp(s + par * (nearness(uv, foc, hor) - 0.4) * xf.xy, 0.0, 1.0);
   // leichte negative Mipmap-Verschiebung: volle Auflösung statt Mischung mit der halben Stufe
   vec3 c = texture2D(tex, s, geo.y - 0.75).rgb;
   if (uSharp > 0.0 && geo.y < 0.5) {
@@ -5160,20 +5362,20 @@ vec3 sampleSrc(sampler2D tex, vec4 xf, vec3 box, vec4 geo, vec2 uv, vec2 par, ve
   return c;
 }
 
-vec3 layer(sampler2D tex, vec4 xf, vec3 box, vec3 blur, vec4 geo, vec2 off, vec2 uv, vec2 par, vec2 foc) {
+vec3 layer(sampler2D tex, vec4 xf, vec3 box, vec3 blur, vec4 geo, vec2 off, vec2 uv, vec2 par, vec2 foc, float hor) {
   uv -= off;
-  if (blur.x < 0.5) return sampleSrc(tex, xf, box, geo, uv, par, foc);
+  if (blur.x < 0.5) return sampleSrc(tex, xf, box, geo, uv, par, foc, hor);
   vec2 dir = blur.x < 1.5 ? blur.yz : (uv - 0.5) * blur.y;
   vec3 acc = vec3(0.0);
   for (int i = 0; i < 8; i++) {
     float k = float(i) / 7.0 - 0.5;
-    acc += sampleSrc(tex, xf, box, geo, uv + dir * k, par, foc);
+    acc += sampleSrc(tex, xf, box, geo, uv + dir * k, par, foc, hor);
   }
   return acc / 8.0;
 }
 
-vec3 layerA(vec2 uv) { return layer(uTexA, uXfA, uBoxA, uBlurA, uGeoA, uOffA, uv, uParA, uFocA) * uCorrA; }
-vec3 layerB(vec2 uv) { return layer(uTexB, uXfB, uBoxB, uBlurB, uGeoB, uOffB, uv, uParB, uFocB) * uCorrB; }
+vec3 layerA(vec2 uv) { return layer(uTexA, uXfA, uBoxA, uBlurA, uGeoA, uOffA, uv, uParA, uFocA, uHor.x) * uCorrA; }
+vec3 layerB(vec2 uv) { return layer(uTexB, uXfB, uBoxB, uBlurB, uGeoB, uOffB, uv, uParB, uFocB, uHor.y) * uCorrB; }
 
 vec3 leakColor(vec2 uv, float t) {
   vec2 c1 = vec2(0.15 + 0.7 * fract(t * 0.07), 0.3 + 0.2 * sin(t * 0.6));
@@ -5442,6 +5644,7 @@ class Renderer {
     gl.uniform2fv(u.uFocB, L(f.B, 'foc', [0.5, 0.45]));
     gl.uniform2fv(u.uParA, L(f.A, 'par', [0, 0]));
     gl.uniform2fv(u.uParB, L(f.B, 'par', [0, 0]));
+    gl.uniform2f(u.uHor, f.A && f.A.hor != null ? f.A.hor : -1, f.B && f.B.hor != null ? f.B.hor : -1);
     gl.uniform4fv(u.uCol, f.col || [0, 1, 0.5, 0.5]);
     gl.uniform2fv(u.uBand, f.band || [0, 1]);
     gl.uniform1f(u.uHasA, f.A ? 1 : 0);
@@ -7836,7 +8039,9 @@ class Engine {
       const k = this.plan.parallax;
       par = [k * 0.06 * (x - (mo.from.x + mo.to.x) / 2), k * (0.06 * (y - (mo.from.y + mo.to.y) / 2) - 0.25 * (s / Math.max(1e-6, extra.zoom * fx.zoom) - (mo.from.s + mo.to.s) / 2))];
     }
-    return { tex: slot.tex, xf: [fw, fh, cx, cy], box: [0, 1, 1], blur, geo, corr, foc, par };
+    // Horizont im Ausgabebild (für die Tiefe: oberhalb fern, darunter nah)
+    const hor = m && m.horizon != null ? (m.horizon - cy) / fh + 0.5 : null;
+    return { tex: slot.tex, xf: [fw, fh, cx, cy], box: [0, 1, 1], blur, geo, corr, foc, par, hor };
   }
 
   /**
@@ -9447,6 +9652,26 @@ function thumbFrom(source, sw, sh, size) {
 }
 
 
+/**
+ * Gesichter mit der Gesichtserkennung des Browsers (lokal, wo verfügbar – sonst bleibt die Haut-Erkennung).
+ * Das Motiv wird dann der Bereich um die Gesichter: Fahrten enden dort, Ausschnitte schneiden niemanden an.
+ */
+async function detectFaces(item, src, sw, sh) {
+  if (typeof FaceDetector !== 'function') return;
+  try {
+    const faces = await new FaceDetector({ fastMode: true, maxDetectedFaces: 6 }).detect(src);
+    if (!faces || !faces.length) return;
+    let x0 = 1, y0 = 1, x1 = 0, y1 = 0;
+    for (const f of faces) { const b = f.boundingBox; x0 = Math.min(x0, b.x / sw); y0 = Math.min(y0, b.y / sh); x1 = Math.max(x1, (b.x + b.width) / sw); y1 = Math.max(y1, (b.y + b.height) / sh); }
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    item.faces = faces.length;
+    item.people = 1;
+    item.focus = [+cx.toFixed(3), +Math.min(0.8, cy + (y1 - y0) * 0.3).toFixed(3)];
+    // Köpfe und Oberkörper sollen im Bild bleiben
+    item.subject = [+cx.toFixed(3), +(cy + (y1 - y0) * 0.5).toFixed(3), +Math.min(0.95, (x1 - x0) * 1.8 + 0.1).toFixed(3), +Math.min(0.95, (y1 - y0) * 3 + 0.1).toFixed(3)];
+  } catch (e) { /* nicht verfügbar */ }
+}
+
 async function probeAndScore(item) {
   if (item.kind === 'image') {
     // Maße aus dem Dateikopf (ohne das Bild zu dekodieren), dann direkt klein dekodieren:
@@ -9461,6 +9686,7 @@ async function probeAndScore(item) {
     const sw = small.width, sh = small.height;
     item.thumb = thumbFrom(small, sw, sh, 160);
     Object.assign(item, scoreImage(small, sw, sh));
+    await detectFaces(item, small, sw, sh);
     if (small.close) small.close(); else { small.width = 0; small.height = 0; }
     return;
   }

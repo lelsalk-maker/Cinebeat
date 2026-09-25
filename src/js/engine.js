@@ -694,7 +694,9 @@ class Engine {
       const k = this.plan.parallax;
       par = [k * 0.06 * (x - (mo.from.x + mo.to.x) / 2), k * (0.06 * (y - (mo.from.y + mo.to.y) / 2) - 0.25 * (s / Math.max(1e-6, extra.zoom * fx.zoom) - (mo.from.s + mo.to.s) / 2))];
     }
-    return { tex: slot.tex, xf: [fw, fh, cx, cy], box: [0, 1, 1], blur, geo, corr, foc, par };
+    // Horizont im Ausgabebild (für die Tiefe: oberhalb fern, darunter nah)
+    const hor = m && m.horizon != null ? (m.horizon - cy) / fh + 0.5 : null;
+    return { tex: slot.tex, xf: [fw, fh, cx, cy], box: [0, 1, 1], blur, geo, corr, foc, par, hor };
   }
 
   /**

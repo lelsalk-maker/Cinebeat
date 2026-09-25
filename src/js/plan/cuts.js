@@ -25,6 +25,10 @@ function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0
     const k = Math.round(b * 1000);
     add(b, phraseSet.has(k) ? 5 : barSet.has(k) ? 3 : 1);
   }
+  // feiner Songbogen: Bassdrum-Schläge und neue Gesangszeilen sind bevorzugte Schnittpunkte (nur auf Beats)
+  const beatIdx = (t) => { let lo = 0, hi = an.beats.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (an.beats[m] <= t) lo = m; else hi = m - 1; } return lo; };
+  for (const kt of an.kicks || []) { const b = an.beats[beatIdx(kt + 0.02)]; if (b != null && Math.abs(b - kt) < 0.03) add(b, 1.5); }
+  for (const vt of an.vocalOn || []) add(vt, 4);
   // Schnitte nur auf Beats: Abschnitte und Stopps rasten auf den nächsten Beat ein
   const snap = (t) => { let m = t, d = Infinity; for (const b of an.beats) { const x = Math.abs(b - t); if (x < d) { d = x; m = b; } else if (b > t) break; } return d < beatDur * 0.35 ? m : t; };
   for (const s of secStarts) add(snap(s), 12, true);
@@ -42,6 +46,10 @@ function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0
     // ruhig genug, dass jedes Bild wirkt; auch im Drop nicht hektisch
     const base = { intro: 2.6, verse: 2.1, build: 1.7, chorus: 1.35, drop: 1.2, break: 3.3, outro: 2.7 }[sec.label] || 2;
     let v = base * pf;
+    // Energie Schlag für Schlag: lautere Stellen dichter, leisere länger; beim Gesang dürfen Bilder etwas stehen
+    const bi = beatIdx(abs);
+    const e = an.energy ? an.energy[bi] || 0.5 : 0.5, voc = an.vocal ? an.vocal[bi] || 0 : 0;
+    v *= (1.12 - 0.24 * e) * (1 + 0.12 * voc);
     if (sec.label === 'build') {
       const prog = Math.max(0, Math.min(1, (abs - sec.start) / Math.max(0.1, sec.end - sec.start)));
       v *= 1.4 - prog * 0.9;

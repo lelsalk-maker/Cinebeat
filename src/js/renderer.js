@@ -47,6 +47,7 @@ uniform vec2 uFocA;     // Bildschwerpunkt im Ausgabebild (für Bild-aus-Bild-Ü
 uniform vec2 uFocB;
 uniform vec2 uParA;     // Parallax: Versatz der nahen Bildteile (Ausschnitt-Einheiten)
 uniform vec2 uParB;
+uniform vec2 uHor;      // Horizont je Ebene im Ausgabebild (−1: keiner erkannt)
 uniform vec4 uCol;      // Schwarzweiß → Farbe: Modus, Fortschritt, Motiv (x, y)
 
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
@@ -64,13 +65,13 @@ float fbm(vec2 p) {
 vec2 rot2(vec2 p, float a) { float c = cos(a), s = sin(a); return vec2(c * p.x - s * p.y, s * p.x + c * p.y); }
 
 // Tiefe ohne Tiefenkarte: unten und am Motiv nah, oben (Himmel, Horizont) fern. Weich, ohne Kanten.
-float nearness(vec2 uv, vec2 foc) {
-  float v = smoothstep(0.2, 1.0, uv.y);
+float nearness(vec2 uv, vec2 foc, float hor) {
+  float v = hor > -0.5 ? smoothstep(hor - 0.04, min(1.0, hor + 0.5), uv.y) : smoothstep(0.2, 1.0, uv.y);
   float m = 1.0 - smoothstep(0.0, 0.5, distance(uv, foc));
   return 0.65 * v + 0.35 * m;
 }
 
-vec3 sampleSrc(sampler2D tex, vec4 xf, vec3 box, vec4 geo, vec2 uv, vec2 par, vec2 foc) {
+vec3 sampleSrc(sampler2D tex, vec4 xf, vec3 box, vec4 geo, vec2 uv, vec2 par, vec2 foc, float hor) {
   float asp = uRes.x / (uRes.y * uBand.y);
   if (geo.z > 0.5) {
     // Standbild als Abzug: leicht gedreht, weißer Rand, dunkler Grund
@@ -105,7 +106,7 @@ vec3 sampleSrc(sampler2D tex, vec4 xf, vec3 box, vec4 geo, vec2 uv, vec2 par, ve
   vec2 p = uv - 0.5;
   if (geo.x != 0.0) p = rot2(p * vec2(asp, 1.0), -geo.x) / vec2(asp, 1.0);
   vec2 s = xf.zw + p * xf.xy;
-  if (par.x != 0.0 || par.y != 0.0) s = clamp(s + par * (nearness(uv, foc) - 0.4) * xf.xy, 0.0, 1.0);
+  if (par.x != 0.0 || par.y != 0.0) s = clamp(s + par * (nearness(uv, foc, hor) - 0.4) * xf.xy, 0.0, 1.0);
   // leichte negative Mipmap-Verschiebung: volle Auflösung statt Mischung mit der halben Stufe
   vec3 c = texture2D(tex, s, geo.y - 0.75).rgb;
   if (uSharp > 0.0 && geo.y < 0.5) {
@@ -121,20 +122,20 @@ vec3 sampleSrc(sampler2D tex, vec4 xf, vec3 box, vec4 geo, vec2 uv, vec2 par, ve
   return c;
 }
 
-vec3 layer(sampler2D tex, vec4 xf, vec3 box, vec3 blur, vec4 geo, vec2 off, vec2 uv, vec2 par, vec2 foc) {
+vec3 layer(sampler2D tex, vec4 xf, vec3 box, vec3 blur, vec4 geo, vec2 off, vec2 uv, vec2 par, vec2 foc, float hor) {
   uv -= off;
-  if (blur.x < 0.5) return sampleSrc(tex, xf, box, geo, uv, par, foc);
+  if (blur.x < 0.5) return sampleSrc(tex, xf, box, geo, uv, par, foc, hor);
   vec2 dir = blur.x < 1.5 ? blur.yz : (uv - 0.5) * blur.y;
   vec3 acc = vec3(0.0);
   for (int i = 0; i < 8; i++) {
     float k = float(i) / 7.0 - 0.5;
-    acc += sampleSrc(tex, xf, box, geo, uv + dir * k, par, foc);
+    acc += sampleSrc(tex, xf, box, geo, uv + dir * k, par, foc, hor);
   }
   return acc / 8.0;
 }
 
-vec3 layerA(vec2 uv) { return layer(uTexA, uXfA, uBoxA, uBlurA, uGeoA, uOffA, uv, uParA, uFocA) * uCorrA; }
-vec3 layerB(vec2 uv) { return layer(uTexB, uXfB, uBoxB, uBlurB, uGeoB, uOffB, uv, uParB, uFocB) * uCorrB; }
+vec3 layerA(vec2 uv) { return layer(uTexA, uXfA, uBoxA, uBlurA, uGeoA, uOffA, uv, uParA, uFocA, uHor.x) * uCorrA; }
+vec3 layerB(vec2 uv) { return layer(uTexB, uXfB, uBoxB, uBlurB, uGeoB, uOffB, uv, uParB, uFocB, uHor.y) * uCorrB; }
 
 vec3 leakColor(vec2 uv, float t) {
   vec2 c1 = vec2(0.15 + 0.7 * fract(t * 0.07), 0.3 + 0.2 * sin(t * 0.6));
@@ -403,6 +404,7 @@ class Renderer {
     gl.uniform2fv(u.uFocB, L(f.B, 'foc', [0.5, 0.45]));
     gl.uniform2fv(u.uParA, L(f.A, 'par', [0, 0]));
     gl.uniform2fv(u.uParB, L(f.B, 'par', [0, 0]));
+    gl.uniform2f(u.uHor, f.A && f.A.hor != null ? f.A.hor : -1, f.B && f.B.hor != null ? f.B.hor : -1);
     gl.uniform4fv(u.uCol, f.col || [0, 1, 0.5, 0.5]);
     gl.uniform2fv(u.uBand, f.band || [0, 1]);
     gl.uniform1f(u.uHasA, f.A ? 1 : 0);

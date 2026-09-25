@@ -63,7 +63,10 @@ function imageMetrics(px) {
       fxs += wgt * (x / w); fys += wgt * (y / h); fw += wgt;
     }
   }
-  const focus = fw > 0 ? [fxs / fw, fys / fw] : [0.5, 0.45];
+  let focus = fw > 0 ? [fxs / fw, fys / fw] : [0.5, 0.45];
+  const scene = sceneMetrics(data, g, w, h, focus);
+  // Menschen sind das Motiv: der Schwerpunkt rückt zur Haut-Region (Gesicht/Person)
+  if (scene.people > 0.25) focus = [0.4 * focus[0] + 0.6 * scene.skin[0], 0.4 * focus[1] + 0.6 * scene.skin[1]];
   const lapVar = Math.max(0, lq / Math.max(1, lc) - lm * lm);
   const meanL = sumL / n / 255;
   const sharpN = Math.max(0, Math.min(1, (Math.log10(lapVar + 1) - 1.2) / 1.6));
@@ -71,7 +74,7 @@ function imageMetrics(px) {
   const colorN = Math.max(0, Math.min(1, colorful / 85));
   let ar = 0, ag = 0, ab = 0;
   for (let i = 0; i < n; i++) { ar += data[i * 4]; ag += data[i * 4 + 1]; ab += data[i * 4 + 2]; }
-  return { sharp: sharpN, expo: expoN, color: colorN, luma: meanL, focus, gray: g, w, h, avg: [Math.round(ar / n), Math.round(ag / n), Math.round(ab / n)] };
+  return { sharp: sharpN, expo: expoN, color: colorN, luma: meanL, focus, scene, gray: g, w, h, avg: [Math.round(ar / n), Math.round(ag / n), Math.round(ab / n)] };
 }
 
 /** 64-Bit-Differenzhash (9x8) als zwei 32-Bit-Zahlen */
@@ -99,13 +102,86 @@ function hamming(a, b) {
   return c;
 }
 
+/**
+ * Bildinhalt ohne KI-Modell, lokal und schnell (auf 160 px):
+ * Horizont (stärkste durchgehende waagerechte Kante), Himmelsanteil, Haut-Regionen (Menschen)
+ * und der Motivbereich (gewichtete Ausdehnung der auffälligen Bildteile).
+ */
+function sceneMetrics(data, g, w, h, focus) {
+  // Horizont: Zeile mit der stärksten, über die Breite gleichmäßigen Helligkeitskante
+  const rowGrad = new Float32Array(h);
+  for (let y = 2; y < h; y++) {
+    let sgn = 0, sum = 0;
+    for (let x = 0; x < w; x++) { const d = g[y * w + x] - g[(y - 2) * w + x]; sum += Math.abs(d); sgn += d; }
+    rowGrad[y] = (sum / w) * (0.4 + 0.6 * Math.min(1, Math.abs(sgn) / Math.max(1, sum)));
+  }
+  let hy = -1, hv = 0;
+  const sorted = Array.from(rowGrad).sort((a, b) => a - b), med = sorted[Math.floor(h / 2)] || 1;
+  for (let y = Math.floor(h * 0.18); y < Math.floor(h * 0.82); y++) {
+    const v = (rowGrad[y - 1] + rowGrad[y] * 2 + rowGrad[y + 1]) / 4;
+    if (v > hv) { hv = v; hy = y; }
+  }
+  const horizon = hv > med * 2.2 && hv > 6 ? +(hy / h).toFixed(3) : null;
+  // Himmel: helle, blaue oder sehr gleichmäßige Flächen im oberen Bilddrittel
+  let sky = 0, skinN = 0, sx = 0, sy = 0;
+  const top = Math.floor(h * 0.4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4, r = data[i], gg = data[i + 1], b = data[i + 2];
+      if (y < top && ((b > r + 12 && b > gg - 10 && b > 90) || (r > 205 && gg > 205 && b > 205))) sky++;
+      // Haut (YCbCr-Bereich), unabhängig vom Hautton
+      const cb = 128 - 0.1687 * r - 0.3313 * gg + 0.5 * b, cr = 128 + 0.5 * r - 0.4187 * gg - 0.0813 * b, yy = 0.299 * r + 0.587 * gg + 0.114 * b;
+      if (yy > 45 && cb > 77 && cb < 127 && cr > 135 && cr < 175) { skinN++; sx += x; sy += y; }
+    }
+  }
+  const skinFrac = skinN / (w * h);
+  // Menschen: zusammenhängende Haut in mittlerem Umfang (nicht Sand, nicht Holz: dann ist sie meist großflächig)
+  const people = skinFrac > 0.008 && skinFrac < 0.3 ? Math.min(1, skinFrac * 18) : 0;
+  const skin = skinN ? [sx / skinN / w, sy / skinN / h] : focus;
+  // Motivbereich: um den Schwerpunkt, so weit, dass die auffälligen Teile hineinpassen
+  let vx = 0, vy = 0, wv = 0;
+  for (let y = 2; y < h - 2; y += 2) {
+    for (let x = 2; x < w - 2; x += 2) {
+      const i = y * w + x;
+      const lap = Math.abs(4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w]);
+      if (lap < 18) continue;
+      const dx = x / w - focus[0], dy = y / h - focus[1];
+      vx += lap * dx * dx; vy += lap * dy * dy; wv += lap;
+    }
+  }
+  const sw = wv ? Math.min(0.9, Math.max(0.2, 2.4 * Math.sqrt(vx / wv))) : 0.5, sh = wv ? Math.min(0.9, Math.max(0.2, 2.4 * Math.sqrt(vy / wv))) : 0.5;
+  return { horizon, sky: +(sky / (w * top)).toFixed(3), people: +people.toFixed(2), skin: skin.map((v) => +v.toFixed(3)), subject: [+focus[0].toFixed(3), +focus[1].toFixed(3), +sw.toFixed(3), +sh.toFixed(3)] };
+}
+
+/**
+ * Kameraschwenk zwischen zwei Graubildern (Block-Matching über die Bildmitte, ±5 px auf 160 px).
+ * Liefert die Verschiebung des Inhalts als Anteil der Bildbreite/-höhe.
+ */
+function panShift(a, b, w, h) {
+  let best = [0, 0], bs = Infinity;
+  const R = 5, x0 = Math.floor(w * 0.2), x1 = Math.floor(w * 0.8), y0 = Math.floor(h * 0.2), y1 = Math.floor(h * 0.8);
+  for (let dy = -R; dy <= R; dy++) {
+    for (let dx = -R; dx <= R; dx++) {
+      let sad = 0;
+      for (let y = y0; y < y1; y += 2) for (let x = x0; x < x1; x += 2) sad += Math.abs(a[y * w + x] - b[(y + dy) * w + x + dx]);
+      if (sad < bs) { bs = sad; best = [dx, dy]; }
+    }
+  }
+  return [best[0] / w, best[1] / h];
+}
+
 function combineScore(m) {
   return 0.42 * m.sharp + 0.3 * m.expo + 0.28 * m.color;
 }
 
 function scoreImage(src, sw, sh) {
   const m = imageMetrics(samplePixels(src, sw, sh));
-  return { score: combineScore(m), sharp: m.sharp, expo: m.expo, color: m.color, avg: m.avg, luma: +m.luma.toFixed(3), focus: m.focus.map((v) => +v.toFixed(3)), hash: dHash(src, sw, sh), layout: layoutSig(m) };
+  return { score: combineScore(m), sharp: m.sharp, expo: m.expo, color: m.color, avg: m.avg, luma: +m.luma.toFixed(3), focus: m.focus.map((v) => +v.toFixed(3)), hash: dHash(src, sw, sh), layout: layoutSig(m), ...sceneFields(m.scene) };
+}
+
+/** Motiv-Felder für die Aufnahme (werden mit gespeichert). */
+function sceneFields(sc) {
+  return sc ? { horizon: sc.horizon, sky: sc.sky, people: sc.people, subject: sc.subject } : {};
 }
 
 /**
@@ -166,23 +242,28 @@ async function scoreFrames(grab, W, H, duration) {
     const a = imageMetrics(samplePixels(src, W, H));
     if (!hash) { hash = dHash(src, W, H); avg = a.avg; luma = a.luma; }
     src = await grab(Math.min(duration - 0.05, t + 0.2));
-    let motion = 0;
+    let motion = 0, pan = [0, 0];
     if (src) {
       const g2 = imageMetrics(samplePixels(src, W, H)).gray;
       let s = 0;
       for (let i = 0; i < g2.length; i++) s += Math.abs(g2[i] - a.gray[i]);
       motion = s / g2.length / 255;
+      // Kameraschwenk (Inhalt wandert um pan je 0,2 s): Richtung für Anschlüsse an Fotos und Übergänge
+      pan = panShift(a.gray, g2, a.w, a.h);
     }
     // Moderate Bewegung ist spannend, extremes Wackeln nicht
     const motionN = Math.max(0, Math.min(1, motion / 0.06)) * (motion > 0.2 ? 0.5 : 1);
-    res.push({ t, score: 0.7 * combineScore(a) + 0.3 * motionN, motion, a });
+    res.push({ t, score: 0.7 * combineScore(a) + 0.3 * motionN, motion, pan, a });
   }
   res.sort((x, y) => y.score - x.score);
   if (res.length) layout = layoutSig(res[0].a);
   const top = res[0] && res[0].a;
   // Bewegung im Video (Durchschnitt): entscheidet, ob es eher in ruhige Songteile oder in den Drop passt
   const motion = res.length ? +(res.reduce((a, r) => a + r.motion, 0) / res.length).toFixed(4) : 0;
-  return { motion, score: res.length ? res[0].score : 0.3, hash: hash || [0, 0], avg, luma: +luma.toFixed(3), focus: top ? top.focus.map((v, i) => +(0.5 * v + 0.5 * [0.5, 0.45][i]).toFixed(3)) : undefined, layout, highlights: res.map((r) => ({ t: r.t, score: r.score })) };
+  // Schwenk über die Zeit (in Aufnahme-Reihenfolge): Inhalt bewegt sich je Sekunde um diesen Bildanteil
+  const byT = res.slice().sort((x, y) => x.t - y.t);
+  const pans = byT.map((r) => ({ t: r.t, x: +(r.pan[0] * 5).toFixed(3), y: +(r.pan[1] * 5).toFixed(3) }));
+  return { pans, ...sceneFields(top && top.scene), motion, score: res.length ? res[0].score : 0.3, hash: hash || [0, 0], avg, luma: +luma.toFixed(3), focus: top ? top.focus.map((v, i) => +(0.5 * v + 0.5 * [0.5, 0.45][i]).toFixed(3)) : undefined, layout, highlights: res.map((r) => ({ t: r.t, score: r.score })) };
 }
 
 /** Markiert Beinahe-Duplikate (nur das beste Bild einer Serie bleibt aktiv). */

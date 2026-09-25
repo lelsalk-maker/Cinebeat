@@ -53,7 +53,7 @@ function percentile(arr, p) {
  * Taktphase (Downbeats), Energie je Beat und eine Hüllkurve für die Anzeige.
  */
 /** Version der Analyse: gespeicherte Songs mit älterer Version werden einmal neu analysiert. */
-const AN_VER = 3;
+const AN_VER = 4;
 
 async function analyzeAudio(buffer, onProgress) {
   const sr0 = buffer.sampleRate;
@@ -394,6 +394,7 @@ async function analyzeAudio(buffer, onProgress) {
     beatLow[i] = lf;
   }
   const drums = detectDrums(beats, pSec, lowE, hiE, toFrame, nFrames);
+  const vocal = detectVocals(beats, pSec, timbreF, chromaF, toFrame, nFrames);
   const db = Array.from(beatRms, (v) => 20 * Math.log10(v + 1e-7));
   const lo = percentile(db, 0.05), hi = percentile(db, 0.97);
   const energyRaw = db.map((v) => Math.max(0, Math.min(1, (v - lo) / Math.max(1e-6, hi - lo))));
@@ -442,12 +443,48 @@ async function analyzeAudio(buffer, onProgress) {
     beats: Float64Array.from(beats),
     energy,
     kicks: drums.kicks,
+    vocal: vocal.level,
+    vocalOn: vocal.onsets,
     snares: drums.snares,
     duration,
     firstSound,
     lastSound: Math.max(firstSound + 1, lastSound),
     env,
   };
+}
+
+/**
+ * Gesang (Näherung ohne KI): Anteil der Stimmlage (≈ 250 Hz – 2,5 kHz) an der Gesamtenergie mal
+ * Tonhaftigkeit (ausgeprägte Tonklassen statt Rauschen). Je Beat 0–1; Einsätze = neue Gesangszeilen.
+ */
+function detectVocals(beats, pSec, timbreF, chromaF, toFrame, nFrames) {
+  const n = beats.length;
+  const raw = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const a = toFrame(beats[i]), b = Math.max(a + 1, toFrame(i + 1 < n ? beats[i + 1] : beats[i] + pSec));
+    let acc = 0, cnt = 0;
+    for (let f = a; f < b && f < nFrames; f++) {
+      let mid = 0, all = 0;
+      for (let g = 0; g < 12; g++) { const v = timbreF[f * 12 + g]; all += v; if (g >= 4 && g <= 9) mid += v; }
+      let mx = 0, sum = 0;
+      for (let k = 0; k < 12; k++) { const c = chromaF[f * 12 + k]; mx = Math.max(mx, c); sum += c; }
+      const tonal = sum > 0 ? (mx * 12) / sum : 1;
+      acc += (mid / 6 - all / 12) + 0.8 * Math.log(tonal);
+      cnt++;
+    }
+    raw[i] = cnt ? acc / cnt : 0;
+  }
+  const arr = Array.from(raw);
+  const lo = percentile(arr, 0.2), hi = percentile(arr, 0.92);
+  const level = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let s = 0, c = 0;
+    for (let k = i - 1; k <= i + 1; k++) if (k >= 0 && k < n) { s += raw[k]; c++; }
+    level[i] = Math.max(0, Math.min(1, (s / c - lo) / Math.max(1e-6, hi - lo)));
+  }
+  const onsets = [];
+  for (let i = 2; i < n; i++) if (level[i] > 0.55 && level[i - 1] < 0.4 && level[i - 2] < 0.4) onsets.push(beats[i]);
+  return { level, onsets: Float64Array.from(onsets) };
 }
 
 /** Anstieg der Energie am Anschlag gegenüber den Frames kurz davor. */

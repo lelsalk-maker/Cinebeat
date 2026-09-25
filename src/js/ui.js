@@ -555,6 +555,26 @@ function thumbFrom(source, sw, sh, size) {
 }
 
 
+/**
+ * Gesichter mit der Gesichtserkennung des Browsers (lokal, wo verfügbar – sonst bleibt die Haut-Erkennung).
+ * Das Motiv wird dann der Bereich um die Gesichter: Fahrten enden dort, Ausschnitte schneiden niemanden an.
+ */
+async function detectFaces(item, src, sw, sh) {
+  if (typeof FaceDetector !== 'function') return;
+  try {
+    const faces = await new FaceDetector({ fastMode: true, maxDetectedFaces: 6 }).detect(src);
+    if (!faces || !faces.length) return;
+    let x0 = 1, y0 = 1, x1 = 0, y1 = 0;
+    for (const f of faces) { const b = f.boundingBox; x0 = Math.min(x0, b.x / sw); y0 = Math.min(y0, b.y / sh); x1 = Math.max(x1, (b.x + b.width) / sw); y1 = Math.max(y1, (b.y + b.height) / sh); }
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    item.faces = faces.length;
+    item.people = 1;
+    item.focus = [+cx.toFixed(3), +Math.min(0.8, cy + (y1 - y0) * 0.3).toFixed(3)];
+    // Köpfe und Oberkörper sollen im Bild bleiben
+    item.subject = [+cx.toFixed(3), +(cy + (y1 - y0) * 0.5).toFixed(3), +Math.min(0.95, (x1 - x0) * 1.8 + 0.1).toFixed(3), +Math.min(0.95, (y1 - y0) * 3 + 0.1).toFixed(3)];
+  } catch (e) { /* nicht verfügbar */ }
+}
+
 async function probeAndScore(item) {
   if (item.kind === 'image') {
     // Maße aus dem Dateikopf (ohne das Bild zu dekodieren), dann direkt klein dekodieren:
@@ -569,6 +589,7 @@ async function probeAndScore(item) {
     const sw = small.width, sh = small.height;
     item.thumb = thumbFrom(small, sw, sh, 160);
     Object.assign(item, scoreImage(small, sw, sh));
+    await detectFaces(item, small, sw, sh);
     if (small.close) small.close(); else { small.width = 0; small.height = 0; }
     return;
   }

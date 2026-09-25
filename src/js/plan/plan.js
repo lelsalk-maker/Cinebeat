@@ -363,7 +363,7 @@ function planOnce(opts) {
     // innerhalb eines Moments (wenige Minuten) darf ein Bild aus dem vorigen hervorgehen (Match-Cuts, Farbfluss)
     const flowed = spreadSimilar(flowOrder(all0.filter((m) => m !== hk), s.match !== 'off'));
     let queue = hk ? [hk, ...flowed] : flowed;
-    const chronoCtx = { s, an, win, fr, level, allOn, intro, outro, rush, reveal, leader, gridPlan, special, splitFit, splitN, barDur, beatDur, isPeakSec };
+    const chronoCtx = { s, an, win, fr, level, allOn, intro, outro, rush, reveal, leader, gridPlan, special, splitFit, splitN, barDur, beatDur, isPeakSec, scenes: sceneStarts(all0) };
     let res = layoutChrono(chronoCtx, segs, queue, 0);
     // alle Aufnahmen: fehlen am Ende noch welche, früher etwas mehr zusammenfassen (Split-Screens)
     for (let k = 0; k < 2 && allOn && res.dropped.length; k++) {
@@ -386,7 +386,7 @@ function planOnce(opts) {
     const sec = sectionAt(an, abs + 0.01);
     return {
       i, start: g.start, end: g.end, label: sec.label, energy: sec.energy, weight: g.w, freezeAt: g.freezeAt, burst: !!g.burst, leader: !!g.leader, pre: g.pre || null, reveal: !!g.reveal, vid: g.vid || null, gridMid: g.gridMid || null, grid: !!g.gridMid, miniRew: !!g.miniRew, rush: !!g.rush, stack: g.stackSeg ? { times: g.stackSeg.times, reserved: g.stackIds || null } : null,
-      pre_mediaId: g.mediaId || null, splitIds: g.splitIds || g.vsplitIds || null, gridIds: g.gridIds || null, replaySeg: !!g.replaySeg, repeatSeg: !!g.repeat,
+      pre_mediaId: g.mediaId || null, sceneStart: !!g.sceneStart, splitIds: g.splitIds || g.vsplitIds || null, gridIds: g.gridIds || null, replaySeg: !!g.replaySeg, repeatSeg: !!g.repeat,
       sectionChange: i > 0 && (an.sections || []).some((x) => Math.abs(x.start - abs) < 0.05),
       mediaId: null, role: 'normal',
     };
@@ -756,6 +756,10 @@ function planOnce(opts) {
     if (tr.match) { B.matchCut = true; matches++; }
     if (tr.type === TR.MORPH || tr.type === TR.INK || tr.type === TR.DOUBLE) morphs++;
     if (fixedCut) tr = { type: TR.CUT, dur: 0, punch: false };
+    // Szenenwechsel (anderer Ort/Tageszeit): im Drop ein harter Schnitt mit Impuls, in ruhigen Teilen eine Lichtblende
+    else if (B.sceneStart && B.role !== 'chapter' && !tr.match && !B.vid && !A.vid) {
+      tr = isCalmLabel(B.label) ? { type: TR.LUMA, dur: Math.min(beatDur * 1.2, 0.45 * (A.end - A.start), 0.45 * (B.end - B.start)), punch: false } : { type: TR.CUT, dur: 0, punch: true };
+    }
     // in den Polaroid-Stapel weich hinein; nach dem Mini-Rewind hart auf den Einsatz
     if (B.stack && !A.split && !A.grid && !A.burst) tr = { type: TR.DISSOLVE, dur: Math.min(beatDur, 0.45 * (A.end - A.start), 0.4 * (B.end - B.start)), punch: false };
     if ((A.miniRew && !B.miniRew) || (A.rush && !B.rush)) tr = { type: TR.CUT, dur: 0, punch: true };
@@ -805,6 +809,15 @@ function planOnce(opts) {
       if (cost < bestCost) { bestCost = cost; bestOff = Math.max(0, Math.min(hi, o)); }
     }
     return bestOff;
+  };
+
+  // Bewegung im Video weiterführen: ein Foto neben einem Video fährt in dessen Schwenk-Richtung
+  // (Inhalt wandert nach links = Kamera schwenkt nach rechts)
+  const panHint = (c) => {
+    const vPrev = byId.get(clips[c.i - 1] && clips[c.i - 1].mediaId), vNext = byId.get(clips[c.i + 1] && clips[c.i + 1].mediaId);
+    const p = vPrev && vPrev.kind === 'video' && vPrev.pans && vPrev.pans.length ? vPrev.pans[vPrev.pans.length - 1] : vNext && vNext.kind === 'video' && vNext.pans && vNext.pans.length ? vNext.pans[0] : null;
+    if (!p || Math.max(Math.abs(p.x), Math.abs(p.y)) < 0.04) return null;
+    return Math.abs(p.x) >= Math.abs(p.y) ? (p.x < 0 ? 'right' : 'left') : (p.y < 0 ? 'down' : 'up');
   };
 
   // Quellen, Tempo, Bewegung, Farbangleichung
@@ -927,7 +940,7 @@ function planOnce(opts) {
       const fitFrac = srcAspect > outAspect ? outAspect / srcAspect : srcAspect / outAspect;
       const framed = fitFrac < 0.5 && !c.burst && !c.reveal && !c.pre && !(clips[c.i - 1] && clips[c.i - 1].reveal);
       const role = c.label === 'drop' || c.label === 'chorus' ? 'burst' : 'normal';
-      const mo = imageMotion(rng, m, outAspect, visDur, role, prevDir);
+      const mo = imageMotion(rng, m, outAspect, visDur, role, prevDir, panHint(c));
       prevDir = mo.dir;
       c.motion = mo.m;
       c.dir = mo.dir;
