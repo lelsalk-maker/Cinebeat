@@ -35,7 +35,9 @@ const res = await p.evaluate(async (b64) => {
       const m = media[c.mediaIndex];
       const h = m.highlights[0].t;
       const tFilm = c.visStart + (h - c.srcOffset) / (c.rate || 1);
-      if (tFilm > c.start + 0.2 && tFilm < c.end - 0.3) { withHl++; if (beatNear(pl, tFilm) < 0.03) onBeat++; }
+      // nur wo der Ausschnitt Spielraum hat (läuft das Video ganz, liegt sein Anfang fest)
+      const slack = (m.duration - (c.visEnd - c.visStart) * (c.rate || 1));
+      if (slack > 0.4 && tFilm > c.start + 0.2 && tFilm < c.end - 0.3) { withHl++; if (beatNear(pl, tFilm) < 0.03) onBeat++; }
     }
     const played = vc.map((c) => Math.min(c.freezeAt != null ? c.freezeAt : c.visEnd, c.visEnd) - c.visStart);
     out[name + '_d'] = vc.map((c) => `${media[c.mediaIndex].id}${c.vid ? 'S' : ''} ${c.start.toFixed(1)}-${c.end.toFixed(1)} r${(c.rate || 1).toFixed(2)} off${c.srcOffset.toFixed(1)} fz${c.freezeAt != null ? c.freezeAt.toFixed(1) : '-'} ${c.label} ${c.role}`);

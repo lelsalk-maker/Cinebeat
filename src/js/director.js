@@ -24,8 +24,9 @@ function fmtMS(s) {
   return Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
 }
 
-function goodMedia(media) {
-  return media.filter((m) => !m.bad && !m.loading && !m.excluded && (!m.dupOf || m.fav));
+/** Verwendbare Aufnahmen; all: auch Serienbilder (Beinahe-Doppel), wenn alle Aufnahmen in den Film sollen. */
+function goodMedia(media, all) {
+  return media.filter((m) => !m.bad && !m.loading && !m.excluded && (all || !m.dupOf || m.fav));
 }
 
 function isLandscape(m) { return m.w && m.h && m.w > m.h * 1.15; }
@@ -163,7 +164,7 @@ function autoLook(list, format) {
 function direct(an, media, s, chapters, flight) {
   const notes = [];
   const rs = { ...s };
-  const list = goodMedia(media);
+  const list = goodMedia(media, s.allMedia !== 'off' && !(chapters && chapters.length) && !flight);
   const all = media.filter((m) => !m.bad && !m.loading);
   const fr = formatRule(s);
   const first = Math.max(0, an.firstSound), last = Math.min(an.duration, an.lastSound + 0.2);

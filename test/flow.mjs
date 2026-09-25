@@ -20,7 +20,9 @@ const res = await p.evaluate(async (b64) => {
   // Paare mit gleichem Aufbau, aber anderer Farbe (Match-Kandidaten) + Doppel (fast gleich)
   const scenes = [...base, variant(base[1], 'hue-rotate(150deg) brightness(0.85)'), variant(base[4], 'hue-rotate(200deg)'), variant(base[0], 'brightness(1.02)'), variant(base[2], 'hue-rotate(90deg)')];
   const T0 = Date.UTC(2026, 4, 1, 10);
-  const media = scenes.map((c, i) => ({ id: 'm' + i, kind: 'image', name: 'B' + i, canvas: c, w: c.width, h: c.height, time: T0 + i * 60000, ...scoreImage(c, c.width, c.height) }));
+  // Varianten entstehen kurz nach ihrem Original (gleicher Ort, wenige Sekunden später) – wie im echten Leben
+  const twinOf = { [base.length]: 1, [base.length + 1]: 4, [base.length + 2]: 0, [base.length + 3]: 2 };
+  const media = scenes.map((c, i) => ({ id: 'm' + i, kind: 'image', name: 'B' + i, canvas: c, w: c.width, h: c.height, time: twinOf[i] != null ? T0 + twinOf[i] * 600000 + 20000 : T0 + i * 600000, ...scoreImage(c, c.width, c.height) }));
   const S0 = { format: '9:16', look: 'auto', pace: 'auto', intro: 'hook', outro: 'auto', length: 'auto', songStart: 'auto', frame: 'auto', split: 'off', seed: 5 };
   // 1. Reihenfolge: nie zwei Beinahe-Doppel direkt hintereinander, ähnliche Aufbauten rücken zusammen
   const ord = flowOrder(orderChrono(media), true);
@@ -66,7 +68,7 @@ const res = await p.evaluate(async (b64) => {
   // 7. Story/Reel und Kapazität: keine Doppelungen, zu viele Aufnahmen werden benannt, Story höchstens 60 s
   const many = [];
   for (let k = 0; k < 70; k++) { const src = base[k % base.length]; many.push({ ...media[k % media.length], id: 'n' + k, time: T0 + k * 30000, hash: [k * 7919, k * 104729], avg: [(k * 37) % 255, (k * 91) % 255, (k * 53) % 255], canvas: src }); }
-  const ps = buildPlan({ an, media: many, settings: { ...S0, length: 'auto' }, overrides: { texts: [], stickers: [] } });
+  const ps = buildPlan({ an, media: many, settings: { ...S0, length: 'auto', allMedia: 'off' }, overrides: { texts: [], stickers: [] } });
   const pReel = buildPlan({ an, media: many, settings: { ...S0, length: 'auto', target: 'reel' }, overrides: { texts: [], stickers: [] } });
   const repOf = (pl) => pl.capacity.repeats;
   if (ps.duration > 60.5) fails.push('Story länger als 60 s');

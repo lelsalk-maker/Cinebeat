@@ -35,6 +35,7 @@ function normalizeSettings(st, defaults) {
     outro: pick1(s.outro, ['auto', 'credits', 'loop', 'freeze', 'split', 'strip'], 'auto'),
     pre: pick1(s.pre, ['off', 'countdown', 'rewind'], 'off'),
     target: pick1(s.target, ['story', 'reel'], 'story'),
+    allMedia: pick1(s.allMedia, ['on', 'off'], 'on'),
     match: pick1(s.match, ['auto', 'off'], 'auto'),
     morph: pick1(s.morph, ['off', 'on'], 'off'),
     ramp: pick1(s.ramp, ['off', 'drop'], 'off'),
@@ -70,7 +71,7 @@ function normalizeSettings(st, defaults) {
 }
 
 /* ---------- Stil-Vorlage: ein Stil für alle Filme der Reise ---------- */
-const STYLE_KEYS = ['look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'color', 'accent', 'parallax', 'drift', 'echo', 'stack', 'mini', 'chapKnock', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
+const STYLE_KEYS = ['look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'allMedia', 'color', 'accent', 'parallax', 'drift', 'echo', 'stack', 'mini', 'chapKnock', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
 const styleOf = (st) => Object.fromEntries(STYLE_KEYS.map((k) => [k, st[k]]));
 /** Einstellungen für neue Filme: Standard, darüber die Vorlage der Reise */
 function baseSettings(defaults) {
@@ -1791,6 +1792,8 @@ function renderStyle() {
   $('colorHint').textContent = (st.color === 'auto' ? 'Auto: ' : '') + (COLOR_DE[colR] || COLOR_DE.off);
   setRadio($('targetChips'), st.target);
   $('targetChips').hidden = st.format !== '9:16';
+  setRadio($('allChips'), st.allMedia);
+  $('allChips').hidden = S.ctx.kind === 'bestof' || isFlight(S.ctx.rec);
   $('capHint').textContent = capacityText();
   setRadio($('preChips'), st.pre);
   $('preField').hidden = isFlight(S.ctx.rec);
@@ -1836,7 +1839,11 @@ function capacityText() {
   const len = fmtClock(S.plan.duration);
   const parts = [`Zu diesem Song passen in ${c.story ? 'eine Story' : c.label === 'Reel' ? 'ein Reel' : 'diesen Film'} etwa ${c.imgFit} Fotos${c.videos ? ` neben ${c.videos} ${c.videos === 1 ? 'Video' : 'Videos'}` : ''}.`];
   if (c.droppedIds.length) parts.push(`${c.droppedIds.length} ${c.droppedIds.length === 1 ? 'Aufnahme bleibt' : 'Aufnahmen bleiben'} draußen (${len} voll)${c.story ? '; als Reel passen mehr' : ''}.`);
-  else parts.push(`Alle ${c.images + c.videos} Aufnahmen sind im Film (${len}), keine doppelt.`);
+  else parts.push(`Alle ${c.images + c.videos} Aufnahmen sind im Film (${len}), in ihrer Aufnahme-Reihenfolge, keine doppelt.`);
+  const pk = c.packed || {};
+  const how = [pk.split ? `${pk.split} Fotos im Split-Screen` : '', pk.vsplit ? `${pk.vsplit} Videos gleichzeitig` : '', pk.burst ? `${pk.burst} in Foto-Serien` : '', pk.stack ? `${pk.stack} im Polaroid-Stapel` : '', pk.grid ? `${pk.grid} im Raster` : ''].filter(Boolean);
+  if (how.length) parts.push(`Verdichtet: ${how.join(', ')}.`);
+  if (c.all && c.droppedIds.length) parts.push('Mehr passt selbst verdichtet nicht sinnvoll hinein: wähle eine längere Länge oder ein Reel.');
   if (c.repeats) parts.push(`${c.repeats} ${c.repeats === 1 ? 'Einstellung wiederholt' : 'Einstellungen wiederholen'} ein Bild: für diese Länge fehlen Aufnahmen.`);
   if (c.tooLong.length) parts.push(`${c.tooLong.length === 1 ? 'Ein Video ist' : c.tooLong.length + ' Videos sind'} länger als ${Math.round(c.vmax)} s: im Material antippen und einen Ausschnitt wählen.`);
   return parts.join(' ');
@@ -2521,6 +2528,7 @@ async function init() {
   bindSetting('motionChips', 'motion');
   bindSetting('motionAmtChips', 'motionAmt');
   bindSetting('drumChips', 'accent');
+  bindSetting('allChips', 'allMedia');
   bindSetting('colorChips', 'color');
   bindSetting('preChips', 'pre');
   bindSetting('targetChips', 'target');
