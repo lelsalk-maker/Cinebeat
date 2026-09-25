@@ -107,7 +107,8 @@ Die Vorschau passt sich an: Ruckelt das Gerät, sinkt beim Abspielen die Auflös
 
 | Ordner | Inhalt |
 | --- | --- |
-| `src/js/` | Programmcode: Audioanalyse, Auto-Regie, Planung, Renderer, Export, Oberfläche |
+| `src/js/` | Programmcode: Audioanalyse, Auto-Regie, Renderer, Export, Oberfläche |
+| `src/js/plan/` | Planer: Schnittraster, Übergänge, chronologische Zuteilung, Effekte |
 | `src/body.html`, `src/app.css` | Oberfläche und Gestaltung |
 | `docs/` | fertige Web-App (von `node build.mjs` erzeugt) und Symbole, von GitHub Pages ausgeliefert |
 | `test/` | automatische Tests (Playwright/Chromium) |
@@ -115,16 +116,10 @@ Die Vorschau passt sich an: Ruckelt das Gerät, sinkt beim Abspielen die Auflös
 ## Entwicklung
 
 ```sh
-node build.mjs          # docs/index.html (Web-App für GitHub Pages), docs/CineBeat.html (Einzeldatei), dist/cinebeat.html (Claude-Link, nicht im Repository)
-node test/offline.mjs   # Einzeldatei: Netzsperre, Speicher, Export
-node test/ui.mjs        # Bedienoberfläche
-node test/e2e.mjs       # Ort und Gesamtfilm von Anfang bis Export
-node test/beats.mjs     # Beat-Genauigkeit
-node test/structure.mjs 124
-node test/trip.mjs      # Reise-Import mit GPS, Koordinaten/km, Stil-Vorlage, keine gespeicherten Medien
-node test/mic.mjs       # Mithören (Fake-Mikrofon), verweigerter Zugriff, Instagram-Startzeit, Export-Stufen
-node test/quality.mjs   # Bildschärfe im Export gegenüber idealer Verkleinerung (Ziel > 90 %)
-node test/flight.mjs    # Flug anlegen, Fluganimation
-node test/pipeline.mjs '{"intro":"grid","many":1}'   # 9er-Raster
-node test/pipeline.mjs '{"voice":1}'                  # Originalton im Export
+npm run build        # docs/index.html (Web-App), docs/CineBeat.html (Einzeldatei), dist/cinebeat.html (Claude-Link)
+npm test             # Lint + schnelle Tests, eine Zeile je Test
+npm test -- all      # alle Tests (Playwright/Chromium)
+npm test -- flow     # einzelne Tests
 ```
+
+Aufbau, Regeln und Arbeitsweise stehen in `CLAUDE.md`.

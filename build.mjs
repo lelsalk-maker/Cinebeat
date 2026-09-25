@@ -4,7 +4,7 @@
 //   dist/cinebeat.html   – Fragment für den Claude-Link (nicht im Repository)
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 const r = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
-const order = ['mediaio', 'meta', 'world', 'audio', 'score', 'planner', 'director', 'renderer', 'overlay', 'mp4mux', 'demux', 'engine', 'store', 'demo', 'ui'];
+const order = ['mediaio', 'meta', 'world', 'audio', 'score', 'plan/base', 'plan/cuts', 'plan/transitions', 'plan/media', 'plan/search', 'plan/chrono', 'plan/plan', 'plan/timeline', 'director', 'renderer', 'overlay', 'mp4mux', 'demux', 'engine', 'store', 'demo', 'ui'];
 const js = "(function () {\n'use strict';\n" + order.map((n) => r(`src/js/${n}.js`)).join('\n') + '\n})();\n';
 const css = r('src/app.css');
 const body = r('src/body.html');

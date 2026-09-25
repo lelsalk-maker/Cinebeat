@@ -4,6 +4,7 @@
   "description": "Reisefilme im Takt deines Songs – Web-App, läuft komplett auf dem Gerät",
   "type": "module",
   "scripts": {
-    "build": "node build.mjs"
+    "build": "node build.mjs",
+    "test": "node test/run.mjs"
   }
 }
