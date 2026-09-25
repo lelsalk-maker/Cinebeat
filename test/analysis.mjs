@@ -72,6 +72,15 @@ const res = await p.evaluate(async (b64) => {
   // selbst aussortieren: Bildschirmfoto und schwarzes Bild nicht im Film, als Favorit schon
   out.autoOut = [autoOut({ kind: 'image', name: 'Screenshot 2026.png' }), autoOut({ kind: 'image', name: 'x', expo: 0.01, luma: 0.03 }), autoOut({ kind: 'image', name: 'x', expo: 0.01, luma: 0.03, fav: true }), autoOut({ kind: 'image', name: 'x', expo: 0.6, luma: 0.5, sharp: 0.5 })];
   if (!out.autoOut[0] || !out.autoOut[1] || out.autoOut[2] || out.autoOut[3]) fails.push('Aussortieren falsch');
+  // Einstellungsgrößen: Totale, Halbnah, Detail werden erkannt und wechseln sich innerhalb eines Moments ab
+  const mkS = (id, kind, t) => ({ id, kind: 'image', time: T + t * 30000, avg: [60 + t * 30, 120, 180 - t * 20], luma: 0.45, hash: [(t * 2654435761) >>> 0, (t * 40503 * 977) >>> 0], ...(kind === 0 ? { horizon: 0.45, sky: 0.8, subject: [0.5, 0.5, 0.8, 0.8], iso: 1 } : kind === 2 ? { subject: [0.5, 0.5, 0.2, 0.2], iso: 5 } : { subject: [0.5, 0.5, 0.6, 0.6], iso: 1.2 }) });
+  const seq = [mkS('w1', 0, 0), mkS('w2', 0, 1), mkS('d1', 2, 2), mkS('d2', 2, 3), mkS('h1', 1, 4), mkS('h2', 1, 5)];
+  out.sizes = seq.map((m) => SHOT_DE[shotSize(m)][0]).join('');
+  if (out.sizes !== 'TTDDHH') fails.push('Einstellungsgrößen falsch: ' + out.sizes);
+  const fo = flowOrder(seq, true).map((m) => SHOT_DE[shotSize(m)][0]).join('');
+  out.flowSizes = fo;
+  let sameS = 0; for (let i = 1; i < fo.length; i++) if (fo[i] === fo[i - 1]) sameS++;
+  if (sameS > 1) fails.push('Größen wechseln nicht: ' + fo);
   return { out, fails };
 }, wav);
 console.log(JSON.stringify(res.out, null, 1));

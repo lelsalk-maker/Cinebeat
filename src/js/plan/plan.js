@@ -674,6 +674,11 @@ function planOnce(opts) {
     dir.notes.push(`Polaroid-Stapel bei ${fmtMS(c.start)}: ${ids.length} Fotos fallen im Takt als Abzüge übereinander.`);
   }
 
+  {
+    const sz = [0, 0, 0];
+    for (const c of clips) { const m = byId.get(c.mediaId); if (m && m.kind === 'image' && !c.burst && !c.rush) sz[shotSize(m)]++; }
+    if (sz.filter(Boolean).length >= 2 && sz[0] + sz[1] + sz[2] >= 6) dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Einstellungsgrößen im Wechsel: ${sz[0]} Totalen, ${sz[1]} halbnah, ${sz[2]} Details; neue Szenen beginnen möglichst mit einer Totale.`);
+  }
   const splitDone = clips.filter((c) => c.split).length;
   if (splitDone) dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `${splitDone} Split-Screen${splitDone > 1 ? 's' : ''}: ${vertical ? 'Queraufnahmen erscheinen übereinander' : 'Hochkant-Aufnahmen erscheinen nebeneinander'}, Bild für Bild im Takt.`);
 
@@ -1318,8 +1323,11 @@ function planOnce(opts) {
     fx.push({ type: 'flash', start: firstBurst.start, end: firstBurst.start + 0.18, amp: 0.3 });
     dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Foto-Serie: Im ${SEC_DE[firstBurst.label] || 'Drop'} ab ${fmtMS(firstBurst.start)} wechselt jeden ${beatDur / 2 >= 0.2 ? 'halben ' : ''}Beat das Bild.`);
   }
+  // Zoom-Impulse sparsam: höchstens einer je zwei Takte (der Drop-Einsatz hat Vorrang), in ruhigen Filmen sanfter
+  let lastPunch = -1e9;
+  const punchAmp = s.pace === 'ruhig' ? 0.6 : 1;
   for (const c of clips) {
-    if (c.punch) fx.push({ type: 'punch', start: c.start, end: c.start + 0.45, amp: 1 });
+    if (c.punch && (c.start - lastPunch >= barDur * 2 || c.sectionChange)) { fx.push({ type: 'punch', start: c.start, end: c.start + 0.45, amp: punchAmp }); lastPunch = c.start; }
     if (c.freezeAt != null && !(outro === 'freeze' && c === last)) fx.push({ type: 'flash', start: c.freezeAt, end: c.freezeAt + 0.2, amp: 0.25 });
   }
 
@@ -1394,6 +1402,14 @@ function planOnce(opts) {
     stack: clips.filter((c) => c.stack).reduce((a, c) => a + c.stack.ids.length, 0),
     grid: clips.filter((c) => c.gridMid && c.grid && c.grid.ids).reduce((a, c) => a + c.grid.ids.length - 1, 0),
   };
+  // Blitze sparsam: ein Aufhellen wirkt nur, wenn es selten ist. Höchstens einer je zwei Takte (Digicam ausgenommen, dort ist er Stil)
+  if (!digicam) {
+    const fl = fx.filter((f) => f.type === 'flash').sort((a, b) => a.start - b.start || b.amp - a.amp);
+    let lastF = -1e9;
+    const drop = new Set();
+    for (const f of fl) { if (f.start - lastF < barDur * 2) drop.add(f); else lastF = f.start; }
+    for (let k = fx.length - 1; k >= 0; k--) if (drop.has(fx[k])) fx.splice(k, 1);
+  }
   const capacity = { packed, all: allOn, label: fr.label, story: fr.kind === 'story' && s.target !== 'reel' && s.format === '9:16', maxFilm: fr.max, vmax: fr.vmax, imgFit, images: good.filter((m) => m.kind === 'image').length, videos: good.length - good.filter((m) => m.kind === 'image').length, droppedIds, tooLong, repeats };
   if (!flight) {
     if (droppedIds.length) dir.notes.push(`${droppedIds.length} ${droppedIds.length === 1 ? 'Aufnahme passt' : 'Aufnahmen passen'} nicht mehr in ${capacity.story ? 'diese Story' : 'diesen Film'} (${fmtMS(D)}): zu diesem Song passen etwa ${imgFit} Fotos${capacity.videos ? ' neben den Videos' : ''}. Die schwächsten bleiben draußen, im Material markiert.${capacity.story ? ' Als Reel passen mehr.' : ''}`);

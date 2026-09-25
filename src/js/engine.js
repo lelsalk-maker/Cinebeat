@@ -1023,12 +1023,16 @@ class Engine {
     const w = this.plan.win, D = this.plan.duration;
     const fi = Math.max(0.005, w.fadeIn || 0.02);
     const fo = Math.max(0.05, Math.min(w.fadeOut || 1, D * 0.3));
-    const gAt = (x) => Math.min(clamp01(x / fi), clamp01((D - x) / fo));
+    // Ausblenden nach dem Gehör: erst sanft, dann weich ins Leise (Kosinus statt gerader Linie, kein hörbares Abreißen)
+    const out = (u) => Math.pow(Math.cos(clamp01(u) * Math.PI / 2), 1.6);
+    const gAt = (x) => Math.min(clamp01(x / fi), x > D - fo ? out((x - (D - fo)) / fo) : 1);
     g.gain.setValueAtTime(gAt(offset), when);
-    if (offset < fi) g.gain.linearRampToValueAtTime(1, when + (fi - offset));
-    const foStart = D - fo;
-    if (offset < foStart) g.gain.setValueAtTime(1, when + (foStart - offset));
-    g.gain.linearRampToValueAtTime(0, when + (D - offset));
+    if (offset < fi) g.gain.linearRampToValueAtTime(1, when + Math.min(fi - offset, Math.max(0, D - fo - offset - 0.02)));
+    const foStart = Math.max(offset + 0.01, D - fo);
+    const n = 48, curve = new Float32Array(n);
+    for (let k = 0; k < n; k++) curve[k] = gAt(foStart + ((D - foStart) * k) / (n - 1));
+    curve[n - 1] = 0;
+    if (D - foStart > 0.02) g.gain.setValueCurveAtTime(curve, when + (foStart - offset), D - foStart);
   }
 
   _startAudio(offset, out, extraOut, withSong = true) {

@@ -218,6 +218,12 @@ function flowOrder(list, wantMatch) {
     const sim = layoutSim(a.layout, b.layout);
     if (wantMatch && sim > 0.72) v += 0.35 * sim;
     if (a.kind !== b.kind) v += 0.05;
+    // Einstellungsgrößen wechseln wie im Film (Totale → Halbnah → Detail), gleiche Größen hintereinander wirken flach
+    const sa = shotSize(a), sb = shotSize(b);
+    if (sa === sb) v -= sa === 1 ? 0.05 : 0.14;
+    else v += Math.abs(sa - sb) === 1 ? 0.12 : 0.07;
+    // eine neue Szene eröffnet am liebsten eine Totale (Establishing Shot)
+    if (a.time && b.time && b.time - a.time > 20 * 60 * 1000 && sb === 0) v += 0.2;
     return v;
   };
   // Momente: nur Aufnahmen, die wenige Minuten auseinander liegen, dürfen die Plätze tauschen (die Reise bleibt chronologisch)
@@ -253,11 +259,31 @@ function flowOrder(list, wantMatch) {
   return out;
 }
 
+/**
+ * Einstellungsgröße wie im Film: 0 = Totale (Landschaft, Horizont, viel Himmel, Details überall),
+ * 1 = Halbnah (Menschen, Plätze, Gebäude), 2 = Nah/Detail (kleines, freigestelltes Motiv, Gesicht füllt das Bild).
+ * Nutzt nur Werte aus der Bildbewertung; ältere Aufnahmen ohne Freistellung werden aus Horizont und Motivgröße geschätzt.
+ */
+function shotSize(m) {
+  if (!m) return 1;
+  let c = 0.5;
+  const sub = m.subject;
+  if (sub) c += (0.3 - sub[2] * sub[3]) * 0.9;
+  // Landschaft: Horizont mit Himmel darüber
+  if (m.horizon != null && (m.sky || 0) > 0.3) c -= 0.3;
+  // Gesicht füllt das Bild (sehr große Hautflächen sind eher Sand, Holz oder Wände)
+  if (m.skinFrac != null && m.skinFrac > 0.15 && m.skinFrac < 0.5) c += 0.45;
+  else if (m.faces && sub && sub[2] * sub[3] > 0.25) c += 0.3;
+  if (m.iso != null) c += Math.max(-0.1, Math.min(0.3, (m.iso - 1.4) * 0.16));
+  return c < 0.28 ? 0 : c > 0.62 ? 2 : 1;
+}
+const SHOT_DE = ['Totale', 'Halbnah', 'Detail'];
+
 /** Beziehung zweier aufeinanderfolgender Aufnahmen für die Wahl des Übergangs. */
 function shotRelation(a, b) {
   if (!a || !b) return null;
   const colorD = a.avg && b.avg ? Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) : 60;
-  return { sim: layoutSim(a.layout, b.layout), colorD, dl: (b.luma || 0.45) - (a.luma || 0.45), aLuma: a.luma || 0.45 };
+  return { sim: layoutSim(a.layout, b.layout), colorD, dl: (b.luma || 0.45) - (a.luma || 0.45), aLuma: a.luma || 0.45, sizeA: shotSize(a), sizeB: shotSize(b) };
 }
 
 /** Ähnliche Bilder nicht direkt hintereinander (Farbe/Hash). */
@@ -299,30 +325,38 @@ function imageMotionRaw(rng, m, outAspect, visDur, role, prevDir, hint) {
   const toPos = (f, frac) => (frac >= 0.999 ? 0 : Math.max(-1, Math.min(1, ((f - 0.5) * 2) / (1 - frac))));
   const px = toPos(fx, fw), py = toPos(fy, fh);
   const speed = Math.min(1.4, Math.max(0.6, visDur / 3.2));
-  const z = (role === 'burst' ? 0.1 : 0.075) * speed;
+  // Totale: weiter, ruhiger Blick (wenig Zoom); Detail: sanftes Heranfahren statt großer Sprünge
+  const size = shotSize(m);
+  const z = (role === 'burst' ? 0.1 : 0.075) * speed * (size === 0 ? 0.75 : size === 2 ? 0.85 : 1);
   // feine Neigung, die über die Einstellung ausläuft (modern, nie wackelig)
   const tilt = (rng() < 0.5 ? -1 : 1) * 0.0065 * speed;
   // Richtung bleibt meist über zwei Einstellungen gleich: ruhiger Fluss statt Hin und Her
-  const keep = rng() < 0.55;
+  // (in ruhigen Teilen noch häufiger: die Kamera fließt in eine Richtung statt hin und her)
+  const keep = rng() < (role === 'burst' ? 0.55 : 0.72);
+  // Schwenkweite wächst mit der Dauer: kurze Einstellungen gleiten nur ein Stück, nie ruckartig über das ganze Bild
+  const sweep = Math.min(1, 0.3 * Math.pow(Math.max(0.1, visDur), 1.6));
   // Anschluss an ein Video: die Fahrt nimmt dessen Schwenk-Richtung auf
   if (hint === 'left' || hint === 'right' || hint === 'up' || hint === 'down') prevDir = hint;
   if (fh < 0.72) {
     const down = hint === 'down' ? true : hint === 'up' ? false : prevDir === 'up' ? !keep : prevDir === 'down' ? keep : rng() < 0.5;
-    const a = Math.max(-1, Math.min(1, py + (down ? -0.6 : 0.6)));
+    const a = Math.max(-1, Math.min(1, py + (down ? -0.6 : 0.6) * sweep));
     return { dir: down ? 'down' : 'up', m: { from: { s: 1.03, x: 0, y: a, r: tilt }, to: { s: 1.03 + z * 0.6, x: 0, y: py, r: 0 } } };
   }
   if (fw < 0.72) {
     const right = hint === 'right' ? true : hint === 'left' ? false : prevDir === 'left' ? !keep : prevDir === 'right' ? keep : rng() < 0.5;
-    const a = Math.max(-1, Math.min(1, px + (right ? -0.65 : 0.65)));
+    const a = Math.max(-1, Math.min(1, px + (right ? -0.65 : 0.65) * sweep));
     return { dir: right ? 'right' : 'left', m: { from: { s: 1.03, x: a, y: 0, r: tilt }, to: { s: 1.03 + z * 0.6, x: px, y: 0, r: 0 } } };
   }
-  const zin = prevDir === 'in' ? keep || rng() < 0.3 : prevDir === 'out' ? !keep : rng() < 0.7;
+  const zin = size === 2 && !hint ? prevDir !== 'in' || keep || rng() < 0.6 : prevDir === 'in' ? keep || rng() < 0.3 : prevDir === 'out' ? !keep : rng() < 0.7;
   const tx = px * 0.8, ty = py * 0.8;
   // leichter Versatz quer zur Zoomrichtung: die Fahrt bekommt eine Kurve statt einer geraden Linie
   const sx = hint === 'right' ? -0.3 : hint === 'left' ? 0.3 : (rng() - 0.5) * 0.35;
+  // Weg quer zum Zoom wie beim Schwenk: in kurzen Einstellungen nur angedeutet
+  const k = Math.min(1, sweep * 1.6);
+  const ox = tx - (tx * 0.8 - sx) * k, oy = ty - ty * 0.8 * k;
   return zin
-    ? { dir: 'in', m: { from: { s: 1.02, x: tx * 0.2 + sx, y: ty * 0.2, r: tilt }, to: { s: 1.02 + z, x: tx, y: ty, r: -tilt * 0.3 } } }
-    : { dir: 'out', m: { from: { s: 1.02 + z, x: tx, y: ty, r: -tilt * 0.3 }, to: { s: 1.02, x: tx * 0.2 + sx, y: ty * 0.2, r: tilt } } };
+    ? { dir: 'in', m: { from: { s: 1.02, x: ox, y: oy, r: tilt }, to: { s: 1.02 + z, x: tx, y: ty, r: -tilt * 0.3 } } }
+    : { dir: 'out', m: { from: { s: 1.02 + z, x: tx, y: ty, r: -tilt * 0.3 }, to: { s: 1.02, x: ox, y: oy, r: tilt } } };
 }
 
 /**

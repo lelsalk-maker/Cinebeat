@@ -45,6 +45,10 @@ function refineTransition(tr, rel, ctx) {
   if (s.match !== 'off' && rel.sim > 0.78 && (tr.type === TR.CUT || tr.type === TR.DISSOLVE)) {
     return { type: TR.CUT, dur: 0, punch: false, match: true };
   }
+  // großer Größensprung (Totale ↔ Detail) im Drop: ein klarer Schnitt auf den Schlag statt Wischer – wirkt ruhiger und professioneller
+  if (peak && rel.sizeA != null && Math.abs(rel.sizeA - rel.sizeB) === 2 && (tr.type === TR.WHIP || tr.type === TR.PUSH || tr.type === TR.ZOOM)) return { type: TR.CUT, dur: 0, punch: false };
+  // aus dem Detail zurück in die Totale in ruhigen Teilen: weich öffnen
+  if (!peak && rel.sizeA === 2 && rel.sizeB === 0 && tr.type === TR.CUT) { const d = fit(1); if (d >= 0.3) return { type: rel.dl > 0.22 ? TR.LUMA : TR.DISSOLVE, dur: d, punch: false }; }
   if (tr.type === TR.DISSOLVE) {
     if (rel.dl > 0.22) return { ...tr, type: TR.LUMA };
     if (rel.dl < -0.3) return { ...tr, type: TR.DIP };

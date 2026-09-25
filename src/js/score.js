@@ -150,7 +150,19 @@ function sceneMetrics(data, g, w, h, focus) {
     }
   }
   const sw = wv ? Math.min(0.9, Math.max(0.2, 2.4 * Math.sqrt(vx / wv))) : 0.5, sh = wv ? Math.min(0.9, Math.max(0.2, 2.4 * Math.sqrt(vy / wv))) : 0.5;
-  return { horizon, sky: +(sky / (w * top)).toFixed(3), people: +people.toFixed(2), skin: skin.map((v) => +v.toFixed(3)), subject: [+focus[0].toFixed(3), +focus[1].toFixed(3), +sw.toFixed(3), +sh.toFixed(3)] };
+  // Freistellung: Detailreichtum im Motivbereich gegenüber dem Rest (hoch bei Nahaufnahmen mit unscharfem Hintergrund)
+  let eIn = 0, nIn = 0, eOut = 0, nOut = 0;
+  const bx0 = focus[0] - sw / 2, bx1 = focus[0] + sw / 2, by0 = focus[1] - sh / 2, by1 = focus[1] + sh / 2;
+  for (let y = 2; y < h - 2; y += 2) {
+    for (let x = 2; x < w - 2; x += 2) {
+      const i = y * w + x;
+      const lap = Math.abs(4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w]);
+      const u = x / w, v = y / h;
+      if (u > bx0 && u < bx1 && v > by0 && v < by1) { eIn += lap; nIn++; } else { eOut += lap; nOut++; }
+    }
+  }
+  const iso = nIn && nOut ? +Math.min(9, (eIn / nIn + 0.5) / (eOut / nOut + 0.5)).toFixed(2) : 1;
+  return { horizon, sky: +(sky / (w * top)).toFixed(3), people: +people.toFixed(2), skin: skin.map((v) => +v.toFixed(3)), skinFrac: +skinFrac.toFixed(3), iso, subject: [+focus[0].toFixed(3), +focus[1].toFixed(3), +sw.toFixed(3), +sh.toFixed(3)] };
 }
 
 /**
@@ -181,7 +193,7 @@ function scoreImage(src, sw, sh) {
 
 /** Motiv-Felder für die Aufnahme (werden mit gespeichert). */
 function sceneFields(sc) {
-  return sc ? { horizon: sc.horizon, sky: sc.sky, people: sc.people, subject: sc.subject } : {};
+  return sc ? { horizon: sc.horizon, sky: sc.sky, people: sc.people, subject: sc.subject, iso: sc.iso, skinFrac: sc.skinFrac } : {};
 }
 
 /**

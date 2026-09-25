@@ -2510,7 +2510,19 @@ function sceneMetrics(data, g, w, h, focus) {
     }
   }
   const sw = wv ? Math.min(0.9, Math.max(0.2, 2.4 * Math.sqrt(vx / wv))) : 0.5, sh = wv ? Math.min(0.9, Math.max(0.2, 2.4 * Math.sqrt(vy / wv))) : 0.5;
-  return { horizon, sky: +(sky / (w * top)).toFixed(3), people: +people.toFixed(2), skin: skin.map((v) => +v.toFixed(3)), subject: [+focus[0].toFixed(3), +focus[1].toFixed(3), +sw.toFixed(3), +sh.toFixed(3)] };
+  // Freistellung: Detailreichtum im Motivbereich gegenüber dem Rest (hoch bei Nahaufnahmen mit unscharfem Hintergrund)
+  let eIn = 0, nIn = 0, eOut = 0, nOut = 0;
+  const bx0 = focus[0] - sw / 2, bx1 = focus[0] + sw / 2, by0 = focus[1] - sh / 2, by1 = focus[1] + sh / 2;
+  for (let y = 2; y < h - 2; y += 2) {
+    for (let x = 2; x < w - 2; x += 2) {
+      const i = y * w + x;
+      const lap = Math.abs(4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w]);
+      const u = x / w, v = y / h;
+      if (u > bx0 && u < bx1 && v > by0 && v < by1) { eIn += lap; nIn++; } else { eOut += lap; nOut++; }
+    }
+  }
+  const iso = nIn && nOut ? +Math.min(9, (eIn / nIn + 0.5) / (eOut / nOut + 0.5)).toFixed(2) : 1;
+  return { horizon, sky: +(sky / (w * top)).toFixed(3), people: +people.toFixed(2), skin: skin.map((v) => +v.toFixed(3)), skinFrac: +skinFrac.toFixed(3), iso, subject: [+focus[0].toFixed(3), +focus[1].toFixed(3), +sw.toFixed(3), +sh.toFixed(3)] };
 }
 
 /**
@@ -2541,7 +2553,7 @@ function scoreImage(src, sw, sh) {
 
 /** Motiv-Felder für die Aufnahme (werden mit gespeichert). */
 function sceneFields(sc) {
-  return sc ? { horizon: sc.horizon, sky: sc.sky, people: sc.people, subject: sc.subject } : {};
+  return sc ? { horizon: sc.horizon, sky: sc.sky, people: sc.people, subject: sc.subject, iso: sc.iso, skinFrac: sc.skinFrac } : {};
 }
 
 /**
@@ -2957,6 +2969,10 @@ function refineTransition(tr, rel, ctx) {
   if (s.match !== 'off' && rel.sim > 0.78 && (tr.type === TR.CUT || tr.type === TR.DISSOLVE)) {
     return { type: TR.CUT, dur: 0, punch: false, match: true };
   }
+  // großer Größensprung (Totale ↔ Detail) im Drop: ein klarer Schnitt auf den Schlag statt Wischer – wirkt ruhiger und professioneller
+  if (peak && rel.sizeA != null && Math.abs(rel.sizeA - rel.sizeB) === 2 && (tr.type === TR.WHIP || tr.type === TR.PUSH || tr.type === TR.ZOOM)) return { type: TR.CUT, dur: 0, punch: false };
+  // aus dem Detail zurück in die Totale in ruhigen Teilen: weich öffnen
+  if (!peak && rel.sizeA === 2 && rel.sizeB === 0 && tr.type === TR.CUT) { const d = fit(1); if (d >= 0.3) return { type: rel.dl > 0.22 ? TR.LUMA : TR.DISSOLVE, dur: d, punch: false }; }
   if (tr.type === TR.DISSOLVE) {
     if (rel.dl > 0.22) return { ...tr, type: TR.LUMA };
     if (rel.dl < -0.3) return { ...tr, type: TR.DIP };
@@ -3184,6 +3200,12 @@ function flowOrder(list, wantMatch) {
     const sim = layoutSim(a.layout, b.layout);
     if (wantMatch && sim > 0.72) v += 0.35 * sim;
     if (a.kind !== b.kind) v += 0.05;
+    // Einstellungsgrößen wechseln wie im Film (Totale → Halbnah → Detail), gleiche Größen hintereinander wirken flach
+    const sa = shotSize(a), sb = shotSize(b);
+    if (sa === sb) v -= sa === 1 ? 0.05 : 0.14;
+    else v += Math.abs(sa - sb) === 1 ? 0.12 : 0.07;
+    // eine neue Szene eröffnet am liebsten eine Totale (Establishing Shot)
+    if (a.time && b.time && b.time - a.time > 20 * 60 * 1000 && sb === 0) v += 0.2;
     return v;
   };
   // Momente: nur Aufnahmen, die wenige Minuten auseinander liegen, dürfen die Plätze tauschen (die Reise bleibt chronologisch)
@@ -3219,11 +3241,31 @@ function flowOrder(list, wantMatch) {
   return out;
 }
 
+/**
+ * Einstellungsgröße wie im Film: 0 = Totale (Landschaft, Horizont, viel Himmel, Details überall),
+ * 1 = Halbnah (Menschen, Plätze, Gebäude), 2 = Nah/Detail (kleines, freigestelltes Motiv, Gesicht füllt das Bild).
+ * Nutzt nur Werte aus der Bildbewertung; ältere Aufnahmen ohne Freistellung werden aus Horizont und Motivgröße geschätzt.
+ */
+function shotSize(m) {
+  if (!m) return 1;
+  let c = 0.5;
+  const sub = m.subject;
+  if (sub) c += (0.3 - sub[2] * sub[3]) * 0.9;
+  // Landschaft: Horizont mit Himmel darüber
+  if (m.horizon != null && (m.sky || 0) > 0.3) c -= 0.3;
+  // Gesicht füllt das Bild (sehr große Hautflächen sind eher Sand, Holz oder Wände)
+  if (m.skinFrac != null && m.skinFrac > 0.15 && m.skinFrac < 0.5) c += 0.45;
+  else if (m.faces && sub && sub[2] * sub[3] > 0.25) c += 0.3;
+  if (m.iso != null) c += Math.max(-0.1, Math.min(0.3, (m.iso - 1.4) * 0.16));
+  return c < 0.28 ? 0 : c > 0.62 ? 2 : 1;
+}
+const SHOT_DE = ['Totale', 'Halbnah', 'Detail'];
+
 /** Beziehung zweier aufeinanderfolgender Aufnahmen für die Wahl des Übergangs. */
 function shotRelation(a, b) {
   if (!a || !b) return null;
   const colorD = a.avg && b.avg ? Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) : 60;
-  return { sim: layoutSim(a.layout, b.layout), colorD, dl: (b.luma || 0.45) - (a.luma || 0.45), aLuma: a.luma || 0.45 };
+  return { sim: layoutSim(a.layout, b.layout), colorD, dl: (b.luma || 0.45) - (a.luma || 0.45), aLuma: a.luma || 0.45, sizeA: shotSize(a), sizeB: shotSize(b) };
 }
 
 /** Ähnliche Bilder nicht direkt hintereinander (Farbe/Hash). */
@@ -3265,30 +3307,38 @@ function imageMotionRaw(rng, m, outAspect, visDur, role, prevDir, hint) {
   const toPos = (f, frac) => (frac >= 0.999 ? 0 : Math.max(-1, Math.min(1, ((f - 0.5) * 2) / (1 - frac))));
   const px = toPos(fx, fw), py = toPos(fy, fh);
   const speed = Math.min(1.4, Math.max(0.6, visDur / 3.2));
-  const z = (role === 'burst' ? 0.1 : 0.075) * speed;
+  // Totale: weiter, ruhiger Blick (wenig Zoom); Detail: sanftes Heranfahren statt großer Sprünge
+  const size = shotSize(m);
+  const z = (role === 'burst' ? 0.1 : 0.075) * speed * (size === 0 ? 0.75 : size === 2 ? 0.85 : 1);
   // feine Neigung, die über die Einstellung ausläuft (modern, nie wackelig)
   const tilt = (rng() < 0.5 ? -1 : 1) * 0.0065 * speed;
   // Richtung bleibt meist über zwei Einstellungen gleich: ruhiger Fluss statt Hin und Her
-  const keep = rng() < 0.55;
+  // (in ruhigen Teilen noch häufiger: die Kamera fließt in eine Richtung statt hin und her)
+  const keep = rng() < (role === 'burst' ? 0.55 : 0.72);
+  // Schwenkweite wächst mit der Dauer: kurze Einstellungen gleiten nur ein Stück, nie ruckartig über das ganze Bild
+  const sweep = Math.min(1, 0.3 * Math.pow(Math.max(0.1, visDur), 1.6));
   // Anschluss an ein Video: die Fahrt nimmt dessen Schwenk-Richtung auf
   if (hint === 'left' || hint === 'right' || hint === 'up' || hint === 'down') prevDir = hint;
   if (fh < 0.72) {
     const down = hint === 'down' ? true : hint === 'up' ? false : prevDir === 'up' ? !keep : prevDir === 'down' ? keep : rng() < 0.5;
-    const a = Math.max(-1, Math.min(1, py + (down ? -0.6 : 0.6)));
+    const a = Math.max(-1, Math.min(1, py + (down ? -0.6 : 0.6) * sweep));
     return { dir: down ? 'down' : 'up', m: { from: { s: 1.03, x: 0, y: a, r: tilt }, to: { s: 1.03 + z * 0.6, x: 0, y: py, r: 0 } } };
   }
   if (fw < 0.72) {
     const right = hint === 'right' ? true : hint === 'left' ? false : prevDir === 'left' ? !keep : prevDir === 'right' ? keep : rng() < 0.5;
-    const a = Math.max(-1, Math.min(1, px + (right ? -0.65 : 0.65)));
+    const a = Math.max(-1, Math.min(1, px + (right ? -0.65 : 0.65) * sweep));
     return { dir: right ? 'right' : 'left', m: { from: { s: 1.03, x: a, y: 0, r: tilt }, to: { s: 1.03 + z * 0.6, x: px, y: 0, r: 0 } } };
   }
-  const zin = prevDir === 'in' ? keep || rng() < 0.3 : prevDir === 'out' ? !keep : rng() < 0.7;
+  const zin = size === 2 && !hint ? prevDir !== 'in' || keep || rng() < 0.6 : prevDir === 'in' ? keep || rng() < 0.3 : prevDir === 'out' ? !keep : rng() < 0.7;
   const tx = px * 0.8, ty = py * 0.8;
   // leichter Versatz quer zur Zoomrichtung: die Fahrt bekommt eine Kurve statt einer geraden Linie
   const sx = hint === 'right' ? -0.3 : hint === 'left' ? 0.3 : (rng() - 0.5) * 0.35;
+  // Weg quer zum Zoom wie beim Schwenk: in kurzen Einstellungen nur angedeutet
+  const k = Math.min(1, sweep * 1.6);
+  const ox = tx - (tx * 0.8 - sx) * k, oy = ty - ty * 0.8 * k;
   return zin
-    ? { dir: 'in', m: { from: { s: 1.02, x: tx * 0.2 + sx, y: ty * 0.2, r: tilt }, to: { s: 1.02 + z, x: tx, y: ty, r: -tilt * 0.3 } } }
-    : { dir: 'out', m: { from: { s: 1.02 + z, x: tx, y: ty, r: -tilt * 0.3 }, to: { s: 1.02, x: tx * 0.2 + sx, y: ty * 0.2, r: tilt } } };
+    ? { dir: 'in', m: { from: { s: 1.02, x: ox, y: oy, r: tilt }, to: { s: 1.02 + z, x: tx, y: ty, r: -tilt * 0.3 } } }
+    : { dir: 'out', m: { from: { s: 1.02 + z, x: tx, y: ty, r: -tilt * 0.3 }, to: { s: 1.02, x: ox, y: oy, r: tilt } } };
 }
 
 /**
@@ -4237,6 +4287,11 @@ function planOnce(opts) {
     dir.notes.push(`Polaroid-Stapel bei ${fmtMS(c.start)}: ${ids.length} Fotos fallen im Takt als Abzüge übereinander.`);
   }
 
+  {
+    const sz = [0, 0, 0];
+    for (const c of clips) { const m = byId.get(c.mediaId); if (m && m.kind === 'image' && !c.burst && !c.rush) sz[shotSize(m)]++; }
+    if (sz.filter(Boolean).length >= 2 && sz[0] + sz[1] + sz[2] >= 6) dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Einstellungsgrößen im Wechsel: ${sz[0]} Totalen, ${sz[1]} halbnah, ${sz[2]} Details; neue Szenen beginnen möglichst mit einer Totale.`);
+  }
   const splitDone = clips.filter((c) => c.split).length;
   if (splitDone) dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `${splitDone} Split-Screen${splitDone > 1 ? 's' : ''}: ${vertical ? 'Queraufnahmen erscheinen übereinander' : 'Hochkant-Aufnahmen erscheinen nebeneinander'}, Bild für Bild im Takt.`);
 
@@ -4881,8 +4936,11 @@ function planOnce(opts) {
     fx.push({ type: 'flash', start: firstBurst.start, end: firstBurst.start + 0.18, amp: 0.3 });
     dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Foto-Serie: Im ${SEC_DE[firstBurst.label] || 'Drop'} ab ${fmtMS(firstBurst.start)} wechselt jeden ${beatDur / 2 >= 0.2 ? 'halben ' : ''}Beat das Bild.`);
   }
+  // Zoom-Impulse sparsam: höchstens einer je zwei Takte (der Drop-Einsatz hat Vorrang), in ruhigen Filmen sanfter
+  let lastPunch = -1e9;
+  const punchAmp = s.pace === 'ruhig' ? 0.6 : 1;
   for (const c of clips) {
-    if (c.punch) fx.push({ type: 'punch', start: c.start, end: c.start + 0.45, amp: 1 });
+    if (c.punch && (c.start - lastPunch >= barDur * 2 || c.sectionChange)) { fx.push({ type: 'punch', start: c.start, end: c.start + 0.45, amp: punchAmp }); lastPunch = c.start; }
     if (c.freezeAt != null && !(outro === 'freeze' && c === last)) fx.push({ type: 'flash', start: c.freezeAt, end: c.freezeAt + 0.2, amp: 0.25 });
   }
 
@@ -4957,6 +5015,14 @@ function planOnce(opts) {
     stack: clips.filter((c) => c.stack).reduce((a, c) => a + c.stack.ids.length, 0),
     grid: clips.filter((c) => c.gridMid && c.grid && c.grid.ids).reduce((a, c) => a + c.grid.ids.length - 1, 0),
   };
+  // Blitze sparsam: ein Aufhellen wirkt nur, wenn es selten ist. Höchstens einer je zwei Takte (Digicam ausgenommen, dort ist er Stil)
+  if (!digicam) {
+    const fl = fx.filter((f) => f.type === 'flash').sort((a, b) => a.start - b.start || b.amp - a.amp);
+    let lastF = -1e9;
+    const drop = new Set();
+    for (const f of fl) { if (f.start - lastF < barDur * 2) drop.add(f); else lastF = f.start; }
+    for (let k = fx.length - 1; k >= 0; k--) if (drop.has(fx[k])) fx.splice(k, 1);
+  }
   const capacity = { packed, all: allOn, label: fr.label, story: fr.kind === 'story' && s.target !== 'reel' && s.format === '9:16', maxFilm: fr.max, vmax: fr.vmax, imgFit, images: good.filter((m) => m.kind === 'image').length, videos: good.length - good.filter((m) => m.kind === 'image').length, droppedIds, tooLong, repeats };
   if (!flight) {
     if (droppedIds.length) dir.notes.push(`${droppedIds.length} ${droppedIds.length === 1 ? 'Aufnahme passt' : 'Aufnahmen passen'} nicht mehr in ${capacity.story ? 'diese Story' : 'diesen Film'} (${fmtMS(D)}): zu diesem Song passen etwa ${imgFit} Fotos${capacity.videos ? ' neben den Videos' : ''}. Die schwächsten bleiben draußen, im Material markiert.${capacity.story ? ' Als Reel passen mehr.' : ''}`);
@@ -5539,6 +5605,9 @@ vec3 leakColor(vec2 uv, float t) {
   return vec3(1.0, 0.55, 0.26) * a + vec3(1.0, 0.36, 0.3) * b * 0.6;
 }
 
+// Überblenden im Licht statt in Bildwerten (Gamma ≈ 2): die Mitte wird nicht dunkler und matschig, wie bei Film
+vec3 lmix(vec3 a, vec3 b, float w) { return sqrt(max(mix(a * a, b * b, w), 0.0)); }
+
 vec3 composite(vec2 uv) {
   float p = clamp(uMix, 0.0, 1.0);
   if (uTrans == 9 && uHasB > 0.5) {
@@ -5551,16 +5620,16 @@ vec3 composite(vec2 uv) {
   vec3 c = a;
   if (uHasB > 0.5) {
     vec3 b = layerB(uv);
-    if (uTrans == 1) c = mix(a, b, smoothstep(0.0, 1.0, p));
+    if (uTrans == 1) c = lmix(a, b, smoothstep(0.0, 1.0, p));
     else if (uTrans == 2) c = p < 0.5 ? a * (1.0 - smoothstep(0.0, 0.5, p)) : b * smoothstep(0.5, 1.0, p);
     else if (uTrans == 4 || uTrans == 5) c = mix(a, b, smoothstep(0.44, 0.56, p));
-    else if (uTrans == 13) c = mix(a, b, smoothstep(0.22, 0.78, p));
+    else if (uTrans == 13) c = lmix(a, b, smoothstep(0.22, 0.78, p));
     else if (uTrans == 20) {
       // Echo: das vorige Bild blitzt hell und halbtransparent über dem neuen auf
       vec3 scr = 1.0 - (1.0 - a) * (1.0 - b);
       c = mix(a, mix(scr, b, 0.35), p);
     }
-    else if (uTrans == 6) c = mix(a, b, smoothstep(0.25, 0.75, p)) + leakColor(uv, uTime) * sin(3.14159265 * p) * 0.55;
+    else if (uTrans == 6) c = lmix(a, b, smoothstep(0.25, 0.75, p)) + leakColor(uv, uTime) * sin(3.14159265 * p) * 0.55;
     else if (uTrans == 7) {
       float thr = mix(-0.25, 1.25, p);
       c = mix(a, b, smoothstep(1.0 - thr - 0.18, 1.0 - thr + 0.18, luma(b)));
@@ -8617,12 +8686,16 @@ class Engine {
     const w = this.plan.win, D = this.plan.duration;
     const fi = Math.max(0.005, w.fadeIn || 0.02);
     const fo = Math.max(0.05, Math.min(w.fadeOut || 1, D * 0.3));
-    const gAt = (x) => Math.min(clamp01(x / fi), clamp01((D - x) / fo));
+    // Ausblenden nach dem Gehör: erst sanft, dann weich ins Leise (Kosinus statt gerader Linie, kein hörbares Abreißen)
+    const out = (u) => Math.pow(Math.cos(clamp01(u) * Math.PI / 2), 1.6);
+    const gAt = (x) => Math.min(clamp01(x / fi), x > D - fo ? out((x - (D - fo)) / fo) : 1);
     g.gain.setValueAtTime(gAt(offset), when);
-    if (offset < fi) g.gain.linearRampToValueAtTime(1, when + (fi - offset));
-    const foStart = D - fo;
-    if (offset < foStart) g.gain.setValueAtTime(1, when + (foStart - offset));
-    g.gain.linearRampToValueAtTime(0, when + (D - offset));
+    if (offset < fi) g.gain.linearRampToValueAtTime(1, when + Math.min(fi - offset, Math.max(0, D - fo - offset - 0.02)));
+    const foStart = Math.max(offset + 0.01, D - fo);
+    const n = 48, curve = new Float32Array(n);
+    for (let k = 0; k < n; k++) curve[k] = gAt(foStart + ((D - foStart) * k) / (n - 1));
+    curve[n - 1] = 0;
+    if (D - foStart > 0.02) g.gain.setValueCurveAtTime(curve, when + (foStart - offset), D - foStart);
   }
 
   _startAudio(offset, out, extraOut, withSong = true) {
@@ -11451,7 +11524,7 @@ function openClipSheet(i) {
   const maxOff = isVideo ? Math.max(0, (m.duration || 0) - visDur * (c.rate || 1)) : 0;
   const body = openSheet(`
     <h3 id="sheetTitle">Einstellung ${i + 1} · ${fmtClock(c.start)}–${fmtClock(c.end)}</h3>
-    <p class="hint">${SECTION_DE[c.label] || ''} · ${(c.end - c.start).toFixed(2).replace('.', ',')} s${c.freezeAt != null ? ' · friert im Stopp ein' : ''}</p>
+    <p class="hint">${SECTION_DE[c.label] || ''} · ${(c.end - c.start).toFixed(2).replace('.', ',')} s${m && m.kind === 'image' && !c.split && !c.grid ? ' · ' + SHOT_DE[shotSize(m)] : ''}${c.freezeAt != null ? ' · friert im Stopp ein' : ''}</p>
     <button class="btn small again-btn" data-act="again" type="button">Gefällt mir nicht · anders versuchen</button>
     <div class="field"><span class="field-label">Motiv</span>
       <div class="pick-grid" role="radiogroup" aria-label="Motiv wählen">${usable.map((x) => `<button type="button" role="radio" data-media="${esc(x.id)}" aria-checked="${x.id === c.mediaId}" aria-label="${esc(x.name)}"><img src="${x.thumb || ''}" alt=""></button>`).join('')}</div>

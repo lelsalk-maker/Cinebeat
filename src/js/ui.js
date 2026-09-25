@@ -2047,7 +2047,7 @@ function openClipSheet(i) {
   const maxOff = isVideo ? Math.max(0, (m.duration || 0) - visDur * (c.rate || 1)) : 0;
   const body = openSheet(`
     <h3 id="sheetTitle">Einstellung ${i + 1} · ${fmtClock(c.start)}–${fmtClock(c.end)}</h3>
-    <p class="hint">${SECTION_DE[c.label] || ''} · ${(c.end - c.start).toFixed(2).replace('.', ',')} s${c.freezeAt != null ? ' · friert im Stopp ein' : ''}</p>
+    <p class="hint">${SECTION_DE[c.label] || ''} · ${(c.end - c.start).toFixed(2).replace('.', ',')} s${m && m.kind === 'image' && !c.split && !c.grid ? ' · ' + SHOT_DE[shotSize(m)] : ''}${c.freezeAt != null ? ' · friert im Stopp ein' : ''}</p>
     <button class="btn small again-btn" data-act="again" type="button">Gefällt mir nicht · anders versuchen</button>
     <div class="field"><span class="field-label">Motiv</span>
       <div class="pick-grid" role="radiogroup" aria-label="Motiv wählen">${usable.map((x) => `<button type="button" role="radio" data-media="${esc(x.id)}" aria-checked="${x.id === c.mediaId}" aria-label="${esc(x.name)}"><img src="${x.thumb || ''}" alt=""></button>`).join('')}</div>

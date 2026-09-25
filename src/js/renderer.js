@@ -145,6 +145,9 @@ vec3 leakColor(vec2 uv, float t) {
   return vec3(1.0, 0.55, 0.26) * a + vec3(1.0, 0.36, 0.3) * b * 0.6;
 }
 
+// Überblenden im Licht statt in Bildwerten (Gamma ≈ 2): die Mitte wird nicht dunkler und matschig, wie bei Film
+vec3 lmix(vec3 a, vec3 b, float w) { return sqrt(max(mix(a * a, b * b, w), 0.0)); }
+
 vec3 composite(vec2 uv) {
   float p = clamp(uMix, 0.0, 1.0);
   if (uTrans == 9 && uHasB > 0.5) {
@@ -157,16 +160,16 @@ vec3 composite(vec2 uv) {
   vec3 c = a;
   if (uHasB > 0.5) {
     vec3 b = layerB(uv);
-    if (uTrans == 1) c = mix(a, b, smoothstep(0.0, 1.0, p));
+    if (uTrans == 1) c = lmix(a, b, smoothstep(0.0, 1.0, p));
     else if (uTrans == 2) c = p < 0.5 ? a * (1.0 - smoothstep(0.0, 0.5, p)) : b * smoothstep(0.5, 1.0, p);
     else if (uTrans == 4 || uTrans == 5) c = mix(a, b, smoothstep(0.44, 0.56, p));
-    else if (uTrans == 13) c = mix(a, b, smoothstep(0.22, 0.78, p));
+    else if (uTrans == 13) c = lmix(a, b, smoothstep(0.22, 0.78, p));
     else if (uTrans == 20) {
       // Echo: das vorige Bild blitzt hell und halbtransparent über dem neuen auf
       vec3 scr = 1.0 - (1.0 - a) * (1.0 - b);
       c = mix(a, mix(scr, b, 0.35), p);
     }
-    else if (uTrans == 6) c = mix(a, b, smoothstep(0.25, 0.75, p)) + leakColor(uv, uTime) * sin(3.14159265 * p) * 0.55;
+    else if (uTrans == 6) c = lmix(a, b, smoothstep(0.25, 0.75, p)) + leakColor(uv, uTime) * sin(3.14159265 * p) * 0.55;
     else if (uTrans == 7) {
       float thr = mix(-0.25, 1.25, p);
       c = mix(a, b, smoothstep(1.0 - thr - 0.18, 1.0 - thr + 0.18, luma(b)));
