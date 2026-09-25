@@ -19,8 +19,8 @@ function hashStr(s) {
 }
 
 // Übergänge (müssen zum Shader passen)
-const TR = { CUT: 0, DISSOLVE: 1, DIP: 2, ZOOM: 4, WHIP: 5, LEAK: 6, LUMA: 7, PUSH: 9, INK: 10, MORPH: 11, DOUBLE: 12 };
-const TR_NAMES = { 0: 'Schnitt', 1: 'Blende', 2: 'Schwarzblende', 4: 'Zoom', 5: 'Wischer', 6: 'Lichtleck', 7: 'Lichtblende', 9: 'Schieben', 10: 'Farbfluss', 11: 'Bild aus Bild', 12: 'Doppelbelichtung' };
+const TR = { CUT: 0, DISSOLVE: 1, DIP: 2, ZOOM: 4, WHIP: 5, LEAK: 6, LUMA: 7, PUSH: 9, INK: 10, MORPH: 11, DOUBLE: 12, DRIFT: 13 };
+const TR_NAMES = { 0: 'Schnitt', 1: 'Blende', 2: 'Schwarzblende', 4: 'Zoom', 5: 'Wischer', 6: 'Lichtleck', 7: 'Lichtblende', 9: 'Schieben', 10: 'Farbfluss', 11: 'Bild aus Bild', 12: 'Doppelbelichtung', 13: 'Drift' };
 
 /**
  * Looks: natürliches Grading (das Bild bleibt echt), aber klar erkennbar.
@@ -220,7 +220,7 @@ function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0) {
  */
 function adjustCuts(segs, an, win, delta, minLen, from = 1, to = segs.length) {
   segs = segs.slice();
-  const fixed = (g) => g.burst || g.leader || g.knock || g.gridSeg || g.gridMid || g.pre || g.reveal || g.vslot;
+  const fixed = (g) => g.burst || g.leader || g.knock || g.gridSeg || g.gridMid || g.pre || g.reveal || g.vslot || g.miniRew || g.stackSeg;
   const bts = Array.from(an.beats, (b) => b - win.start);
   for (let k = 0; k < delta; k++) {
     let bi = -1, bt = 0, bl = 0;
@@ -352,7 +352,7 @@ const isCalmLabel = (l) => l !== 'drop' && l !== 'chorus';
  * und zeitlich dort, wo sie in der Reise liegen. Benachbarte Schnitte werden dafür zusammengelegt (bleiben auf Beats).
  */
 function videoSlots(segs, an, win, vids, all, barDur, startAt, endAt, vmax, rampDrop = false) {
-  const special = (g) => g.burst || g.leader || g.knock || g.gridSeg || g.gridMid || g.pre || g.reveal || g.vslot;
+  const special = (g) => g.burst || g.leader || g.knock || g.gridSeg || g.gridMid || g.pre || g.reveal || g.vslot || g.miniRew || g.stackSeg;
   const labelAt = (t) => sectionAt(an, win.start + t + 0.01).label;
   const bars = (an.barStart || []).map((b) => b - win.start);
   const onBar = (t) => bars.some((b) => Math.abs(b - t) < 0.04);
@@ -807,7 +807,7 @@ function planOnce(opts) {
   const secsRel = (an.sections || []).map((x) => ({ ...x, rel: x.start - win.start })).filter((x) => x.rel > 0 && x.rel < D);
   const isPeakSec = (x) => x.label === 'drop' || x.label === 'chorus';
   const beatIdxAt = (t) => { let k = 0; for (let i = 0; i < bts0.length; i++) if (bts0[i] <= t + 0.03) k = i; return k; };
-  const special = (g) => g.burst || g.leader || g.knock || g.gridSeg || g.gridMid || g.pre || g.reveal || g.vslot;
+  const special = (g) => g.burst || g.leader || g.knock || g.gridSeg || g.gridMid || g.pre || g.reveal || g.vslot || g.miniRew || g.stackSeg;
   let midGrid = null;
   if (s.midGrid === 'on' && !flight && goodMedia(usable).length >= 5) {
     const busy = (a, b) => segs.some((g) => (g.burst || g.gridSeg || g.pre || g.reveal || g.leader || g.knock) && g.start < b && g.end > a);
@@ -859,6 +859,63 @@ function planOnce(opts) {
     }
   }
 
+  // Stil-Mittel mit festem Platz im Song: Mini-Rewind vor einem Drop, Polaroid-Stapel in einem ruhigen Teil
+  const insertSegs = (a, z, pieces) => {
+    const out = [];
+    for (const g of segs) {
+      if (g.end <= a + 0.01 || g.start >= z - 0.01) { out.push(g); continue; }
+      if (g.start < a - 0.01) out.push({ ...g, end: a });
+      if (g.end > z + 0.01) out.push({ ...g, start: z });
+    }
+    out.push(...pieces);
+    out.sort((x, y) => x.start - y.start);
+    for (let i = 0; i < out.length; i++) {
+      const g = out[i];
+      if (special(g) || g.end - g.start >= 0.6) continue;
+      const prev = out[i - 1], next = out[i + 1];
+      if (prev && !special(prev)) { prev.end = g.end; out.splice(i--, 1); } else if (next && !special(next)) { next.start = g.start; out.splice(i--, 1); }
+    }
+    segs = out;
+  };
+  // Einsätze: Drop/Refrain nach einem ruhigeren Teil, nicht im Einstieg und nicht ganz am Ende
+  const hitsRel = secsRel.filter((x) => isPeakSec(x) && x.rel > introEnd + barDur * 1.5 && x.rel < D - barDur * 2 && !isPeakSec(sectionAt(an, x.start - 0.05)) && !(countIn && Math.abs(countIn.end - x.rel) < 0.2)).map((x) => x.rel);
+  const overlapsSpecial = (a, z) => segs.some((g) => special(g) && g.start < z - 0.02 && g.end > a + 0.02);
+  let miniAt = null;
+  if (s.mini === 'on' && !flight && goodMedia(usable).length >= 6) {
+    const colorOn = s.color && s.color !== 'off';
+    for (const h of colorOn && hitsRel.length > 1 ? hitsRel.slice(1).concat(hitsRel[0]) : hitsRel) {
+      const k = beatIdxAt(h);
+      if (k < 2 || Math.abs(bts0[k] - h) > 0.08) continue;
+      const a = bts0[k - 2], z = bts0[k];
+      if (a < introEnd + barDur * 0.5 || overlapsSpecial(a, z)) continue;
+      const sub = (z - a) / 4 >= 0.2 ? (z - a) / 4 : (z - a) / 2;
+      const pieces = [];
+      for (let t0 = a; t0 < z - 0.05; t0 += sub) pieces.push({ start: t0, end: Math.min(z, t0 + sub), w: 5, miniRew: true });
+      insertSegs(a, z, pieces);
+      miniAt = { a, z };
+      break;
+    }
+  }
+  let stackAt = null;
+  if (s.stack === 'on' && !flight && goodMedia(usable).filter((m) => m.kind === 'image').length >= 6) {
+    // Abzüge fallen alle zwei Beats (bei langsamen Songs jeden Beat), danach ein kurzer Moment Ruhe
+    const step = beatDur > 0.7 ? 1 : 2;
+    const barsRel = (an.barStart || []).map((b) => b - win.start).filter((t) => t > introEnd + barDur * 0.5 && t < D - barDur * 2);
+    for (const b0 of barsRel) {
+      const sec = sectionAt(an, win.start + b0 + 0.02);
+      if (!isCalmLabel(sec.label) || sec.label === 'build') continue;
+      const k0 = beatIdxAt(b0);
+      const at = (j) => (bts0[k0 + j] != null ? bts0[k0 + j] : b0 + j * beatDur);
+      const times = [1, 2, 3, 4].map((j) => at(j * step));
+      const end = at(5 * step);
+      if (end > D - barDur || win.start + end > sec.end + 0.05 || overlapsSpecial(b0, end)) continue;
+      const mid = (sec.start + sec.end) / 2 - win.start;
+      const cost = Math.abs((b0 + end) / 2 - mid) / barDur + (hitsRel.some((h) => h > b0 && h - end < barDur) ? 3 : 0);
+      if (!stackAt || cost < stackAt.cost) stackAt = { a: b0, z: end, times, cost };
+    }
+    if (stackAt) insertSegs(stackAt.a, stackAt.z, [{ start: stackAt.a, end: stackAt.z, w: 12, stackSeg: { times: stackAt.times } }]);
+  }
+
   // Videos: eigene, längere Plätze in ruhigen Songteilen (nicht bei Flügen: dort legt die Rolle die Videos fest)
   if (!flight) {
     const all = orderChrono(goodMedia(usable));
@@ -882,7 +939,7 @@ function planOnce(opts) {
     const abs = win.start + g.start;
     const sec = sectionAt(an, abs + 0.01);
     return {
-      i, start: g.start, end: g.end, label: sec.label, energy: sec.energy, weight: g.w, freezeAt: g.freezeAt, burst: !!g.burst, leader: !!g.leader, pre: g.pre || null, reveal: !!g.reveal, vid: g.vid || null, gridMid: g.gridMid || null, grid: !!g.gridMid,
+      i, start: g.start, end: g.end, label: sec.label, energy: sec.energy, weight: g.w, freezeAt: g.freezeAt, burst: !!g.burst, leader: !!g.leader, pre: g.pre || null, reveal: !!g.reveal, vid: g.vid || null, gridMid: g.gridMid || null, grid: !!g.gridMid, miniRew: !!g.miniRew, stack: g.stackSeg ? { times: g.stackSeg.times } : null,
       sectionChange: i > 0 && (an.sections || []).some((x) => Math.abs(x.start - abs) < 0.05),
       mediaId: null, role: 'normal',
     };
@@ -902,7 +959,7 @@ function planOnce(opts) {
     let since = every;
     for (const c of clips) {
       since++;
-      if (c.vid || c.gridMid || (clips[c.i - 1] && clips[c.i - 1].gridMid) || c.i <= P + (gridPlan ? 1 : leader ? 3 : reveal ? 2 : 0) || c.i === clips.length - 1 || splitClips.includes(c.i)) continue;
+      if (c.vid || c.gridMid || c.stack || c.miniRew || (clips[c.i - 1] && (clips[c.i - 1].gridMid || clips[c.i - 1].miniRew)) || c.i <= P + (gridPlan ? 1 : leader ? 3 : reveal ? 2 : 0) || c.i === clips.length - 1 || splitClips.includes(c.i)) continue;
       const peak = c.label === 'drop' || c.label === 'chorus';
       if (peak && c.end - c.start >= Math.max(1.4, beatDur * 3) && (c.sectionChange || since >= every)) { splitClips.push(c.i); since = 0; }
     }
@@ -934,6 +991,7 @@ function planOnce(opts) {
       const prevB = bounds[bounds.length - 1];
       let bi = -1, bw = -Infinity;
       for (let k = prevB + 2; k <= clips.length - 2; k++) {
+        if (clips[k].stack || clips[k].miniRew || clips[k - 1].miniRew || clips[k].vid) continue;
         const dt = Math.abs(clips[k].start - idealT);
         if (dt > Math.max(4, barDur * 2)) continue;
         const w = clips[k].weight + (clips[k].sectionChange ? 10 : 0) - dt * 2;
@@ -943,18 +1001,57 @@ function planOnce(opts) {
       bounds.push(Math.max(prevB + 1, Math.min(clips.length - 1, bi)));
     }
     bounds.push(clips.length);
+    // „Durch den Namen“ je Kapitel: die erste Einstellung eines Ortes braucht Zeit zum Lesen und für den Zoom
+    if (s.chapKnock === 'on') {
+      const need = Math.max(3.2, barDur * 1.75);
+      const starts = bounds.slice(0, -1).map((b) => clips[b]);
+      const splitObjs = splitClips.map((i) => clips[i]);
+      for (let c = 1; c < chapters.length; c++) {
+        const b = bounds[c];
+        let j = b + 1;
+        while (clips[b].end - clips[b].start < need && j < bounds[c + 1] - 1) {
+          const nx = clips[j];
+          if (nx.vid || nx.stack || nx.miniRew || nx.gridMid || splitObjs.includes(nx)) break;
+          clips[b].end = nx.end; nx.absorbed = true; j++;
+        }
+      }
+      for (let k = clips.length - 1; k >= 0; k--) if (clips[k].absorbed) clips.splice(k, 1);
+      clips.forEach((c, k) => { c.i = k; });
+      starts.forEach((c, k) => { bounds[k] = clips.indexOf(c); });
+      bounds[bounds.length - 1] = clips.length;
+      splitClips.length = 0;
+      for (const o of splitObjs) if (clips.includes(o)) splitClips.push(o.i);
+    }
     for (let c = 0; c < chapters.length; c++) {
-      const cnt = bounds[c + 1] - bounds[c];
-      const sel = spreadSimilar(flowOrder(selectMedia(chapters[c].media, cnt, new Set()), s.match !== 'off'));
       const idxs = [];
-      for (let k = 0; k < cnt; k++) idxs.push(bounds[c] + k);
+      for (let k = bounds[c]; k < bounds[c + 1]; k++) if (!clips[k].stack && !clips[k].miniRew) idxs.push(k);
+      const cnt = idxs.length;
+      let chMedia = chapters[c].media;
+      const stC = clips.slice(bounds[c], bounds[c + 1]).find((x) => x.stack);
+      if (stC) {
+        const imgsC = orderChrono(chMedia.filter((m) => m.kind === 'image' && !m.bad && !m.excluded));
+        const res = imgsC.length >= cnt + 3 ? imgsC.slice(Math.max(0, Math.round(imgsC.length / 2) - 2)).slice(0, 4) : [];
+        stC.stack.reserved = res.map((m) => m.id);
+        chMedia = chMedia.filter((m) => !res.includes(m));
+      }
+      const sel = spreadSimilar(flowOrder(selectMedia(chMedia, cnt, new Set()), s.match !== 'off'));
       if (sel.length) assignStream(clips, idxs, sel, byId);
       clips[bounds[c]].chapter = chapters[c].title; clips[bounds[c]].chapterNo = c + 1; clips[bounds[c]].role = 'chapter';
     }
     hook = byId.get(clips[0].mediaId) || null;
   } else {
     for (const c of clips) if (c.vid) mustIds.add(c.vid);
-    const chosen = selectMedia(pool, clips.length - splitClips.length + 2, mustIds);
+    // Polaroid-Stapel: vier Fotos aus der Zeit, in der der Stapel im Film liegt, vorab zurücklegen
+    const stackC = clips.find((c) => c.stack);
+    let reserved = [];
+    if (stackC) {
+      const imgsC = orderChrono(goodMedia(usable).filter((m) => m.kind === 'image' && !mustIds.has(m.id) && m.id !== settings.hookId));
+      const top = imgsC.slice().sort((a, b) => (b.score || 0) - (a.score || 0))[0];
+      const cand = imgsC.filter((m) => m !== top);
+      if (cand.length >= 7) { const at = Math.round((stackC.start / D) * (cand.length - 4)); reserved = cand.slice(at, at + 4); }
+      stackC.stack.reserved = reserved.map((m) => m.id);
+    }
+    const chosen = selectMedia(pool.filter((m) => !reserved.includes(m)), clips.length - splitClips.length + 2, mustIds);
     // automatisches Startbild: kein Video, das ohnehin einen eigenen Platz hat (es liefe sonst doppelt oder der Platz bliebe leer)
     const hookCand = chosen.filter((m) => !clips.some((c) => c.vid === m.id));
     hook = settings.hookId && byId.get(settings.hookId) ? byId.get(settings.hookId) : (hookCand.length ? hookCand : chosen).slice().sort((a, b) => (b.score || 0) - (a.score || 0))[0] || null;
@@ -970,7 +1067,7 @@ function planOnce(opts) {
     // Einstellungen, die der Einstieg ohnehin fest belegt (Startbild, Aufblende, Countdown, Vorspann), nicht verteilen:
     // sonst würde ein Bild dort vergeben, gleich überschrieben und fehlte dann im Film
     const hookAt = hook && intro !== 'split' ? (reveal ? P + clips.filter((c) => c.reveal).length : leader ? P + 3 : gridPlan ? P + 1 : P) : -1;
-    const fixedIdx = (c) => c.i === hookAt || c.reveal || c.pre || (leader && c.i >= P && c.i < P + 3) || (gridPlan && c.i === P);
+    const fixedIdx = (c) => c.i === hookAt || c.reveal || c.pre || c.miniRew || c.stack || (leader && c.i >= P && c.i < P + 3) || (gridPlan && c.i === P);
     const idxs = clips.map((c) => c.i).filter((i) => !(splitClips.includes(i) && i !== 0) && !clips[i].gridMid && !fixedIdx(clips[i]));
     if (order.length) assignStream(clips, idxs, hookAt >= 0 ? order.filter((m) => m !== hook) : order, byId);
     if (hookAt >= 0 && clips[hookAt]) clips[hookAt].mediaId = hook.id;
@@ -1005,7 +1102,7 @@ function planOnce(opts) {
   if (!chapters || !chapters.length) {
     for (const c of clips) {
       if (!c.vid || clips.some((x) => x.mediaId === c.vid)) continue;
-      const cand = clips.filter((x) => x.i > P + 1 && !x.pre && !x.leader && !x.reveal && !x.grid && !x.burst && !splitClips.includes(x.i) && x.role !== 'hook' && !(byId.get(x.mediaId) && byId.get(x.mediaId).kind === 'video'))
+      const cand = clips.filter((x) => x.i > P + 1 && !x.pre && !x.leader && !x.reveal && !x.grid && !x.burst && !x.stack && !x.miniRew && !splitClips.includes(x.i) && x.role !== 'hook' && !(byId.get(x.mediaId) && byId.get(x.mediaId).kind === 'video'))
         .sort((a, b) => (isCalmLabel(b.label) - isCalmLabel(a.label)) || (b.end - b.start) - (a.end - a.start))[0];
       if (cand) cand.mediaId = c.vid;
     }
@@ -1029,6 +1126,21 @@ function planOnce(opts) {
         clips[1 + i].mediaId = m ? m.id : null; clips[1 + i].role = 'rew';
       }
     }
+  }
+
+  // Mini-Rewind: die Bilder davor rauschen rückwärts vorbei, auf dem Einsatz steht noch einmal der beste Moment
+  const miniC = clips.filter((c) => c.miniRew);
+  if (miniC.length) {
+    const f = miniC[0].i;
+    const back = [];
+    for (let j = f - 1; j >= 0 && back.length < miniC.length; j--) {
+      const x = clips[j];
+      if (x.mediaId && !x.grid && !x.split && !x.stack && !x.strip && !x.flightAnim) back.push(x.mediaId);
+    }
+    miniC.forEach((c, k) => { c.mediaId = back.length ? back[Math.min(k, back.length - 1)] : c.mediaId; c.role = 'rew'; });
+    const hit = clips[f + miniC.length];
+    const best = [hook, ...pool.filter((m) => m.kind === 'image' && !m.excluded && !m.bad).sort((a, b) => (b.score || 0) - (a.score || 0))].find((m) => m && m.kind === 'image');
+    if (hit && best && !hit.vid && !hit.split && !hit.grid && !hit.stack) { hit.mediaId = best.id; hit.replay = true; }
   }
 
   // Split-Material zuteilen: bevorzugt passende Ausrichtung, wenig benutzt
@@ -1057,6 +1169,29 @@ function planOnce(opts) {
     c.split = { ids, orient: vertical ? 'stack' : 'row', reveal };
     c.mediaId = ids[0];
     // Split am Anfang: öffnet sich danach nicht, sondern schneidet hart weiter
+  }
+
+  // Polaroid-Stapel: nur Aufnahmen, die sonst nicht zu sehen sind; sonst wird es eine normale Einstellung
+  for (const c of clips) {
+    if (!c.stack) continue;
+    const res0 = (c.stack.reserved || []).map((id) => byId.get(id)).filter((m) => m && !useCount.get(m.id));
+    const free = res0.length >= 3 ? res0 : goodMedia(usable).filter((m) => m.kind === 'image' && !useCount.get(m.id)).sort((a, b) => (b.score || 0) - (a.score || 0));
+    if (free.length < 3) {
+      c.stack = null;
+      const pick = goodMedia(usable).filter((m) => m.kind === 'image').sort((a, b) => (useCount.get(a.id) || 0) - (useCount.get(b.id) || 0) || (b.score || 0) - (a.score || 0))[0];
+      if (pick) { c.mediaId = pick.id; useCount.set(pick.id, (useCount.get(pick.id) || 0) + 1); }
+      continue;
+    }
+    const ids = orderChrono(free.slice(0, 4)).map((m) => m.id);
+    for (const id of ids) useCount.set(id, 1);
+    c.stack = {
+      ids, times: c.stack.times.slice(0, ids.length), fall: Math.min(0.34, beatDur * 0.8),
+      rots: ids.map((_, k) => (k % 2 ? 1 : -1) * (0.025 + 0.05 * rng())),
+      offs: ids.map(() => [(rng() - 0.5) * 0.12, (rng() - 0.5) * 0.07]),
+    };
+    c.mediaId = ids[ids.length - 1];
+    c.role = 'stack';
+    dir.notes.push(`Polaroid-Stapel bei ${fmtMS(c.start)}: ${ids.length} Fotos fallen im Takt als Abzüge übereinander.`);
   }
 
   const splitDone = clips.filter((c) => c.split).length;
@@ -1118,7 +1253,7 @@ function planOnce(opts) {
       peak: B.label === 'drop' || B.label === 'chorus', pace: s.pace, beatDur,
       lenA: A.end - A.start, lenB: B.end - B.start, stopEnd,
     }, rng);
-    const fixedCut = A.split || B.split || A.grid || A.flightAnim || B.flightAnim || A.burst || B.burst || A.leader || A.pre || B.pre || A.reveal;
+    const fixedCut = A.split || B.split || A.grid || A.flightAnim || B.flightAnim || A.burst || B.burst || A.leader || A.pre || B.pre || A.reveal || A.miniRew || B.miniRew || A.stack || B.stack;
     if (!fixedCut && B.role !== 'chapter') tr = refineTransition(tr, shotRelation(byId.get(A.mediaId), byId.get(B.mediaId)), {
       B, A, beatDur, s, peak: B.label === 'drop' || B.label === 'chorus', rng, morphCount: morphs,
     });
@@ -1127,13 +1262,23 @@ function planOnce(opts) {
     if (!fixedCut && mA && mA.kind === 'video' && tr.type === TR.CUT && !tr.punch && !tr.match && isCalmLabel(B.label)) tr = { type: TR.DISSOLVE, dur: Math.min(beatDur, 0.45 * (A.end - A.start), 0.45 * (B.end - B.start)), punch: false };
     // Abwechslung ohne Unruhe: derselbe Effekt nie zweimal hintereinander, sondern ein Verwandter aus seiner Familie
     if (tr.type !== TR.CUT && tr.type === lastTr && !fixedCut) {
-      const fam = [[TR.DISSOLVE, TR.LUMA, TR.LEAK], [TR.WHIP, TR.PUSH, TR.ZOOM], [TR.MORPH, TR.INK, TR.DOUBLE], [TR.DIP, TR.DISSOLVE]].find((f) => f.includes(tr.type));
+      const fam = [[TR.DISSOLVE, TR.LUMA, TR.LEAK], [TR.WHIP, TR.PUSH, TR.ZOOM], [TR.MORPH, TR.INK, TR.DOUBLE], [TR.DIP, TR.DISSOLVE], [TR.DRIFT, TR.DISSOLVE]].find((f) => f.includes(tr.type));
       if (fam) tr = { ...tr, type: fam[(fam.indexOf(tr.type) + 1) % fam.length] };
     }
+    // Drift: in ruhigen Teilen gleitet die Kamera manchmal ohne Halt ins nächste Bild – statt einer Blende oder eines weichen Schnitts
+    if (s.drift === 'on' && !fixedCut && B.role !== 'chapter' && !tr.match && isCalmLabel(B.label) && !B.sectionChange && lastTr !== TR.DRIFT && !A.vid && !B.vid) {
+      const soft = tr.type === TR.DISSOLVE || tr.type === TR.LUMA || (tr.type === TR.CUT && !tr.punch && rng() < 0.35);
+      const dur = Math.min(Math.max(0.4, beatDur * 1.1), 0.45 * (A.end - A.start), 0.45 * (B.end - B.start));
+      if (soft && dur >= 0.35 && rng() < 0.6) tr = { type: TR.DRIFT, dur, punch: false };
+    }
+
     if (tr.type !== TR.CUT) lastTr = tr.type;
     if (tr.match) { B.matchCut = true; matches++; }
     if (tr.type === TR.MORPH || tr.type === TR.INK || tr.type === TR.DOUBLE) morphs++;
     if (fixedCut) tr = { type: TR.CUT, dur: 0, punch: false };
+    // in den Polaroid-Stapel weich hinein; nach dem Mini-Rewind hart auf den Einsatz
+    if (B.stack && !A.split && !A.grid && !A.burst) tr = { type: TR.DISSOLVE, dur: Math.min(beatDur, 0.45 * (A.end - A.start), 0.4 * (B.end - B.start)), punch: false };
+    if (A.miniRew && !B.miniRew) tr = { type: TR.CUT, dur: 0, punch: true };
     // Aufblende: die Details gehen weich ineinander über, auf dem Höhepunkt ein harter Schnitt
     if (A.reveal && B.reveal) tr = { type: TR.DISSOLVE, dur: Math.min(beatDur * 1.5, 0.45 * (A.end - A.start)), punch: false };
     else if (A.reveal) tr = { type: TR.CUT, dur: 0, punch: true };
@@ -1182,6 +1327,12 @@ function planOnce(opts) {
     c.corr = m ? dir.corr.get(m.id) || [1, 1, 1] : [1, 1, 1];
     if (c.strip) {
       c.strip.items = c.strip.ids.map((id) => { const mm = byId.get(id); return { mediaIndex: media.indexOf(mm), focus: mm && mm.focus }; });
+      c.motion = { from: { s: 1, x: 0, y: 0 }, to: { s: 1, x: 0, y: 0 } };
+      c.srcOffset = 0; c.rate = 1; c.contain = false;
+      continue;
+    }
+    if (c.stack) {
+      c.stack.items = c.stack.ids.map((id) => { const mm = byId.get(id); return { mediaIndex: media.indexOf(mm), focus: mm && mm.focus }; });
       c.motion = { from: { s: 1, x: 0, y: 0 }, to: { s: 1, x: 0, y: 0 } };
       c.srcOffset = 0; c.rate = 1; c.contain = false;
       continue;
@@ -1315,13 +1466,15 @@ function planOnce(opts) {
       }
       c.contain = false;
     }
-    if (c.pre === 'rew') {
+    if (c.pre === 'rew' || c.miniRew) {
       // Zurückspulen: jedes Bild zieht sich schnell zusammen und rutscht gegen die Laufrichtung
       const sg = c.i % 2 ? 1 : -1;
       c.motion = { from: { s: 1.16, x: 0.35 * sg, y: 0 }, to: { s: 1.0, x: -0.35 * sg, y: 0 } };
       if (m.kind === 'video') c.freezeAt = c.visStart;
     }
     if (c.tout && c.tout.type === TR.WHIP) c.tout.dirSign = c.dir === 'left' ? -1 : 1;
+    // Drift: gleitet in die Richtung weiter, in die die Kamera schon fährt
+    if (c.tout && c.tout.type === TR.DRIFT && c.motion) { const dx = c.motion.to.x - c.motion.from.x; c.tout.dirSign = Math.abs(dx) > 0.02 ? Math.sign(dx) : c.dir === 'left' ? -1 : 1; }
   }
   // nach dem Raster-Zoom: gleiches Bild, gleicher (zentrierter) Ausschnitt, dann sanfte Fahrt
   for (const c of clips) {
@@ -1390,6 +1543,84 @@ function planOnce(opts) {
     fx.push({ type: 'flash', start: countIn.end, end: countIn.end + 0.22, amp: 0.22 });
     fx.push({ type: 'punch', start: countIn.end, end: countIn.end + 0.45, amp: 0.7 });
     dir.notes.push(`Countdown vor dem ${SEC_DE[sectionAt(an, win.start + countIn.end + 0.02).label] || 'Drop'}: 3 · 2 · 1 auf den letzten Beats.`);
+  }
+
+  // Schlagzeug im Film: Bassdrum und Snare relativ zum Film
+  const kicksRel = Array.from(an.kicks || []).map((t) => t - win.start).filter((t) => t >= 0 && t < D);
+  const snaresRel = Array.from(an.snares || []).map((t) => t - win.start).filter((t) => t >= 0 && t < D);
+  const fixedEndAll = clips.filter((c) => c.pre || c.leader || c.reveal || c.grid && !c.gridMid).reduce((m, c) => Math.max(m, c.end), 0);
+
+  // Schwarzweiß → Farbe: vor dem Einsatz schwarzweiß, auf dem Einsatz kehrt die Farbe zurück
+  const colorFx = [];
+  const colorMode = s.color && s.color !== 'off' && !flight ? s.color : null;
+  if (colorMode) {
+    // Einsätze nach einem ruhigeren Teil; schwarzweiß darf schon ab dem Filmanfang sein (nicht während eines festen Einstiegs)
+    const colHits = secsRel.filter((x) => isPeakSec(x) && x.rel > fixedEndAll + barDur * 0.9 && x.rel < D - barDur && !isPeakSec(sectionAt(an, x.start - 0.05))).map((x) => x.rel);
+    let hs = colHits.slice(0, s.colorAuto ? 1 : 2);
+    // Aufblende: der Aufbau bleibt schwarzweiß, auf dem Höhepunkt kehrt mit dem Bild die Farbe zurück
+    const revHit = reveal && clips.some((c) => c.reveal) ? reveal.end : null;
+    if (revHit != null && (!hs.length || s.colorAuto)) hs = [revHit, ...hs.slice(0, s.colorAuto ? 0 : 1)];
+    if (!hs.length) {
+      // kein Drop nach ruhigem Teil im Ausschnitt: ein Taktanfang gut zwei Takte nach dem Einstieg
+      const b = (an.barStart || []).map((x) => x - win.start).find((x) => x > fixedEndAll + barDur * 2 && x < D - barDur * 2);
+      if (b != null) hs = [b];
+    }
+    for (const h of hs) {
+      if (h === revHit) {
+        const r0 = clips.find((c) => c.reveal);
+        colorFx.push({ mode: colorMode, start: r0.start, hit: h, dur: colorMode === 'bloom' ? Math.min(beatDur * 2, 1.1) : colorMode === 'sweep' ? Math.min(beatDur * 1.5, 0.85) : 0, end: h + Math.max(colorMode === 'bloom' ? Math.min(beatDur * 2, 1.1) : colorMode === 'sweep' ? Math.min(beatDur * 1.5, 0.85) : 0, 0.05), steps: colorMode === 'steps' ? beatsRel.filter((b) => b > h - barDur + 0.02 && b < h - 0.02) : [] });
+        continue;
+      }
+      const before = clips.filter((c) => c.start >= Math.max(fixedEndAll, h - barDur * 4) - 0.05 && c.start <= h - barDur * 0.9 + 0.05 && !c.grid);
+      const start = before.length ? before[0].start : Math.max(fixedEndAll, h - barDur * 2);
+      if (h - start < barDur * 0.85) continue;
+      const dur = colorMode === 'bloom' ? Math.min(beatDur * 2, 1.1) : colorMode === 'sweep' ? Math.min(beatDur * 1.5, 0.85) : 0;
+      const steps = colorMode === 'steps' ? beatsRel.filter((b) => b > h - barDur + 0.02 && b < h - 0.02) : [];
+      colorFx.push({ mode: colorMode, start, hit: h, dur, end: h + Math.max(dur, 0.05), steps });
+      if (colorMode === 'drop' || colorMode === 'steps' || colorMode === 'pop') fx.push({ type: 'flash', start: h, end: h + 0.2, amp: 0.18 });
+      fx.push({ type: 'punch', start: h, end: h + 0.45, amp: colorMode === 'drop' ? 0.6 : 0.35 });
+    }
+    if (!colorFx.length && s.colorAuto) s.color = 'off';
+    if (colorFx.length) {
+      const NAMES = { drop: 'kehrt die Farbe schlagartig zurück', steps: 'kehrt die Farbe Beat für Beat zurück', bloom: 'breitet sich die Farbe vom Motiv aus', sweep: 'läuft die Farbe als Welle durchs Bild', pop: 'bleiben nur kräftige Farben, dann kommt alles zurück' };
+      dir.notes.push(`Schwarzweiß → Farbe: vor dem Einsatz bei ${colorFx.map((f) => fmtMS(f.hit)).join(' und ')} ist das Bild schwarzweiß, auf dem Schlag ${NAMES[colorMode]}.`);
+    }
+  }
+
+  // Echo: auf starken Schlägen im Drop blitzt das vorige Bild kurz halbtransparent auf
+  if (s.echo === 'on' && !flight) {
+    let lastE = -Infinity, n = 0;
+    const maxN = D < 30 ? 3 : 5;
+    const busyC = (c) => c.grid || c.split || c.strip || c.stack || c.burst || c.miniRew || c.pre || c.leader || c.reveal || c.flightAnim || c.loop;
+    const downs0 = (an.barStart || []).map((b) => b - win.start);
+    for (const c of clips) {
+      const prev = clips[c.i - 1];
+      if (!prev || n >= maxN || busyC(c) || busyC(prev) || c.label !== 'drop' && c.label !== 'chorus') continue;
+      if (c.tin && c.tin.dur > 0 || c.end - c.start < beatDur || c.start - lastE < barDur * 2 - 0.05) continue;
+      if (!downs0.some((b) => Math.abs(b - c.start) < 0.04)) continue;
+      if (kicksRel.length && !kicksRel.some((k) => Math.abs(k - c.start) < 0.05)) continue;
+      if (colorFx.some((f) => Math.abs(f.hit - c.start) < 0.05)) continue;
+      c.echo = { from: prev.i, dur: Math.min(0.42, beatDur * 0.85, (c.end - c.start) * 0.6) };
+      lastE = c.start; n++;
+    }
+    if (n) dir.notes.push(`Echo: auf ${n} starken Schlägen blitzt das vorige Bild kurz halbtransparent auf.`);
+  }
+
+  // Mini-Rewind: entsättigt und mit Licht auf dem Einsatz
+  if (miniAt) {
+    fx.push({ type: 'desat', start: miniAt.a, end: miniAt.z, amp: 0.35 });
+    fx.push({ type: 'flash', start: miniAt.z, end: miniAt.z + 0.2, amp: 0.2 });
+    fx.push({ type: 'punch', start: miniAt.z, end: miniAt.z + 0.45, amp: 0.7 });
+    dir.notes.push(`Mini-Rewind vor dem Einsatz bei ${fmtMS(miniAt.z)}: ein halber Takt spult zurück, dann steht noch einmal der beste Moment im Bild.`);
+  }
+
+  // Bassdrum-Zoom und Snare: im Drop und Refrain (Auto) oder im ganzen Film
+  let accent = null;
+  if (s.accent && s.accent !== 'off' && kicksRel.length >= 4 && !flight) {
+    const zones = s.accentAuto
+      ? secsRel.concat([]).filter(isPeakSec).map((x) => [Math.max(x.rel, fixedEndAll), Math.min(D, x.rel + (x.end - x.start))]).concat(isPeakSec(sectionAt(an, win.start + 0.02)) ? [[fixedEndAll, Math.min(D, sectionAt(an, win.start + 0.02).end - win.start)]] : []).filter((z) => z[1] > z[0])
+      : [[fixedEndAll, D]];
+    accent = { kicks: kicksRel, snares: snaresRel, snare: s.accent === 'kicksnare', zones, amt: s.accentAuto ? 0.7 : 1 };
   }
 
   // Vorspann
@@ -1466,6 +1697,16 @@ function planOnce(opts) {
     // Kapitel steht über zwei Einstellungen (mindestens 3,4 s), damit Ort und Kilometer in Ruhe lesbar sind
     const second = clips.slice(ci + 1, ci + 3).filter((x) => x.start < chEnd).pop();
     const chDur = Math.max(3.4, barDur * 2, second ? second.end - st : 0);
+    if (s.chapKnock === 'on' && ci > 0 && c.chapterNo > 1) {
+      // „Durch den Namen“: der Ort ist ein Fenster ins Bild, dann zoomt die Kamera auf einem Beat durch die Buchstaben
+      const hold = Math.max(1.8, barDur);
+      const zs = beatsRel.find((b) => b >= c.start + hold - 0.05);
+      const ze = zs != null ? beatsRel.find((b) => b >= zs + Math.max(0.35, beatDur * 0.9)) : null;
+      if (zs != null && ze != null && ze <= c.end - 0.3) {
+        overlays.push({ type: 'knockout', text: c.chapter, sub: `${String(c.chapterNo).padStart(2, '0')} / ${String(chapterCount).padStart(2, '0')}`, geo: chIdx >= 0 ? geoFor(chIdx) : null, start: c.start, end: ze, zoomStart: zs, chapter: true });
+        continue;
+      }
+    }
     overlays.push({ type: 'chapter', text: c.chapter, no: c.chapterNo, total: chapterCount, geo: chIdx >= 0 ? geoFor(chIdx) : null, start: st, end: Math.min(chEnd - 0.2, st + Math.min(chDur, 5)) });
   }
 
@@ -1552,14 +1793,14 @@ function planOnce(opts) {
   for (const st of overrides.stickers || []) if (st.kind !== 'emoji') overlays.push({ ...st, type: 'sticker', start: st.start != null ? st.start : 0, end: st.end != null ? st.end : D });
 
   // Keine Doppelungen: wiederholt sich eine Aufnahme nur, weil sonst Zeit übrig wäre, wird mit längeren Einstellungen neu geplant
-  const plain = clips.filter((c) => c.mediaId && !c.pre && !c.leader && !c.reveal && !c.grid && !c.burst && !c.split && !c.strip && !c.loop && !c.flightAnim);
+  const plain = clips.filter((c) => c.mediaId && !c.pre && !c.leader && !c.reveal && !c.grid && !c.burst && !c.split && !c.strip && !c.stack && !c.miniRew && !c.replay && !c.loop && !c.flightAnim);
   const seen = new Map();
   for (const c of plain) seen.set(c.mediaId, (seen.get(c.mediaId) || 0) + 1);
   // Bilder im Split-Screen zählen mit: dasselbe Bild einzeln und im Split wäre auch eine Doppelung
-  for (const c of clips) if (c.split) for (const id of c.split.ids) seen.set(id, (seen.get(id) || 0) + 1);
+  for (const c of clips) for (const id of c.split ? c.split.ids : c.stack ? c.stack.ids : []) seen.set(id, (seen.get(id) || 0) + 1);
   const repeats = [...seen.values()].reduce((a, n) => a + Math.max(0, n - 1), 0);
   // Kapazität: wie viele Aufnahmen passen, welche bleiben draußen, welche Videos sind zu lang
-  const usedSet = new Set(clips.flatMap((c) => (c.split ? c.split.ids : c.grid && c.grid.ids ? c.grid.ids.concat([c.mediaId]) : [c.mediaId])).filter(Boolean));
+  const usedSet = new Set(clips.flatMap((c) => (c.split ? c.split.ids : c.stack ? c.stack.ids : c.grid && c.grid.ids ? c.grid.ids.concat([c.mediaId]) : [c.mediaId])).filter(Boolean));
   const droppedIds = good.filter((m) => !usedSet.has(m.id)).map((m) => m.id);
   // Nachplanen, bis jede Aufnahme genau einmal vorkommt: ideale Zahl der Einstellungen = jetzige − Wiederholungen + fehlende.
   // Daraus folgt die Schnittlänge; wird sie kürzer als die ruhige Mindestlänge, wird der Film (bei „Auto“) länger.
@@ -1583,6 +1824,7 @@ function planOnce(opts) {
     look: s.look, format: s.format, frame: s.frame, band, pace: s.pace, split: s.split, font: s.font || 'klassisch', motion: s.motion || 'ken', motionAmt: s.motionAmt || 'medium',
     intro, outro, fx, overlays, notes: dir.notes, resolved: s, voice,
     beats: beatsRel, downs, beatEnergy, beatDur,
+    accent, colorFx, parallax: s.parallax === 'on' ? 1 : 0,
     sections: (an.sections || []).filter((x) => x.end > win.start && x.start < win.end).map((x) => ({ ...x, start: Math.max(0, x.start - win.start), end: Math.min(D, x.end - win.start) })),
     usedMedia: usedSet.size,
   };

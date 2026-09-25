@@ -170,8 +170,8 @@ class Engine {
     if (s.fr) { s.fr.close(); s.fr = null; }
     if (s.panels) for (const p of s.panels) this.releaseVideo(p.video);
     // eigene Leinwände sofort freigeben (Safari gibt Leinwand-Speicher sonst erst spät frei und hat dafür ein Limit)
-    for (const cv of [s.canvas, s.pv]) if (cv) { cv.width = 0; cv.height = 0; }
-    s.canvas = s.pv = null;
+    for (const cv of [s.canvas, s.pv, s.stackBg]) if (cv) { cv.width = 0; cv.height = 0; }
+    s.canvas = s.pv = s.stackBg = null;
     this.slots.delete(k);
   }
 
@@ -192,7 +192,7 @@ class Engine {
     if (s) return s;
     s = { clip, tex: null, video: null, ready: false, dead: false, failed: false, lastUpload: -1, frozen: false };
     this.slots.set(clip.i, s);
-    s.promise = (clip.grid ? this._prepareGrid(s) : clip.strip ? this._prepareStrip(s) : clip.split ? this._prepareSplit(s, t) : this._prepare(s, t)).catch((e) => {
+    s.promise = (clip.grid ? this._prepareGrid(s) : clip.strip ? this._prepareStrip(s) : clip.stack ? this._prepareStack(s) : clip.split ? this._prepareSplit(s, t) : this._prepare(s, t)).catch((e) => {
       s.failed = true;
       s.ready = true;
       if (!s.dead) console.warn(e);
@@ -442,6 +442,96 @@ class Engine {
     this.r.upload(s.tex, cv);
   }
 
+  /* ---------- Polaroid-Stapel ---------- */
+  async _prepareStack(s) {
+    const st = s.clip.stack;
+    const bp = this.bandPx;
+    s.canvas = document.createElement('canvas');
+    s.canvas.width = bp.w; s.canvas.height = bp.h;
+    s.srcW = bp.w; s.srcH = bp.h;
+    s.stack = new Array(st.items.length);
+    const small = Math.min(1400, Math.round(Math.max(bp.w, bp.h) * 0.75));
+    await Promise.all(st.items.map(async (it, k) => {
+      const m = this.media[it.mediaIndex];
+      if (!m) return;
+      s.stack[k] = m.kind === 'image' ? await this.getImage(m, small) : m.poster || null;
+    }));
+    if (s.dead) return;
+    // Hintergrund einmal vorbereiten: erstes Bild stark verkleinert (= weich), abgedunkelt
+    const src0 = s.stack.find(Boolean);
+    const bg = document.createElement('canvas');
+    bg.width = Math.max(8, Math.round(bp.w / 24)); bg.height = Math.max(8, Math.round(bp.h / 24));
+    const bx = bg.getContext('2d');
+    bx.fillStyle = '#0b0d11'; bx.fillRect(0, 0, bg.width, bg.height);
+    if (src0) {
+      const sw = src0.videoWidth || src0.width, sh = src0.videoHeight || src0.height;
+      const sc = Math.max(bg.width / sw, bg.height / sh);
+      bx.drawImage(src0, (bg.width - sw * sc) / 2, (bg.height - sh * sc) / 2, sw * sc, sh * sc);
+    }
+    bx.fillStyle = 'rgba(9,11,15,0.58)'; bx.fillRect(0, 0, bg.width, bg.height);
+    s.stackBg = bg;
+    s.tex = this.r.createTexture();
+    this.composeStack(s, s.clip.visStart);
+    s.ready = true;
+  }
+
+  composeStack(s, t) {
+    const c = s.clip, st = c.stack, cv = s.canvas;
+    const ctx = cv.getContext('2d');
+    const W = cv.width, H = cv.height;
+    const u = clamp01((t - c.start) / Math.max(0.1, c.end - c.start));
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(s.stackBg, 0, 0, W, H);
+    // der ganze Stapel wächst ruhig, die Abzüge landen jeweils genau auf dem Beat
+    const Z = 1 + 0.04 * smooth(u);
+    ctx.translate(W / 2, H / 2);
+    ctx.scale(Z, Z);
+    const short = Math.min(W, H);
+    const pw = H >= W ? W * 0.6 : short * 0.62 * 0.86;
+    const iw = pw * 0.91, ih = iw / 0.86;
+    const side = (pw - iw) / 2, ph = ih + side + pw * 0.14;
+    const fall = st.fall || 0.3;
+    const n = st.items.length;
+    for (let k = 0; k < n; k++) {
+      const land = st.times[k];
+      const pr = clamp01((t - (land - fall)) / fall);
+      if (pr <= 0) continue;
+      const e = 1 - Math.pow(1 - pr, 3);
+      const later = st.times.filter((x, j) => j > k && t >= x).length;
+      ctx.save();
+      const [ox, oy] = st.offs[k];
+      ctx.translate(ox * W * 0.5, oy * H * 0.5 - (1 - e) * H * 0.34);
+      ctx.rotate(st.rots[k] + (1 - e) * 0.14 * (k % 2 ? -1 : 1));
+      const sc = 1 + 0.16 * (1 - e);
+      ctx.scale(sc, sc);
+      ctx.globalAlpha = clamp01(pr / 0.3);
+      ctx.shadowColor = 'rgba(0,0,0,0.42)';
+      ctx.shadowBlur = short * (0.018 + 0.03 * (1 - e));
+      ctx.shadowOffsetY = short * (0.008 + 0.03 * (1 - e));
+      ctx.fillStyle = '#f3f1ec';
+      ctx.fillRect(-pw / 2, -ph / 2, pw, ph);
+      ctx.shadowColor = 'transparent';
+      const src = s.stack[k];
+      const x = -iw / 2, y = -ph / 2 + side;
+      if (src) {
+        const sw = src.videoWidth || src.width, sh = src.videoHeight || src.height;
+        const f = Math.max(iw / sw, ih / sh);
+        const vw = iw / f, vh = ih / f;
+        const fo = st.items[k].focus || [0.5, 0.45];
+        const sx = Math.max(0, Math.min(sw - vw, fo[0] * sw - vw / 2)), sy = Math.max(0, Math.min(sh - vh, fo[1] * sh - vh / 2));
+        ctx.drawImage(src, sx, sy, vw, vh, x, y, iw, ih);
+      } else { ctx.fillStyle = '#1a1f28'; ctx.fillRect(x, y, iw, ih); }
+      // darunterliegende Abzüge treten leicht zurück
+      if (later) { ctx.globalAlpha = Math.min(0.28, later * 0.12); ctx.fillStyle = '#05070a'; ctx.fillRect(-pw / 2, -ph / 2, pw, ph); }
+      ctx.restore();
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    this.r.upload(s.tex, cv);
+  }
+
   /* ---------- Split-Screen ---------- */
   async _prepareSplit(s, t) {
     const c = s.clip;
@@ -529,6 +619,12 @@ class Engine {
     }
     const last = clips[clips.length - 1];
     if (last && last.loop && last.visStart <= t + lookahead) needed.add(clips.length - 1);
+    // Echo braucht das vorige Bild noch kurz nach dem Schnitt
+    for (const k of Array.from(needed)) {
+      const c = clips[k];
+      if (c.echo && t < c.start + c.echo.dur && c.start <= t + lookahead) needed.add(clips.findIndex((x) => x.i === c.echo.from));
+    }
+    needed.delete(-1);
     for (const k of Array.from(this.slots.keys())) if (!needed.has(k)) this.releaseSlot(k);
     for (const k of needed) this.prepareSlot(clips[k], t);
     return needed;
@@ -589,7 +685,13 @@ class Engine {
     }
     const foc = [Math.max(0.1, Math.min(0.9, (mf[0] - cx) / fw + 0.5)), Math.max(0.1, Math.min(0.9, (mf[1] - cy) / fh + 0.5))];
     geo[0] = (extra.rot || 0) + lerp(mo.from.r || 0, mo.to.r || 0, e);
-    return { tex: slot.tex, xf: [fw, fh, cx, cy], box: [0, 1, 1], blur, geo, corr, foc };
+    // Parallax: nahe Bildteile (unten, am Motiv) folgen der Kamerafahrt etwas weiter als ferne – Tiefe ohne Effekthascherei
+    let par = [0, 0];
+    if (this.plan.parallax && !extra.flat) {
+      const k = this.plan.parallax;
+      par = [k * 0.06 * (x - (mo.from.x + mo.to.x) / 2), k * (0.06 * (y - (mo.from.y + mo.to.y) / 2) - 0.25 * (s / Math.max(1e-6, extra.zoom * fx.zoom) - (mo.from.s + mo.to.s) / 2))];
+    }
+    return { tex: slot.tex, xf: [fw, fh, cx, cy], box: [0, 1, 1], blur, geo, corr, foc, par };
   }
 
   /**
@@ -644,6 +746,52 @@ class Engine {
     return null;
   }
 
+  /**
+   * Schlagzeug-Akzente: kurzer Zoom-Impuls nur auf der Bassdrum, ein kaum spürbares Rütteln auf der Snare.
+   * Wirkt nur in den Zonen, die die Regie freigibt (z. B. Drop und Refrain).
+   */
+  drumFx(t) {
+    const a = this.plan.accent;
+    if (!a || !a.zones.some((z) => t >= z[0] && t < z[1])) return null;
+    const last = (arr) => {
+      let lo = 0, hi = arr.length - 1, r = -1;
+      while (lo <= hi) { const mid = (lo + hi) >> 1; if (arr[mid] <= t) { r = mid; lo = mid + 1; } else hi = mid - 1; }
+      return r >= 0 ? t - arr[r] : Infinity;
+    };
+    const k = a.amt || 1;
+    const dk = last(a.kicks);
+    const out = { zoom: 1 + 0.022 * k * Math.exp(-dk / 0.085), dx: 0, dy: 0, rot: 0 };
+    if (a.snare) {
+      const ds = last(a.snares);
+      if (ds < 0.2) {
+        const env = Math.exp(-ds / 0.055);
+        out.dx = Math.sin(ds * 2 * Math.PI * 17) * 0.0045 * k * env;
+        out.dy = Math.sin(ds * 2 * Math.PI * 13 + 1.3) * 0.003 * k * env;
+        out.rot = Math.sin(ds * 2 * Math.PI * 11 + 0.4) * 0.0025 * k * env;
+      }
+    }
+    return out;
+  }
+
+  /** Schwarzweiß → Farbe: Zustand des aktiven Farbmoments (Modus, Farbanteil). */
+  colorState(t, foc) {
+    for (const f of this.plan.colorFx || []) {
+      if (t < f.start || t >= f.end) continue;
+      const fade = clamp01((t - f.start) / 0.35);
+      const MODE = { drop: 1, steps: 1, bloom: 2, sweep: 3, pop: 4 };
+      let p;
+      if (t < f.hit) {
+        p = 0;
+        if (f.mode === 'steps') { const n = (f.steps || []).filter((x) => x <= t + 1e-3).length; p = n / ((f.steps || []).length + 1); }
+      } else p = f.mode === 'bloom' || f.mode === 'sweep' ? smooth(clamp01((t - f.hit) / Math.max(0.1, f.dur))) : 1;
+      p = 1 - fade * (1 - p);
+      if (p >= 0.999) return null;
+      const fo = f.mode === 'bloom' ? foc || [0.5, 0.45] : [0.5, 0.5];
+      return [MODE[f.mode] || 1, p, fo[0], fo[1]];
+    }
+    return null;
+  }
+
   beatPulse(t) {
     const b = this.plan.beats;
     if (!b.length || t < b[0]) return { env: 0, down: false, energy: 0 };
@@ -680,6 +828,7 @@ class Engine {
       const frozen = c.freezeAt != null && t >= c.freezeAt;
       if (s.grid) { if (active) this.composeGrid(s, t); continue; }
       if (s.strip) { if (active) this.composeStrip(s, t); continue; }
+      if (s.stack) { if (active) this.composeStack(s, t); continue; }
       if (s.panels) {
         let dirty = !playing;
         s.panels.forEach((p, k) => {
@@ -710,7 +859,7 @@ class Engine {
     const L = layersAt(plan.clips, t);
     if (mode === 'play') this.updateVideos(t, true);
     else if (mode === 'still') this.updateVideos(t, false);
-    else if (mode === 'offline') for (const s of this.slots.values()) if (s.ready && !s.failed) { if (s.panels) this.composeSplit(s, t); else if (s.grid) this.composeGrid(s, t); else if (s.strip) this.composeStrip(s, t); }
+    else if (mode === 'offline') for (const s of this.slots.values()) if (s.ready && !s.failed) { if (s.panels) this.composeSplit(s, t); else if (s.grid) this.composeGrid(s, t); else if (s.strip) this.composeStrip(s, t); else if (s.stack) this.composeStack(s, t); }
     const fx = this.fxState(t);
     let A = null, B = null, mix = 0, trans = 0, dir = 1;
     if (L) {
@@ -738,6 +887,12 @@ class Engine {
           eb.zoom *= 1 + 0.16 * (1 - e); eb.pull = 0.5 * (1 - e);
         } else if (L.type === TR.INK || L.type === TR.DOUBLE) {
           ea.zoom *= 1 + 0.06 * p; eb.zoom *= 1 + 0.06 * (1 - p);
+        } else if (L.type === TR.DRIFT) {
+          // Drift: die Kamera gleitet ohne Halt weiter, das neue Bild zieht aus derselben Richtung nach
+          const e = p * p * p * (p * (6 * p - 15) + 10);
+          ea.shiftX = 0.11 * e * dir; eb.shiftX = -0.11 * (1 - e) * dir;
+          ea.zoom *= 1 + 0.025 * e; eb.zoom *= 1 + 0.025 * (1 - e);
+          ea.blur = [1, 0.035 * w * dir, 0]; eb.blur = [1, 0.035 * w * dir, 0];
         }
       }
       // Impact-Zoom: jede Einstellung setzt leicht vergrößert ein und gleitet in 0,4 s zurück (auf dem Schnitt = auf dem Beat)
@@ -759,6 +914,19 @@ class Engine {
           ex.rot = mv.rot;
         }
       }
+      const df = this.drumFx(t);
+      if (df) {
+        for (const [ex, c] of [[ea, L.a], [eb, L.b]]) {
+          if (!c || c.grid || c.split || c.flightAnim || c.strip || c.stack) continue;
+          ex.zoom *= df.zoom;
+          ex.shiftX = (ex.shiftX || 0) + df.dx;
+          ex.shiftY = (ex.shiftY || 0) + df.dy;
+          ex.rot = (ex.rot || 0) + df.rot;
+        }
+      }
+      // Mini-Rewind: die Bilder rauschen mit Bewegungsunschärfe gegen die Laufrichtung zurück
+      for (const [ex, c] of [[ea, L.a], [eb, L.b]]) if (c && c.miniRew && !ex.blur) ex.blur = [1, 0.05 * (c.i % 2 ? 1 : -1), 0];
+      for (const [ex, c] of [[ea, L.a], [eb, L.b]]) if (c && (c.grid || c.split || c.strip || c.stack || c.flightAnim)) ex.flat = true;
       const sa = this.slots.get(plan.clips.indexOf(L.a));
       if (sa) A = this.layerParams(sa, t, fx, ea);
       if (L.b) {
@@ -767,12 +935,21 @@ class Engine {
         if (!B) { mix = 0; trans = 0; }
         if (!A && B) { A = B; B = null; mix = 0; trans = 0; }
       }
+      // Echo: auf einem starken Schlag blitzt das vorige Bild kurz halbtransparent über dem neuen auf
+      const ec = L.a && L.a.echo;
+      if (A && !B && ec && t >= L.a.start && t < L.a.start + ec.dur) {
+        const src = this.slots.get(ec.from);
+        const u = (t - L.a.start) / ec.dur;
+        const ghost = src ? this.layerParams(src, src.clip.visEnd - 0.01, fx, { zoom: 1.03 + 0.05 * u, flat: true }) : null;
+        if (ghost) { B = ghost; trans = 20; mix = 0.55 * Math.pow(1 - u, 2); }
+      }
     }
+    const col = this.colorState(t, A && A.foc);
     const ov = this.painter.paint(plan, t, this.selectedOverlay);
     if (ov.topDirty) this.r.uploadOverlay('top', this.painter.top);
     this.r.draw({
       A, B, mix, trans, dir, grade: look.grade, time: t, band: plan.band,
-      flash: fx.flash, black: fx.black, dim: fx.dim, desat: fx.desat, bars: 0, ovTop: ov.top,
+      flash: fx.flash, black: fx.black, dim: fx.dim, desat: fx.desat, bars: 0, ovTop: ov.top, col,
     });
   }
 

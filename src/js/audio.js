@@ -53,7 +53,7 @@ function percentile(arr, p) {
  * Taktphase (Downbeats), Energie je Beat und eine Hüllkurve für die Anzeige.
  */
 /** Version der Analyse: gespeicherte Songs mit älterer Version werden einmal neu analysiert. */
-const AN_VER = 2;
+const AN_VER = 3;
 
 async function analyzeAudio(buffer, onProgress) {
   const sr0 = buffer.sampleRate;
@@ -90,6 +90,13 @@ async function analyzeAudio(buffer, onProgress) {
   let lowBands = 0;
   for (let b = 0; b < nBands; b++) if ((bandEdges[b + 1] * sr) / N <= 180) lowBands = b + 1;
   lowBands = Math.max(2, lowBands);
+  // Schlagzeug: Bassdrum 40–150 Hz, Snare-Rauschen 1,5–8 kHz (lineare Energie, für Anschlag und Ausklang)
+  let kickBands = 0, hiFrom = nBands;
+  for (let b = 0; b < nBands; b++) {
+    if ((bandEdges[b + 1] * sr) / N <= 150) kickBands = b + 1;
+    if (hiFrom === nBands && (bandEdges[b] * sr) / N >= 1500) hiFrom = b;
+  }
+  kickBands = Math.max(1, kickBands);
 
   const flux = new Float32Array(nFrames);
   const lowFlux = new Float32Array(nFrames);
@@ -98,6 +105,7 @@ async function analyzeAudio(buffer, onProgress) {
   let prev = new Float32Array(nBands), cur = new Float32Array(nBands);
   // lineare Energie je Band: für die genaue Lage lauter Anschläge (die Log-Kurve reagiert auch auf leise Einsätze)
   const linFlux = new Float32Array(nFrames);
+  const lowE = new Float32Array(nFrames), hiE = new Float32Array(nFrames);
   let prevL = new Float32Array(nBands), curL = new Float32Array(nBands);
   // Klangfarbe (12 Gruppen aus den 36 Bändern) und Chroma (12 Tonklassen) je Frame
   const timbreF = new Float32Array(nFrames * 12);
@@ -126,6 +134,10 @@ async function analyzeAudio(buffer, onProgress) {
       curL[b] = s / (z - a);
       cur[b] = Math.log10(1e-9 + curL[b]);
     }
+    let le = 0, he = 0;
+    for (let b = 0; b < kickBands; b++) le += curL[b];
+    for (let b = hiFrom; b < nBands; b++) he += curL[b];
+    lowE[f] = Math.sqrt(le); hiE[f] = Math.sqrt(he);
     for (let g = 0; g < 12; g++) timbreF[f * 12 + g] = (cur[g * 3] + cur[g * 3 + 1] + cur[g * 3 + 2]) / 3;
     for (let k = 1; k < N / 2; k++) {
       const pc = pcOfBin[k];
@@ -364,8 +376,11 @@ async function analyzeAudio(buffer, onProgress) {
   }
   beats = filled.filter((t, i, a) => i === 0 || t - a[i - 1] > pSec * 0.3);
 
-  // RMS je Beat -> Energie 0..1
   const toFrame = (t) => Math.max(0, Math.min(nFrames - 1, Math.round(((t - 0.014) * sr - N / 2) / hop)));
+  // Hi-Hats zwischen den Schlägen können das Raster um einen halben Schlag verschieben: die Bassdrum entscheidet
+  beats = fixHalfPhase(beats, pSec, lowE, toFrame, nFrames);
+
+  // RMS je Beat -> Energie 0..1
   const beatRms = new Float32Array(beats.length);
   const beatLow = new Float32Array(beats.length);
   for (let i = 0; i < beats.length; i++) {
@@ -378,6 +393,7 @@ async function analyzeAudio(buffer, onProgress) {
     for (let f = Math.max(0, a - 2); f <= Math.min(nFrames - 1, a + 2); f++) lf = Math.max(lf, lowFlux[f] + 0.5 * flux[f]);
     beatLow[i] = lf;
   }
+  const drums = detectDrums(beats, pSec, lowE, hiE, toFrame, nFrames);
   const db = Array.from(beatRms, (v) => 20 * Math.log10(v + 1e-7));
   const lo = percentile(db, 0.05), hi = percentile(db, 0.97);
   const energyRaw = db.map((v) => Math.max(0, Math.min(1, (v - lo) / Math.max(1e-6, hi - lo))));
@@ -427,11 +443,89 @@ async function analyzeAudio(buffer, onProgress) {
     // häufigste Taktphase (nur noch für ältere Aufrufer; maßgeblich ist downIdx)
     downPhase: (() => { const c = [0, 0, 0, 0]; for (const i of structure.downIdx) c[i % 4]++; return c.indexOf(Math.max(...c)); })(),
     energy,
+    kicks: drums.kicks,
+    snares: drums.snares,
     duration,
     firstSound,
     lastSound: Math.max(firstSound + 1, lastSound),
     env,
   };
+}
+
+/** Anstieg der Energie am Anschlag gegenüber den Frames kurz davor. */
+function drumRise(arr, f, nFrames) {
+  let mx = 0, pre = 0;
+  for (let j = f - 1; j <= f + 2; j++) if (j >= 0 && j < nFrames) mx = Math.max(mx, arr[j]);
+  for (let j = f - 6; j < f - 2; j++) if (j >= 0 && j < nFrames) pre = Math.max(pre, arr[j]);
+  return Math.max(0, mx - pre);
+}
+
+/**
+ * Halbe Phasenlage prüfen: liegt die Bassdrum über 16 Schläge deutlich auf den Zwischenschlägen,
+ * sitzt das Raster dort auf den Hi-Hats. Dann rückt dieser Teil um einen halben Schlag.
+ */
+function fixHalfPhase(beats, pSec, lowE, toFrame, nFrames) {
+  const n = beats.length;
+  if (n < 16) return beats;
+  const mid = (i) => (beats[i] + (i + 1 < n ? beats[i + 1] : beats[i] + pSec)) / 2;
+  const on = beats.map((t) => drumRise(lowE, toFrame(t), nFrames));
+  const off = beats.map((_, i) => drumRise(lowE, toFrame(mid(i)), nFrames));
+  const ref = percentile(on.concat(off), 0.95) || 1e-9;
+  const flip = new Array(n).fill(false);
+  for (let s0 = 0; s0 < n; s0 += 8) {
+    let a = 0, b = 0;
+    const e = Math.min(n, s0 + 16);
+    for (let i = s0; i < e; i++) { a += on[i]; b += off[i]; }
+    const c = e - s0;
+    if (b > a * 2.5 && b / c > ref * 0.06) for (let i = s0; i < Math.min(n, s0 + 8); i++) flip[i] = true;
+  }
+  if (!flip.some(Boolean)) return beats;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const t = flip[i] ? mid(i) : beats[i];
+    if (!out.length || t - out[out.length - 1] > pSec * 0.6) out.push(t);
+  }
+  return out;
+}
+
+/**
+ * Bassdrum und Snare auf dem Achtelraster: Anstieg der tiefen bzw. der hellen Energie gegenüber
+ * den Frames davor. Die Snare zählt über ihren Ausklang (≈ 50 ms), so fallen kurze Hi-Hats heraus.
+ * Schwellen relativ zum Song, damit leise und laute Produktionen gleich behandelt werden.
+ */
+function detectDrums(beats, pSec, lowE, hiE, toFrame, nFrames) {
+  const pos = [];
+  for (let i = 0; i < beats.length; i++) {
+    pos.push(beats[i]);
+    const nx = i + 1 < beats.length ? beats[i + 1] : beats[i] + pSec;
+    pos.push((beats[i] + nx) / 2);
+  }
+  // Snare: mittlere Energie über ihren Ausklang (≈ 58 ms) statt Spitze, so fallen kurze Hi-Hats heraus
+  const body = (arr, f) => {
+    let m = 0, pre = 0;
+    for (let j = f; j < f + 5; j++) if (j >= 0 && j < nFrames) m += arr[j];
+    for (let j = f - 6; j < f - 2; j++) if (j >= 0 && j < nFrames) pre = Math.max(pre, arr[j]);
+    return Math.max(0, m / 5 - pre);
+  };
+  const ks = [], ss = [];
+  for (const t of pos) {
+    const f = toFrame(t);
+    ks.push(drumRise(lowE, f, nFrames));
+    ss.push(body(hiE, f));
+  }
+  // Bezug: die kräftigsten Schläge des Songs; ein Teil mit leiserem Schlagzeug zählt über seinen eigenen Pegel
+  const refK = percentile(ks, 0.97) || 1e-9, refS = percentile(ss, 0.97) || 1e-9;
+  const kicks = [], snares = [];
+  const W = 16;
+  pos.forEach((t, i) => {
+    let lk = 0, ls = 0;
+    for (let j = Math.max(0, i - W); j < Math.min(pos.length, i + W); j++) { lk = Math.max(lk, ks[j]); ls = Math.max(ls, ss[j]); }
+    if (ks[i] > Math.max(refK * 0.035, lk * 0.3)) kicks.push(t);
+    if (ss[i] > Math.max(refS * 0.12, ls * 0.55)) snares.push(t);
+  });
+  // Rauschen ohne Schlagzeug: Treffer auf fast jeder Achtel sind keine Snare
+  const sn = snares.length > pos.length * 0.6 ? [] : snares;
+  return { kicks: Float64Array.from(kicks), snares: Float64Array.from(sn) };
 }
 
 /**

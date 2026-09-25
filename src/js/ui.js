@@ -55,6 +55,14 @@ function normalizeSettings(st, defaults) {
     motion: pick1(s.motion, ['ken', 'snap', 'pulse', 'sway', 'float', 'tilt', 'handheld'], 'ken'),
     motionAmt: pick1(s.motionAmt, ['soft', 'medium', 'strong'], 'medium'),
     burst: pick1(s.burst, ['off', 'drop'], 'off'),
+    color: pick1(s.color, ['auto', 'off', 'drop', 'steps', 'bloom', 'sweep', 'pop'], 'auto'),
+    accent: pick1(s.accent, ['auto', 'off', 'kick', 'kicksnare'], 'auto'),
+    parallax: pick1(s.parallax, ['auto', 'on', 'off'], 'auto'),
+    drift: pick1(s.drift, ['auto', 'on', 'off'], 'auto'),
+    echo: pick1(s.echo, ['auto', 'on', 'off'], 'auto'),
+    stack: pick1(s.stack, ['auto', 'on', 'off'], 'auto'),
+    mini: pick1(s.mini, ['auto', 'on', 'off'], 'auto'),
+    chapKnock: pick1(s.chapKnock, ['auto', 'on', 'off'], 'auto'),
     showTitle: s.showTitle !== false,
     showChapters: s.showChapters !== false,
     showStats: s.showStats !== false,
@@ -62,7 +70,7 @@ function normalizeSettings(st, defaults) {
 }
 
 /* ---------- Stil-Vorlage: ein Stil für alle Filme der Reise ---------- */
-const STYLE_KEYS = ['look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
+const STYLE_KEYS = ['look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'color', 'accent', 'parallax', 'drift', 'echo', 'stack', 'mini', 'chapKnock', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
 const styleOf = (st) => Object.fromEntries(STYLE_KEYS.map((k) => [k, st[k]]));
 /** Einstellungen für neue Filme: Standard, darüber die Vorlage der Reise */
 function baseSettings(defaults) {
@@ -1774,6 +1782,13 @@ function renderStyle() {
   setRadio($('motionAmtChips'), st.motionAmt);
   $('motionAmtChips').hidden = st.motion === 'ken';
   $('motionHint').textContent = { ken: 'Gleitende Fahrten mit feiner Neigung; die Richtung fließt über die Schnitte weiter.', snap: 'Jeder Schnitt setzt mit einem kurzen Zoom-Impuls ein und gleitet zurück, genau auf dem Beat.', float: 'Schwereloses Gleiten in einer weichen Acht über zwei Takte.', tilt: 'Auf jeder Eins kippt das Bild weich zur anderen Seite.', sway: 'Die Bilder pendeln sanft von links nach rechts, der Wendepunkt sitzt genau auf dem Beat. Im Drop etwas stärker.', pulse: 'Jeder Beat gibt dem Bild einen kurzen Zoom-Impuls.', handheld: 'Ruhiges, organisches Schweben wie aus der Hand gefilmt.' }[st.motion];
+  setRadio($('drumChips'), st.accent);
+  const accR = r && r.accent ? r.accent : st.accent;
+  $('drumHint').textContent = st.accent === 'auto' ? (accR === 'off' ? 'Auto: bei diesem Song ohne Schlagzeug-Akzente.' : 'Auto: ein feiner Zoom-Impuls nur auf der Bassdrum, im Drop und Refrain.') : st.accent === 'kick' ? 'Der Zoom-Impuls folgt nur der Bassdrum, nicht jedem Beat.' : st.accent === 'kicksnare' ? 'Bassdrum-Zoom, dazu ein kurzes, feines Rütteln auf der Snare.' : 'Keine Schlagzeug-Akzente.';
+  setRadio($('colorChips'), st.color);
+  const colR = st.color === 'auto' && r ? r.color : st.color;
+  const COLOR_DE = { drop: 'Vor dem Drop schwarzweiß, auf dem ersten Schlag ist die Farbe schlagartig zurück.', steps: 'Im Takt vor dem Einsatz kommt die Farbe Beat für Beat zurück.', bloom: 'Die Farbe breitet sich auf dem Einsatz vom Motiv aus über das Bild aus.', sweep: 'Die Farbe läuft auf dem Einsatz als weiche Welle durchs Bild.', pop: 'Vor dem Einsatz bleiben nur kräftige Farben stehen, auf dem Schlag kommt alles zurück.', off: 'Kein Schwarzweiß-Moment.' };
+  $('colorHint').textContent = (st.color === 'auto' ? 'Auto: ' : '') + (COLOR_DE[colR] || COLOR_DE.off);
   setRadio($('targetChips'), st.target);
   $('targetChips').hidden = st.format !== '9:16';
   $('capHint').textContent = capacityText();
@@ -1838,6 +1853,8 @@ const FX_KEYS = {
   midGrid: { on: 'on', off: 'off', is: (st) => st.midGrid === 'on' },
   midCount: { on: 'drop', off: 'off', is: (st) => st.midCount === 'drop' },
 };
+// Stil-Mittel mit „Auto“: angezeigt wird, was die Regie gewählt hat; Antippen legt es fest (an/aus)
+for (const k of ['echo', 'stack', 'mini', 'drift', 'parallax', 'chapKnock']) FX_KEYS[k] = { on: 'on', off: 'off', is: (st, r) => st[k] === 'on' || (st[k] === 'auto' && !!r && r[k] === 'on') };
 function renderFx(st, r) {
   for (const b of $('fxChips').querySelectorAll('[data-fx]')) b.setAttribute('aria-pressed', String(FX_KEYS[b.dataset.fx].is(st, r)));
   const on = (k) => FX_KEYS[k].is(st, r);
@@ -1847,6 +1864,14 @@ function renderFx(st, r) {
   if (on('midCount')) parts.push('Vor dem Drop: Countdown 3 · 2 · 1');
   if (on('burst') || on('ramp')) parts.push(`Drop: ${[on('burst') ? 'Foto-Serie' : '', on('ramp') ? 'Videos beschleunigen hinein und landen in Zeitlupe' : ''].filter(Boolean).join(', ')}`);
   if (on('stamp')) parts.push('Datum wie bei einer alten Digicam unten rechts');
+  if (on('echo')) parts.push('Echo: auf starken Schlägen blitzt das vorige Bild kurz auf');
+  if (on('stack')) parts.push('Polaroid-Stapel in einem ruhigen Teil');
+  if (on('mini')) parts.push('Mini-Rewind: vor einem Drop spult der Film einen halben Takt zurück');
+  if (on('drift')) parts.push('Drift: in ruhigen Teilen gleitet die Kamera ins nächste Bild');
+  if (on('parallax')) parts.push('Tiefe: Vorder- und Hintergrund bewegen sich leicht versetzt');
+  if (on('chapKnock') && S.ctx && S.ctx.kind === 'bestof') parts.push('Kapitel: Zoom durch den Namen jedes Ortes');
+  const chk = $('fxChapKnock');
+  if (chk) chk.hidden = !(S.ctx && S.ctx.kind === 'bestof');
   $('fxHint').textContent = parts.length ? parts.join(' · ') + '.' : 'Tippe an, was im Film vorkommen soll. Die Regie setzt jedes Element an die Stelle im Song, wo es am besten wirkt.';
 }
 
@@ -2495,6 +2520,8 @@ async function init() {
   bindSetting('kmChips', 'km');
   bindSetting('motionChips', 'motion');
   bindSetting('motionAmtChips', 'motionAmt');
+  bindSetting('drumChips', 'accent');
+  bindSetting('colorChips', 'color');
   bindSetting('preChips', 'pre');
   bindSetting('targetChips', 'target');
   $('fxChips').addEventListener('click', (e) => {

@@ -45,6 +45,9 @@ uniform float uLod;
 uniform float uSharp;   // leichte Unscharfmaskierung über die Mipmap-Stufe
 uniform vec2 uFocA;     // Bildschwerpunkt im Ausgabebild (für Bild-aus-Bild-Übergänge)
 uniform vec2 uFocB;
+uniform vec2 uParA;     // Parallax: Versatz der nahen Bildteile (Ausschnitt-Einheiten)
+uniform vec2 uParB;
+uniform vec4 uCol;      // Schwarzweiß → Farbe: Modus, Fortschritt, Motiv (x, y)
 
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
@@ -60,7 +63,14 @@ float fbm(vec2 p) {
 }
 vec2 rot2(vec2 p, float a) { float c = cos(a), s = sin(a); return vec2(c * p.x - s * p.y, s * p.x + c * p.y); }
 
-vec3 sampleSrc(sampler2D tex, vec4 xf, vec3 box, vec4 geo, vec2 uv) {
+// Tiefe ohne Tiefenkarte: unten und am Motiv nah, oben (Himmel, Horizont) fern. Weich, ohne Kanten.
+float nearness(vec2 uv, vec2 foc) {
+  float v = smoothstep(0.2, 1.0, uv.y);
+  float m = 1.0 - smoothstep(0.0, 0.5, distance(uv, foc));
+  return 0.65 * v + 0.35 * m;
+}
+
+vec3 sampleSrc(sampler2D tex, vec4 xf, vec3 box, vec4 geo, vec2 uv, vec2 par, vec2 foc) {
   float asp = uRes.x / (uRes.y * uBand.y);
   if (geo.z > 0.5) {
     // Standbild als Abzug: leicht gedreht, weißer Rand, dunkler Grund
@@ -95,6 +105,7 @@ vec3 sampleSrc(sampler2D tex, vec4 xf, vec3 box, vec4 geo, vec2 uv) {
   vec2 p = uv - 0.5;
   if (geo.x != 0.0) p = rot2(p * vec2(asp, 1.0), -geo.x) / vec2(asp, 1.0);
   vec2 s = xf.zw + p * xf.xy;
+  if (par.x != 0.0 || par.y != 0.0) s = clamp(s + par * (nearness(uv, foc) - 0.4) * xf.xy, 0.0, 1.0);
   // leichte negative Mipmap-Verschiebung: volle Auflösung statt Mischung mit der halben Stufe
   vec3 c = texture2D(tex, s, geo.y - 0.75).rgb;
   if (uSharp > 0.0 && geo.y < 0.5) {
@@ -110,20 +121,20 @@ vec3 sampleSrc(sampler2D tex, vec4 xf, vec3 box, vec4 geo, vec2 uv) {
   return c;
 }
 
-vec3 layer(sampler2D tex, vec4 xf, vec3 box, vec3 blur, vec4 geo, vec2 off, vec2 uv) {
+vec3 layer(sampler2D tex, vec4 xf, vec3 box, vec3 blur, vec4 geo, vec2 off, vec2 uv, vec2 par, vec2 foc) {
   uv -= off;
-  if (blur.x < 0.5) return sampleSrc(tex, xf, box, geo, uv);
+  if (blur.x < 0.5) return sampleSrc(tex, xf, box, geo, uv, par, foc);
   vec2 dir = blur.x < 1.5 ? blur.yz : (uv - 0.5) * blur.y;
   vec3 acc = vec3(0.0);
   for (int i = 0; i < 8; i++) {
     float k = float(i) / 7.0 - 0.5;
-    acc += sampleSrc(tex, xf, box, geo, uv + dir * k);
+    acc += sampleSrc(tex, xf, box, geo, uv + dir * k, par, foc);
   }
   return acc / 8.0;
 }
 
-vec3 layerA(vec2 uv) { return layer(uTexA, uXfA, uBoxA, uBlurA, uGeoA, uOffA, uv) * uCorrA; }
-vec3 layerB(vec2 uv) { return layer(uTexB, uXfB, uBoxB, uBlurB, uGeoB, uOffB, uv) * uCorrB; }
+vec3 layerA(vec2 uv) { return layer(uTexA, uXfA, uBoxA, uBlurA, uGeoA, uOffA, uv, uParA, uFocA) * uCorrA; }
+vec3 layerB(vec2 uv) { return layer(uTexB, uXfB, uBoxB, uBlurB, uGeoB, uOffB, uv, uParB, uFocB) * uCorrB; }
 
 vec3 leakColor(vec2 uv, float t) {
   vec2 c1 = vec2(0.15 + 0.7 * fract(t * 0.07), 0.3 + 0.2 * sin(t * 0.6));
@@ -148,6 +159,12 @@ vec3 composite(vec2 uv) {
     if (uTrans == 1) c = mix(a, b, smoothstep(0.0, 1.0, p));
     else if (uTrans == 2) c = p < 0.5 ? a * (1.0 - smoothstep(0.0, 0.5, p)) : b * smoothstep(0.5, 1.0, p);
     else if (uTrans == 4 || uTrans == 5) c = mix(a, b, smoothstep(0.44, 0.56, p));
+    else if (uTrans == 13) c = mix(a, b, smoothstep(0.22, 0.78, p));
+    else if (uTrans == 20) {
+      // Echo: das vorige Bild blitzt hell und halbtransparent über dem neuen auf
+      vec3 scr = 1.0 - (1.0 - a) * (1.0 - b);
+      c = mix(a, mix(scr, b, 0.35), p);
+    }
     else if (uTrans == 6) c = mix(a, b, smoothstep(0.25, 0.75, p)) + leakColor(uv, uTime) * sin(3.14159265 * p) * 0.55;
     else if (uTrans == 7) {
       float thr = mix(-0.25, 1.25, p);
@@ -206,6 +223,26 @@ void main() {
     vec3 sc = c * c * (3.0 - 2.0 * c);
     c = mix(c, sc, uContrast);
     c = mix(c, vec3(luma(c)), max(uBW, uDesat));
+    if (uCol.x > 0.5) {
+      // Schwarzweiß → Farbe: 1 ganz, 2 vom Motiv aus, 3 Farbwelle, 4 Farbtupfer (kräftige Farben bleiben)
+      float col = uCol.y;
+      vec2 a2 = vec2(uRes.x / (uRes.y * uBand.y), 1.0);
+      if (uCol.x > 1.5 && uCol.x < 2.5) {
+        float d = length((uv - uCol.zw) * a2) / length(max(uCol.zw, 1.0 - uCol.zw) * a2);
+        d += (fbm(uv * a2 * 3.0) - 0.5) * 0.18;
+        float thr = mix(-0.15, 1.2, uCol.y);
+        col = 1.0 - smoothstep(thr - 0.12, thr + 0.12, d);
+      } else if (uCol.x > 2.5 && uCol.x < 3.5) {
+        float f = dot(uv * a2, normalize(vec2(1.0, 0.55))) / dot(a2, normalize(vec2(1.0, 0.55)));
+        f += (fbm(uv * a2 * 2.5) - 0.5) * 0.12;
+        float thr = mix(-0.2, 1.2, uCol.y);
+        col = 1.0 - smoothstep(thr - 0.1, thr + 0.1, f);
+      } else if (uCol.x > 3.5) {
+        float mx2 = max(c.r, max(c.g, c.b)), mn2 = min(c.r, min(c.g, c.b));
+        col = max(uCol.y, smoothstep(0.2, 0.42, mx2 - mn2) * 0.95);
+      }
+      c = mix(vec3(luma(c)), c, clamp(col, 0.0, 1.0));
+    }
     c = mix(vec3(uLift), vec3(1.0 - uCrush), clamp(c, 0.0, 1.0));
     c *= uTint;
     if (uLeak > 0.0) c += leakColor(uv, uTime * 0.5) * uLeak * (0.6 + 0.4 * sin(uTime * 1.3));
@@ -364,6 +401,9 @@ class Renderer {
     gl.uniform3fv(u.uCorrB, L(f.B, 'corr', [1, 1, 1]));
     gl.uniform2fv(u.uFocA, L(f.A, 'foc', [0.5, 0.45]));
     gl.uniform2fv(u.uFocB, L(f.B, 'foc', [0.5, 0.45]));
+    gl.uniform2fv(u.uParA, L(f.A, 'par', [0, 0]));
+    gl.uniform2fv(u.uParB, L(f.B, 'par', [0, 0]));
+    gl.uniform4fv(u.uCol, f.col || [0, 1, 0.5, 0.5]);
     gl.uniform2fv(u.uBand, f.band || [0, 1]);
     gl.uniform1f(u.uHasA, f.A ? 1 : 0);
     gl.uniform1f(u.uHasB, f.B ? 1 : 0);

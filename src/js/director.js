@@ -284,6 +284,56 @@ function direct(an, media, s, chapters, flight) {
   const OUTRO_DE = { strip: 'Filmstreifen, der rückwärts durch deinen Film läuft', credits: 'Abblende und Schlusstitel', loop: 'nahtloser Übergang zurück zum Anfang (Endlos-Loop)', freeze: 'Standbild, das in Schwarzweiß ausläuft', split: 'Split-Screen und harter Schnitt auf Schwarz' };
   if (s.intro === 'auto' || s.outro === 'auto') notes.push(`Einstieg: ${INTRO_DE[rs.intro]}. Ende: ${OUTRO_DE[rs.outro]}.`);
 
+  // Stil-Regie: wenige, aufeinander abgestimmte Mittel statt „alles auf einmal“.
+  // Durchgehend und dezent: Tiefe (Parallax), Drift in ruhigen Teilen, Bassdrum-Zoom im Drop.
+  // Dazu je nach Filmlänge ein bis drei besondere Momente an den passenden Stellen im Song.
+  const inWin = (t) => t >= win.start && t < win.end;
+  const barDur = an.beatPeriod * 4;
+  const kicksIn = Array.from(an.kicks || []).filter(inWin).length;
+  const secsW = (an.sections || []).filter((x) => x.start > win.start + barDur * 1.5 && x.start < win.end - barDur * 2);
+  const isPeak = (x) => x && (x.label === 'drop' || x.label === 'chorus');
+  const hits = secsW.filter((x) => isPeak(x) && !isPeak((an.sections || [])[(an.sections || []).indexOf(x) - 1]));
+  const calmLong = (an.sections || []).some((x) => (x.label === 'verse' || x.label === 'break' || x.label === 'intro') && Math.min(x.end, win.end) - Math.max(x.start, win.start) >= barDur * 3);
+  const bwLook = (LOOKS[rs.look] && LOOKS[rs.look].grade.bw >= 0.9) || false;
+  const imgs0 = list.filter((m) => m.kind === 'image').length;
+  const auto = [];
+  // fehlende Angaben (ältere Projekte) gelten als „Auto“
+  for (const k of ['accent', 'parallax', 'drift', 'chapKnock', 'color', 'echo', 'stack', 'mini']) if (s[k] == null) s = { ...s, [k]: 'auto' };
+  if (s.accent === 'auto') {
+    rs.accent = !flight && kicksIn >= 8 && s.motion !== 'pulse' && s.motion !== 'snap' && rs.pace !== 'ruhig' ? 'kick' : 'off';
+    rs.accentAuto = true;
+    if (rs.accent !== 'off') auto.push('ein feiner Zoom-Impuls auf der Bassdrum im Drop');
+  }
+  if (s.parallax === 'auto') rs.parallax = flight ? 'off' : 'on';
+  if (s.drift === 'auto') rs.drift = rs.pace === 'schnell' ? 'off' : 'on';
+  if (s.chapKnock === 'auto') rs.chapKnock = chapters && chapters.length >= 2 && chapters.length <= 8 ? 'on' : 'off';
+  const budget = flight ? 0 : D < 22 ? 1 : D < 45 ? 2 : 3;
+  let used = ['echo', 'stack', 'mini'].filter((k) => s[k] === 'on').length + (s.color && s.color !== 'auto' && s.color !== 'off' ? 1 : 0)
+    + (s.midGrid === 'on' ? 1 : 0) + (s.midCount === 'drop' ? 1 : 0) + (s.burst === 'drop' ? 1 : 0);
+  if (s.color === 'auto') {
+    const colHits = (an.sections || []).filter((x, k, arr) => isPeak(x) && x.start > win.start + barDur * 0.9 && x.start < win.end - barDur && !isPeak(arr[k - 1]));
+    const ok = !flight && !bwLook && s.midGrid !== 'on' && used < budget && (colHits.length || rs.intro === 'reveal' || D >= 20);
+    rs.color = ok ? pick(colHits.length ? ['drop', 'bloom', 'steps', 'drop', 'sweep'] : ['bloom', 'sweep']) : 'off';
+    rs.colorAuto = true;
+    if (ok) used++;
+  }
+  // energiegeladen: Echo auf den starken Schlägen; ruhig: Polaroid-Stapel
+  const lively = rs.pace !== 'ruhig' && kicksIn >= 16 && hits.length;
+  for (const k of lively ? ['echo', 'stack', 'mini'] : ['stack', 'echo', 'mini']) {
+    if (s[k] !== 'auto') continue;
+    let ok = !flight && used < budget;
+    if (k === 'echo') ok = ok && lively;
+    if (k === 'stack') ok = ok && calmLong && imgs0 >= 10 && D >= 20;
+    if (k === 'mini') ok = ok && hits.length >= (rs.color !== 'off' ? 2 : 1) && D >= 30 && list.length >= 8;
+    rs[k] = ok ? 'on' : 'off';
+    if (ok) used++;
+  }
+  const MOM = { echo: 'Echo auf starken Schlägen', stack: 'Polaroid-Stapel in einem ruhigen Teil', mini: 'Mini-Rewind vor einem Drop' };
+  for (const k of ['echo', 'stack', 'mini']) if (s[k] === 'auto' && rs[k] === 'on') auto.push(MOM[k]);
+  if (s.drift === 'auto' && rs.drift === 'on') auto.push('Drift-Übergänge in ruhigen Teilen');
+  if (s.parallax === 'auto' && rs.parallax === 'on') auto.push('leichte Tiefe in den Kamerafahrten');
+  if (auto.length) notes.push(`Stil: ${auto.join(', ')}. Bewusst sparsam, damit der Film wie aus einem Guss wirkt.`);
+
   const cm = colorMatch(all);
   if (list.length >= 2) notes.push('Helligkeit und Farbstich aller Aufnahmen sind aneinander angeglichen, damit der Film wie aus einem Guss wirkt.');
 

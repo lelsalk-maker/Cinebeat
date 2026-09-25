@@ -64,6 +64,15 @@ Reisefilme im Kino-Look, geschnitten nach dem Aufbau deines Songs: für Instagra
 - **Bewegung**: Kamerafahrten gleiten (keine Stopps an den Schnitten), mit feiner Neigung, die Richtung fließt über zwei Einstellungen. Dazu *Impact-Zoom* (jeder Schnitt setzt mit einem kurzen Zoom auf dem Beat ein), *Puls*, *Pendeln*, *Schweben* (weiche Acht über zwei Takte), *Neigen* (kippt auf jeder Eins zur anderen Seite) und *Handkamera*.
 - **Looks**: natürliches Grading mit eigenen Farbrädern für Schatten und Lichter, Vibrance und Farbtemperatur; jeder Look ist klar erkennbar, das Bild bleibt echt. Countdown und Rewind übernehmen den Ton des Looks, Titel und Kapitel bleiben neutral weiß bzw. silbern.
 - **Einheitliche Titel**: Alle Einblendungen nutzen die gewählte Titelschrift und eine passende Schrift für kleine Zeilen. Titel gleiten wortweise auf den Beats aus einer Maske ins Bild und auf einem Beat wieder hinaus.
+- **Schwarzweiß → Farbe** (eigene Auswahl): vor einem Einsatz ist das Bild schwarzweiß, auf dem Schlag kehrt die Farbe zurück: *Auf dem Drop* (schlagartig), *Beat für Beat* (im Takt davor in vier Stufen), *Vom Motiv aus* (breitet sich vom Motiv aus), *Farbwelle* (läuft weich durchs Bild), *Farbtupfer* (vorher bleiben nur kräftige Farben). Mit der Aufblende bleibt der ganze Aufbau schwarzweiß und die Farbe kommt mit dem Highlight.
+- **Schlagzeug**: Bassdrum und Snare werden erkannt. *Kick-Zoom* gibt nur auf der Bassdrum einen feinen Zoom-Impuls, *Kick + Snare* dazu ein kurzes, feines Rütteln auf der Snare. Die Erkennung korrigiert auch Taktraster, die auf Hi-Hats zwischen den Schlägen eingerastet wären.
+- **Echo-Bild**: auf starken Schlägen im Drop blitzt das vorige Bild kurz halbtransparent auf (höchstens alle zwei Takte).
+- **Polaroid-Stapel**: in einem ruhigen Teil fallen vier Fotos im Takt als Abzüge übereinander, mit Schatten auf einem weichen Hintergrund. Es kommen nur Fotos hinein, die sonst nicht im Film sind.
+- **Mini-Rewind**: vor einem Drop spult der Film einen halben Takt zurück, auf dem Einsatz steht noch einmal der beste Moment.
+- **Drift-Übergang**: in ruhigen Teilen gleitet die Kamera ohne Halt in Fahrtrichtung ins nächste Bild.
+- **Tiefe (Parallax)**: nahe Bildteile (unten, am Motiv) folgen der Kamerafahrt etwas weiter als ferne, für mehr Tiefe.
+- **Durch den Namen je Kapitel** (Gesamtfilm): zu jedem neuen Ort ist der Name ein Fenster ins Bild, dann zoomt die Kamera auf einem Beat durch die Buchstaben.
+- **Auto-Stil**: Standardmäßig wählt die Regie wenige, aufeinander abgestimmte Mittel: durchgehend dezent Tiefe, Drift in ruhigen Teilen und den Bassdrum-Zoom im Drop, dazu je nach Filmlänge ein bis drei besondere Momente (Schwarzweiß → Farbe, Echo oder Polaroid-Stapel, Mini-Rewind) an den passenden Stellen im Song. Jedes Mittel lässt sich einzeln an- oder abschalten.
 - **Nichts ist fest**: Titel, Kapitel und Reise-Statistik lassen sich einzeln ausschalten; Koordinaten und Kilometer sind standardmäßig aus.
 
 ## Musik und Instagram

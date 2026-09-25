@@ -227,6 +227,27 @@
               <button type="button" role="radio" data-v="strong">Stark</button>
             </div>
             <p class="hint small" id="motionHint"></p>
+            <span class="field-label sub-label" id="drumLabel">Schlagzeug</span>
+            <div class="chips sub-chips" role="radiogroup" aria-labelledby="drumLabel" id="drumChips">
+              <button type="button" role="radio" data-v="auto">Auto</button>
+              <button type="button" role="radio" data-v="kick">Kick-Zoom</button>
+              <button type="button" role="radio" data-v="kicksnare">Kick + Snare</button>
+              <button type="button" role="radio" data-v="off">Aus</button>
+            </div>
+            <p class="hint small" id="drumHint"></p>
+          </div>
+          <div class="field">
+            <span class="field-label" id="colorLabel">Schwarzweiß → Farbe</span>
+            <div class="chips" role="radiogroup" aria-labelledby="colorLabel" id="colorChips">
+              <button type="button" role="radio" data-v="auto">Auto</button>
+              <button type="button" role="radio" data-v="drop">Auf dem Drop</button>
+              <button type="button" role="radio" data-v="steps">Beat für Beat</button>
+              <button type="button" role="radio" data-v="bloom">Vom Motiv aus</button>
+              <button type="button" role="radio" data-v="sweep">Farbwelle</button>
+              <button type="button" role="radio" data-v="pop">Farbtupfer</button>
+              <button type="button" role="radio" data-v="off">Aus</button>
+            </div>
+            <p class="hint small" id="colorHint"></p>
           </div>
           <div class="field">
             <span class="field-label" id="fxLabel">Im Film <span class="muted">· beliebig kombinierbar</span></span>
@@ -239,6 +260,12 @@
               <button type="button" aria-pressed="false" data-fx="burst">Foto-Serie im Drop</button>
               <button type="button" aria-pressed="false" data-fx="ramp">Speed-Ramp</button>
               <button type="button" aria-pressed="false" data-fx="stamp">Datumsstempel</button>
+              <button type="button" aria-pressed="false" data-fx="echo">Echo-Bild</button>
+              <button type="button" aria-pressed="false" data-fx="stack">Polaroid-Stapel</button>
+              <button type="button" aria-pressed="false" data-fx="mini">Mini-Rewind</button>
+              <button type="button" aria-pressed="false" data-fx="drift">Drift-Übergang</button>
+              <button type="button" aria-pressed="false" data-fx="parallax">Tiefe (Parallax)</button>
+              <button type="button" aria-pressed="false" data-fx="chapKnock" id="fxChapKnock">Durch den Namen je Kapitel</button>
             </div>
             <p class="hint small" id="fxHint"></p>
           </div>
