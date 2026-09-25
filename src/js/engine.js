@@ -1347,7 +1347,7 @@ class Engine {
     }
   }
 
-  async _exportOffline({ size, fps, withAudio, withSong = true, support, onProgress, isCancelled }) {
+  async _exportOffline({ size, fps, withAudio, withSong = true, support, onProgress, isCancelled, onState }) {
     this.exporting = true;
     this.pause();
     this.scale = 1;
@@ -1364,27 +1364,73 @@ class Engine {
       audio: as ? { codec: as.kind, sampleRate: as.sampleRate, channels: 2, bitrate: 192000 } : null,
     });
     let failed = null;
-    const enc = new VideoEncoder({ output: (c, m) => mux.addVideoChunk(c, m), error: (e) => { failed = e; } });
-    enc.configure(vs.cfg);
     const N = Math.max(1, Math.round(D * fps));
     const frameUs = 1e6 / fps;
+    // Fortsetzen nach App-Wechsel: iOS hält die Seite an und beendet dabei oft den Encoder oder nimmt die Grafik weg.
+    // Dann geht es ab dem letzten fertig kodierten Schlüsselbild mit einem neuen Encoder weiter.
+    let safeKey = 0, forceKey = false, resumes = 0;
+    const makeEnc = () => {
+      const e = new VideoEncoder({
+        output: (c, m) => { if (c.type === 'key') safeKey = Math.round(c.timestamp / frameUs); mux.addVideoChunk(c, m); },
+        error: (err) => { failed = err; },
+      });
+      e.configure(vs.cfg);
+      return e;
+    };
+    let enc = makeEnc();
+    const visible = () => new Promise((res) => {
+      if (typeof document === 'undefined' || !document.hidden) { res(); return; }
+      const on = () => { if (!document.hidden) { document.removeEventListener('visibilitychange', on); res(); } };
+      document.addEventListener('visibilitychange', on);
+    });
+    const restored = async () => { for (let k = 0; k < 100 && (this.r.lost || this.r.gl.isContextLost()); k++) await new Promise((r) => setTimeout(r, 50)); return !this.r.lost; };
+    // neuer Encoder ab dem letzten sicheren Schlüsselbild; liefert das Bild, mit dem es weitergeht
+    const resume = async () => {
+      if (resumes >= 4 || !(await restored())) throw failed || new Error('Export unterbrochen');
+      resumes++;
+      try { enc.close(); } catch (e) { /* ignore */ }
+      failed = null;
+      mux.rollbackVideo(Math.round(safeKey * frameUs));
+      forceKey = true;
+      this.releaseAll();
+      this.r.resize(size.w, size.h);
+      enc = makeEnc();
+      onState && onState('resumed', safeKey / N);
+      return safeKey;
+    };
     let cancelled = false;
     try {
-      for (let n = 0; n < N; n++) {
-        if (failed) throw failed;
-        if (isCancelled && isCancelled()) { cancelled = true; break; }
-        // Bildmitte: Bild n ist von n/fps bis (n+1)/fps zu sehen; es zeigt den Moment in der Mitte.
-        // So liegt jeder Schnitt höchstens ein halbes Bild neben dem Beat (statt bis zu einem ganzen zu spät).
-        const t = Math.min(D - 1e-3, (n + 0.5) / fps);
-        await this._prepareExact(t, fps);
-        this.drawAt(t, 'offline');
-        const frame = new VideoFrame(this.canvas, { timestamp: Math.round(n * frameUs), duration: Math.round(frameUs) });
-        enc.encode(frame, { keyFrame: n % (fps * 2) === 0 });
-        frame.close();
-        while (enc.encodeQueueSize > 4) await new Promise((r) => setTimeout(r, 2));
-        if (onProgress && n % 3 === 0) onProgress((n / N) * (as ? 0.93 : 1), t);
+      let n = 0;
+      for (;;) {
+        for (; n < N; n++) {
+          if (typeof document !== 'undefined' && document.hidden) {
+            onState && onState('paused');
+            await visible();
+            onState && onState('running');
+            // kurz warten, ob der Encoder den Wechsel überlebt hat
+            await new Promise((r) => setTimeout(r, 60));
+          }
+          if (failed || enc.state === 'closed' || this.r.lost) n = await resume();
+          if (isCancelled && isCancelled()) { cancelled = true; break; }
+          // Bildmitte: Bild n ist von n/fps bis (n+1)/fps zu sehen; es zeigt den Moment in der Mitte.
+          // So liegt jeder Schnitt höchstens ein halbes Bild neben dem Beat (statt bis zu einem ganzen zu spät).
+          const t = Math.min(D - 1e-3, (n + 0.5) / fps);
+          await this._prepareExact(t, fps);
+          this.drawAt(t, 'offline');
+          const frame = new VideoFrame(this.canvas, { timestamp: Math.round(n * frameUs), duration: Math.round(frameUs) });
+          try { enc.encode(frame, { keyFrame: forceKey || n % (fps * 2) === 0 }); } catch (e) { failed = failed || e; }
+          frame.close();
+          if (failed) { n--; continue; }
+          forceKey = false;
+          while (enc.encodeQueueSize > 4 && !failed && enc.state !== 'closed') await new Promise((r) => setTimeout(r, 2));
+          if (onProgress && n % 3 === 0) onProgress((n / N) * (as ? 0.93 : 1), t);
+        }
+        if (cancelled) break;
+        try { await enc.flush(); } catch (e) { failed = failed || e; }
+        if (!failed) break;
+        await visible();
+        n = await resume();
       }
-      if (!cancelled) await enc.flush();
     } finally {
       try { enc.close(); } catch (e) { /* ignore */ }
     }
@@ -1392,22 +1438,33 @@ class Engine {
     if (failed) { this.exporting = false; throw failed; }
     if (as) {
       const buf = await this._renderAudio(as.sampleRate, withSong);
-      const aenc = new AudioEncoder({ output: (c, m) => mux.addAudioChunk(c, m), error: (e) => { failed = e; } });
-      aenc.configure(as.cfg);
-      const chunk = 1024;
-      const L = buf.getChannelData(0), R = buf.getChannelData(1);
-      for (let o = 0; o < buf.length; o += chunk) {
-        const nFr = Math.min(chunk, buf.length - o);
-        const data = new Float32Array(nFr * 2);
-        data.set(L.subarray(o, o + nFr), 0);
-        data.set(R.subarray(o, o + nFr), nFr);
-        const ad = new AudioData({ format: 'f32-planar', sampleRate: as.sampleRate, numberOfFrames: nFr, numberOfChannels: 2, timestamp: Math.round((o * 1e6) / as.sampleRate), data });
-        aenc.encode(ad);
-        ad.close();
-        if (aenc.encodeQueueSize > 20) await new Promise((r) => setTimeout(r, 1));
+      // auch der Ton übersteht einen App-Wechsel: bei einem Fehler einfach neu kodieren (dauert nur Sekunden)
+      for (let attempt = 0; ; attempt++) {
+        failed = null;
+        mux.aSamples = [];
+        mux.aDesc = null;
+        const aenc = new AudioEncoder({ output: (c, m) => mux.addAudioChunk(c, m), error: (e) => { failed = e; } });
+        aenc.configure(as.cfg);
+        try {
+          const chunk = 1024;
+          const L = buf.getChannelData(0), R = buf.getChannelData(1);
+          for (let o = 0; o < buf.length; o += chunk) {
+            const nFr = Math.min(chunk, buf.length - o);
+            const data = new Float32Array(nFr * 2);
+            data.set(L.subarray(o, o + nFr), 0);
+            data.set(R.subarray(o, o + nFr), nFr);
+            const ad = new AudioData({ format: 'f32-planar', sampleRate: as.sampleRate, numberOfFrames: nFr, numberOfChannels: 2, timestamp: Math.round((o * 1e6) / as.sampleRate), data });
+            aenc.encode(ad);
+            ad.close();
+            if (aenc.encodeQueueSize > 20) await new Promise((r) => setTimeout(r, 1));
+          }
+          await aenc.flush();
+        } catch (e) { failed = failed || e; }
+        try { aenc.close(); } catch (e) { /* ignore */ }
+        if (!failed) break;
+        if (attempt >= 2) break;
+        await visible();
       }
-      await aenc.flush();
-      aenc.close();
       if (failed) { this.exporting = false; throw failed; }
     }
     onProgress && onProgress(1, D);

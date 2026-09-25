@@ -71,6 +71,11 @@ class Mp4Muxer {
     this.vSamples.push({ off, size, pts: chunk.timestamp, key: chunk.type === 'key' });
   }
 
+  /** Fortsetzen nach einem Abbruch: Videobilder ab pts verwerfen (ihre Bytes bleiben ungenutzt im mdat). */
+  rollbackVideo(pts) {
+    this.vSamples = this.vSamples.filter((x) => x.pts < pts);
+  }
+
   addAudioChunk(chunk, meta) {
     if (meta && meta.decoderConfig && meta.decoderConfig.description && !this.aDesc) {
       const d = meta.decoderConfig.description;

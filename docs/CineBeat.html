@@ -228,6 +228,9 @@ details.group > summary::after { content: ""; flex: none; width: 7px; height: 7p
 details.group[open] > summary::after { transform: rotate(225deg) translateY(-2px); }
 details.group[open] > summary { border-bottom: 1px solid var(--line); }
 details.group .group-body { display: grid; gap: 18px; padding: 16px; }
+details.ig-help { margin-top: 4px; }
+details.ig-help .steps { margin: 0; }
+.ig-caption { width: 100%; box-sizing: border-box; resize: vertical; font: 13px/1.45 var(--f-sans); color: var(--text); background: var(--navy-2); border: 1px solid var(--line-2); border-radius: 10px; padding: 10px 12px; }
 details.more { border-top: 1px solid var(--line); padding-top: 12px; }
 details.more summary { cursor: pointer; font-size: 13px; color: var(--muted); list-style: none; }
 details.more summary::-webkit-details-marker { display: none; }
@@ -7004,6 +7007,11 @@ class Mp4Muxer {
     this.vSamples.push({ off, size, pts: chunk.timestamp, key: chunk.type === 'key' });
   }
 
+  /** Fortsetzen nach einem Abbruch: Videobilder ab pts verwerfen (ihre Bytes bleiben ungenutzt im mdat). */
+  rollbackVideo(pts) {
+    this.vSamples = this.vSamples.filter((x) => x.pts < pts);
+  }
+
   addAudioChunk(chunk, meta) {
     if (meta && meta.decoderConfig && meta.decoderConfig.description && !this.aDesc) {
       const d = meta.decoderConfig.description;
@@ -8927,7 +8935,7 @@ class Engine {
     }
   }
 
-  async _exportOffline({ size, fps, withAudio, withSong = true, support, onProgress, isCancelled }) {
+  async _exportOffline({ size, fps, withAudio, withSong = true, support, onProgress, isCancelled, onState }) {
     this.exporting = true;
     this.pause();
     this.scale = 1;
@@ -8944,27 +8952,73 @@ class Engine {
       audio: as ? { codec: as.kind, sampleRate: as.sampleRate, channels: 2, bitrate: 192000 } : null,
     });
     let failed = null;
-    const enc = new VideoEncoder({ output: (c, m) => mux.addVideoChunk(c, m), error: (e) => { failed = e; } });
-    enc.configure(vs.cfg);
     const N = Math.max(1, Math.round(D * fps));
     const frameUs = 1e6 / fps;
+    // Fortsetzen nach App-Wechsel: iOS hält die Seite an und beendet dabei oft den Encoder oder nimmt die Grafik weg.
+    // Dann geht es ab dem letzten fertig kodierten Schlüsselbild mit einem neuen Encoder weiter.
+    let safeKey = 0, forceKey = false, resumes = 0;
+    const makeEnc = () => {
+      const e = new VideoEncoder({
+        output: (c, m) => { if (c.type === 'key') safeKey = Math.round(c.timestamp / frameUs); mux.addVideoChunk(c, m); },
+        error: (err) => { failed = err; },
+      });
+      e.configure(vs.cfg);
+      return e;
+    };
+    let enc = makeEnc();
+    const visible = () => new Promise((res) => {
+      if (typeof document === 'undefined' || !document.hidden) { res(); return; }
+      const on = () => { if (!document.hidden) { document.removeEventListener('visibilitychange', on); res(); } };
+      document.addEventListener('visibilitychange', on);
+    });
+    const restored = async () => { for (let k = 0; k < 100 && (this.r.lost || this.r.gl.isContextLost()); k++) await new Promise((r) => setTimeout(r, 50)); return !this.r.lost; };
+    // neuer Encoder ab dem letzten sicheren Schlüsselbild; liefert das Bild, mit dem es weitergeht
+    const resume = async () => {
+      if (resumes >= 4 || !(await restored())) throw failed || new Error('Export unterbrochen');
+      resumes++;
+      try { enc.close(); } catch (e) { /* ignore */ }
+      failed = null;
+      mux.rollbackVideo(Math.round(safeKey * frameUs));
+      forceKey = true;
+      this.releaseAll();
+      this.r.resize(size.w, size.h);
+      enc = makeEnc();
+      onState && onState('resumed', safeKey / N);
+      return safeKey;
+    };
     let cancelled = false;
     try {
-      for (let n = 0; n < N; n++) {
-        if (failed) throw failed;
-        if (isCancelled && isCancelled()) { cancelled = true; break; }
-        // Bildmitte: Bild n ist von n/fps bis (n+1)/fps zu sehen; es zeigt den Moment in der Mitte.
-        // So liegt jeder Schnitt höchstens ein halbes Bild neben dem Beat (statt bis zu einem ganzen zu spät).
-        const t = Math.min(D - 1e-3, (n + 0.5) / fps);
-        await this._prepareExact(t, fps);
-        this.drawAt(t, 'offline');
-        const frame = new VideoFrame(this.canvas, { timestamp: Math.round(n * frameUs), duration: Math.round(frameUs) });
-        enc.encode(frame, { keyFrame: n % (fps * 2) === 0 });
-        frame.close();
-        while (enc.encodeQueueSize > 4) await new Promise((r) => setTimeout(r, 2));
-        if (onProgress && n % 3 === 0) onProgress((n / N) * (as ? 0.93 : 1), t);
+      let n = 0;
+      for (;;) {
+        for (; n < N; n++) {
+          if (typeof document !== 'undefined' && document.hidden) {
+            onState && onState('paused');
+            await visible();
+            onState && onState('running');
+            // kurz warten, ob der Encoder den Wechsel überlebt hat
+            await new Promise((r) => setTimeout(r, 60));
+          }
+          if (failed || enc.state === 'closed' || this.r.lost) n = await resume();
+          if (isCancelled && isCancelled()) { cancelled = true; break; }
+          // Bildmitte: Bild n ist von n/fps bis (n+1)/fps zu sehen; es zeigt den Moment in der Mitte.
+          // So liegt jeder Schnitt höchstens ein halbes Bild neben dem Beat (statt bis zu einem ganzen zu spät).
+          const t = Math.min(D - 1e-3, (n + 0.5) / fps);
+          await this._prepareExact(t, fps);
+          this.drawAt(t, 'offline');
+          const frame = new VideoFrame(this.canvas, { timestamp: Math.round(n * frameUs), duration: Math.round(frameUs) });
+          try { enc.encode(frame, { keyFrame: forceKey || n % (fps * 2) === 0 }); } catch (e) { failed = failed || e; }
+          frame.close();
+          if (failed) { n--; continue; }
+          forceKey = false;
+          while (enc.encodeQueueSize > 4 && !failed && enc.state !== 'closed') await new Promise((r) => setTimeout(r, 2));
+          if (onProgress && n % 3 === 0) onProgress((n / N) * (as ? 0.93 : 1), t);
+        }
+        if (cancelled) break;
+        try { await enc.flush(); } catch (e) { failed = failed || e; }
+        if (!failed) break;
+        await visible();
+        n = await resume();
       }
-      if (!cancelled) await enc.flush();
     } finally {
       try { enc.close(); } catch (e) { /* ignore */ }
     }
@@ -8972,22 +9026,33 @@ class Engine {
     if (failed) { this.exporting = false; throw failed; }
     if (as) {
       const buf = await this._renderAudio(as.sampleRate, withSong);
-      const aenc = new AudioEncoder({ output: (c, m) => mux.addAudioChunk(c, m), error: (e) => { failed = e; } });
-      aenc.configure(as.cfg);
-      const chunk = 1024;
-      const L = buf.getChannelData(0), R = buf.getChannelData(1);
-      for (let o = 0; o < buf.length; o += chunk) {
-        const nFr = Math.min(chunk, buf.length - o);
-        const data = new Float32Array(nFr * 2);
-        data.set(L.subarray(o, o + nFr), 0);
-        data.set(R.subarray(o, o + nFr), nFr);
-        const ad = new AudioData({ format: 'f32-planar', sampleRate: as.sampleRate, numberOfFrames: nFr, numberOfChannels: 2, timestamp: Math.round((o * 1e6) / as.sampleRate), data });
-        aenc.encode(ad);
-        ad.close();
-        if (aenc.encodeQueueSize > 20) await new Promise((r) => setTimeout(r, 1));
+      // auch der Ton übersteht einen App-Wechsel: bei einem Fehler einfach neu kodieren (dauert nur Sekunden)
+      for (let attempt = 0; ; attempt++) {
+        failed = null;
+        mux.aSamples = [];
+        mux.aDesc = null;
+        const aenc = new AudioEncoder({ output: (c, m) => mux.addAudioChunk(c, m), error: (e) => { failed = e; } });
+        aenc.configure(as.cfg);
+        try {
+          const chunk = 1024;
+          const L = buf.getChannelData(0), R = buf.getChannelData(1);
+          for (let o = 0; o < buf.length; o += chunk) {
+            const nFr = Math.min(chunk, buf.length - o);
+            const data = new Float32Array(nFr * 2);
+            data.set(L.subarray(o, o + nFr), 0);
+            data.set(R.subarray(o, o + nFr), nFr);
+            const ad = new AudioData({ format: 'f32-planar', sampleRate: as.sampleRate, numberOfFrames: nFr, numberOfChannels: 2, timestamp: Math.round((o * 1e6) / as.sampleRate), data });
+            aenc.encode(ad);
+            ad.close();
+            if (aenc.encodeQueueSize > 20) await new Promise((r) => setTimeout(r, 1));
+          }
+          await aenc.flush();
+        } catch (e) { failed = failed || e; }
+        try { aenc.close(); } catch (e) { /* ignore */ }
+        if (!failed) break;
+        if (attempt >= 2) break;
+        await visible();
       }
-      await aenc.flush();
-      aenc.close();
       if (failed) { this.exporting = false; throw failed; }
     }
     onProgress && onProgress(1, D);
@@ -11741,7 +11806,15 @@ async function runExport(body, { size, fps, bpp, withSong, withAudio, isCancelle
         stage.textContent = `Bild für Bild · noch ca. ${rest < 60 ? Math.ceil(rest) + ' s' : Math.ceil(rest / 60) + ' min'}`;
       }
     };
-    if (mode === 'offline') res = await engine.exportOffline({ size, fps, withAudio, withSong, support, onProgress, isCancelled });
+    // App-Wechsel: der Export pausiert und läuft danach weiter (notfalls ab dem letzten Schlüsselbild)
+    const onState = async (st) => {
+      if (st === 'paused') stage.textContent = 'Pausiert, geht weiter, sobald du zurück bist …';
+      else if (st === 'running' || st === 'resumed') {
+        stage.textContent = st === 'resumed' ? 'Weiter ab dem letzten sicheren Bild …' : 'Bild für Bild …';
+        try { if (navigator.wakeLock && (!wake || wake.released)) wake = await navigator.wakeLock.request('screen'); } catch (e) { /* ignore */ }
+      }
+    };
+    if (mode === 'offline') res = await engine.exportOffline({ size, fps, withAudio, withSong, support, onProgress, isCancelled, onState });
     else {
       stage.textContent = 'Echtzeit-Aufnahme: App geöffnet und Bildschirm an lassen';
       res = await engine.exportRealtime({ size, withAudio, withSong, onProgress, isCancelled, fps: Math.min(fps, 30), bpp });
@@ -11788,6 +11861,7 @@ function showExportResult(body, res, size, fps, withAudio, withSong) {
       ${withAudio ? '<li>Der Originalton deiner Videos ist schon im Film. Im Musik-Editor von Instagram kannst du Musik und Originalton gegeneinander abstimmen.</li>' : ''}
       <li>Startpunkt auf <b>${start}</b> ziehen, Länge <b>${fmtClock(S.plan.duration)}</b>. Die Schnitte sitzen dann auf der Musik.</li>
     </ol></div>`}
+    ${igHelp()}
     <button class="btn ghost" data-act="close" type="button">Fertig</button>`;
   box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   box.addEventListener('click', async (e) => {
@@ -11798,8 +11872,39 @@ function showExportResult(body, res, size, fps, withAudio, withSong) {
       try { await navigator.share({ files: [new File([res.blob], name, { type: res.type })], title: name }); } catch (err) { if (err && err.name !== 'AbortError') toast('Teilen nicht möglich. Speichere das Video stattdessen.', true); }
     }
     if (a.dataset.act === 'save') saveBlob(res.blob, name, url);
+    if (a.dataset.act === 'caption') {
+      const ta = box.querySelector('#igCaption');
+      try { await navigator.clipboard.writeText(ta.value); toast('Bildunterschrift kopiert.'); } catch (err) { ta.select(); toast('Markiert: jetzt kopieren.'); }
+    }
   });
   toast('Dein Film ist fertig.');
+}
+
+/** Instagram-Hilfe: Bildunterschrift mit Hashtags, bestes Titelbild im Film, Hinweise zu Story/Reel. */
+function igHelp() {
+  const fmt = S.ctx.rec.settings.format;
+  if (fmt !== '9:16' && fmt !== '4:5') return '';
+  const best = S.ctx.kind === 'bestof';
+  const title = best ? S.trip.name : S.ctx.rec.name || '';
+  const sub = best ? '' : S.ctx.rec.sub || '';
+  const places = best ? tripStops().map((p) => p.name).filter(Boolean) : [title];
+  const tag = (x) => '#' + String(x).normalize('NFC').replace(/[^\p{L}\p{N}]/gu, '');
+  const yr = (sub.match(/20\d\d/) || [String(new Date().getFullYear())])[0];
+  const tags = [...new Set([...places.slice(0, 6).map(tag), best ? '#roadtrip' : '#travel', '#reisen', '#' + yr])].filter((x) => x.length > 2);
+  const caption = [title && sub ? `${title} · ${sub}` : title, best && places.length > 1 ? places.join(' → ') : '', '', tags.join(' ')].filter((x, i) => x || i === 2).join('\n').trim();
+  const hook = S.plan.clips.find((c) => c.role === 'hook') || S.plan.clips[0];
+  const reel = S.plan.duration > 60;
+  return `<details class="more ig-help"><summary>Instagram-Hilfe</summary>
+    <ol class="steps">
+      <li>${reel ? `Als <b>Reel</b> posten: ${fmtClock(S.plan.duration)} ist länger als eine Story-Seite (60 s).` : 'Als <b>Story</b> oder <b>Reel</b> posten; beides passt.'}</li>
+      <li>Titelbild: im Reel-Editor „Titelbild bearbeiten“ und das Bild bei <b>${fmtClock((hook.start + hook.end) / 2)}</b> wählen (dein Startbild) oder das Titelbild oben erstellen.</li>
+      <li>Keine Filter von Instagram darüberlegen: Farben und Look sind schon im Film.</li>
+      <li>Texte und Karten liegen außerhalb der Instagram-Schutzzonen (Namen, Knöpfe, Bildunterschrift).</li>
+    </ol>
+    <label class="field-label" for="igCaption">Bildunterschrift</label>
+    <textarea id="igCaption" class="ig-caption" rows="4" spellcheck="false">${esc(caption)}</textarea>
+    <button class="btn small" data-act="caption" type="button">Kopieren</button>
+  </details>`;
 }
 
 /** Reel-Titelbild: stärkstes Bild mit Titel, als JPEG in Exportgröße (bleibt auf dem Gerät). */

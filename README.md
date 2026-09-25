@@ -77,12 +77,22 @@ Reisefilme im Kino-Look, geschnitten nach dem Aufbau deines Songs: für Instagra
 - **Tiefe (Parallax)**: nahe Bildteile (unten, am Motiv) folgen der Kamerafahrt etwas weiter als ferne, für mehr Tiefe.
 - **Durch den Namen je Kapitel** (Gesamtfilm): zu jedem neuen Ort ist der Name ein Fenster ins Bild, dann zoomt die Kamera auf einem Beat durch die Buchstaben.
 - **Auto-Stil**: Standardmäßig wählt die Regie wenige, aufeinander abgestimmte Mittel: durchgehend dezent Tiefe, Drift in ruhigen Teilen und den Bassdrum-Zoom im Drop, dazu je nach Filmlänge ein bis drei besondere Momente (Schwarzweiß → Farbe, Echo oder Polaroid-Stapel, Mini-Rewind) an den passenden Stellen im Song. Jedes Mittel lässt sich einzeln an- oder abschalten.
+- **Drei Varianten**: *Ruhig* (lange Einstellungen, weiche Blenden, Titelkarte), *Ausgewogen* (wie der Song es vorgibt) und *Energisch* (schneller Schnitt, Bilderflut, Foto-Serie, Echo, Mini-Rewind). Sie füllen nur, was auf Auto steht; eigene Entscheidungen bleiben.
+- **Zeitleiste zum Ziehen** (Schnitt): Kachel gedrückt halten und an eine andere Stelle ziehen. Die Aufnahme wandert dorthin, die Regie legt Schnitte und Songbogen neu an. „Änderungen am Schnitt zurücksetzen“ stellt die Aufnahme-Reihenfolge wieder her.
+- **Gefällt mir nicht** (pro Einstellung): jedes Antippen bringt eine neue Kamerabewegung und einen anderen, zum Songteil passenden Übergang, bei *Beste Auswahl* auch ein anderes Foto aus derselben Zeit. Der Rest des Films bleibt unverändert.
+- **Selbst aussortieren**: Auch bei *Alle Aufnahmen* bleiben Bildschirmfotos, fast schwarze oder ausgebrannte Bilder, unscharfe und zugleich schlecht belichtete Bilder und identische Serienbilder (wenige Sekunden auseinander) draußen. Im Material steht der Grund; als Favorit (♥) kommt ein Bild trotzdem hinein.
+- **Szenen und Song**: Ein neuer Ort, eine längere Pause oder ein Lichtwechsel beginnt eine neue Szene. Sie setzt auf einem Taktanfang ein, in ruhigen Teilen mit einer Lichtblende, im Drop mit einem harten Schnitt. Kamerafahrten beschleunigen in einen Drop hinein und laufen danach schwungvoll aus (weiche Tempo-Rampen auch bei Fotos).
+- **Motive**: Horizont, Himmel, Menschen und Gesichter (wo der Browser es kann) werden lokal erkannt. Kamerafahrten schneiden das Motiv nicht an, der Horizont bleibt waagerecht, Schwenks in Videos setzen sich im nächsten Foto fort.
+- **Titel-Vorschläge** (Text): drei Titel aus Ort und Zeitraum, z. B. „Lissabon“ · „Lissabon ’26“ · „Ein Tag in Lissabon“, mit passender Unterzeile.
+- **Karten-Moment** (Gesamtfilm): Bei jeder Etappe ab 20 km zeichnet eine kleine Karte oben rechts die Strecke vom letzten zum neuen Ort, mit Kilometern; die ganze Route ist fein gepunktet zu sehen.
 - **Nichts ist fest**: Titel, Kapitel und Reise-Statistik lassen sich einzeln ausschalten; Koordinaten und Kilometer sind standardmäßig aus.
 
 ## Musik und Instagram
 
 - **Datei** (MP3, M4A, WAV): wird lokal analysiert (Takt, Refrain, Drop, Pausen).
 - **Mithören**: Spiel den Song auf einem zweiten Gerät ab. Die App hört 15–60 Sekunden zu und erkennt Takt und Aufbau. Trag ein, ab welcher Stelle der Song lief, dann stimmt die Startzeit für Instagram.
+- **Instagram-Hilfe** (nach dem Export): ob Story oder Reel, welcher Moment das beste Titelbild ist, und eine fertige Bildunterschrift mit Hashtags zum Kopieren.
+- **Export im Hintergrund**: Wechselst du während des Exports kurz die App, pausiert er und läuft danach weiter. Hat iOS den Encoder in der Zwischenzeit beendet, geht es ab dem letzten sicheren Bild weiter; nichts muss neu begonnen werden.
 - **Instagram-Sync**: Exportiere ohne Ton und füge den Song über den Musik-Sticker ab der angezeigten Startzeit hinzu. So ist die Musik lizenziert und das Video wird nicht stummgeschaltet.
 
 Songs aus Spotify, Apple Music oder YouTube lassen sich nicht übernehmen: Sie sind kopiergeschützt.

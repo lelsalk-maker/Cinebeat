@@ -2408,7 +2408,15 @@ async function runExport(body, { size, fps, bpp, withSong, withAudio, isCancelle
         stage.textContent = `Bild für Bild · noch ca. ${rest < 60 ? Math.ceil(rest) + ' s' : Math.ceil(rest / 60) + ' min'}`;
       }
     };
-    if (mode === 'offline') res = await engine.exportOffline({ size, fps, withAudio, withSong, support, onProgress, isCancelled });
+    // App-Wechsel: der Export pausiert und läuft danach weiter (notfalls ab dem letzten Schlüsselbild)
+    const onState = async (st) => {
+      if (st === 'paused') stage.textContent = 'Pausiert, geht weiter, sobald du zurück bist …';
+      else if (st === 'running' || st === 'resumed') {
+        stage.textContent = st === 'resumed' ? 'Weiter ab dem letzten sicheren Bild …' : 'Bild für Bild …';
+        try { if (navigator.wakeLock && (!wake || wake.released)) wake = await navigator.wakeLock.request('screen'); } catch (e) { /* ignore */ }
+      }
+    };
+    if (mode === 'offline') res = await engine.exportOffline({ size, fps, withAudio, withSong, support, onProgress, isCancelled, onState });
     else {
       stage.textContent = 'Echtzeit-Aufnahme: App geöffnet und Bildschirm an lassen';
       res = await engine.exportRealtime({ size, withAudio, withSong, onProgress, isCancelled, fps: Math.min(fps, 30), bpp });
@@ -2455,6 +2463,7 @@ function showExportResult(body, res, size, fps, withAudio, withSong) {
       ${withAudio ? '<li>Der Originalton deiner Videos ist schon im Film. Im Musik-Editor von Instagram kannst du Musik und Originalton gegeneinander abstimmen.</li>' : ''}
       <li>Startpunkt auf <b>${start}</b> ziehen, Länge <b>${fmtClock(S.plan.duration)}</b>. Die Schnitte sitzen dann auf der Musik.</li>
     </ol></div>`}
+    ${igHelp()}
     <button class="btn ghost" data-act="close" type="button">Fertig</button>`;
   box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   box.addEventListener('click', async (e) => {
@@ -2465,8 +2474,39 @@ function showExportResult(body, res, size, fps, withAudio, withSong) {
       try { await navigator.share({ files: [new File([res.blob], name, { type: res.type })], title: name }); } catch (err) { if (err && err.name !== 'AbortError') toast('Teilen nicht möglich. Speichere das Video stattdessen.', true); }
     }
     if (a.dataset.act === 'save') saveBlob(res.blob, name, url);
+    if (a.dataset.act === 'caption') {
+      const ta = box.querySelector('#igCaption');
+      try { await navigator.clipboard.writeText(ta.value); toast('Bildunterschrift kopiert.'); } catch (err) { ta.select(); toast('Markiert: jetzt kopieren.'); }
+    }
   });
   toast('Dein Film ist fertig.');
+}
+
+/** Instagram-Hilfe: Bildunterschrift mit Hashtags, bestes Titelbild im Film, Hinweise zu Story/Reel. */
+function igHelp() {
+  const fmt = S.ctx.rec.settings.format;
+  if (fmt !== '9:16' && fmt !== '4:5') return '';
+  const best = S.ctx.kind === 'bestof';
+  const title = best ? S.trip.name : S.ctx.rec.name || '';
+  const sub = best ? '' : S.ctx.rec.sub || '';
+  const places = best ? tripStops().map((p) => p.name).filter(Boolean) : [title];
+  const tag = (x) => '#' + String(x).normalize('NFC').replace(/[^\p{L}\p{N}]/gu, '');
+  const yr = (sub.match(/20\d\d/) || [String(new Date().getFullYear())])[0];
+  const tags = [...new Set([...places.slice(0, 6).map(tag), best ? '#roadtrip' : '#travel', '#reisen', '#' + yr])].filter((x) => x.length > 2);
+  const caption = [title && sub ? `${title} · ${sub}` : title, best && places.length > 1 ? places.join(' → ') : '', '', tags.join(' ')].filter((x, i) => x || i === 2).join('\n').trim();
+  const hook = S.plan.clips.find((c) => c.role === 'hook') || S.plan.clips[0];
+  const reel = S.plan.duration > 60;
+  return `<details class="more ig-help"><summary>Instagram-Hilfe</summary>
+    <ol class="steps">
+      <li>${reel ? `Als <b>Reel</b> posten: ${fmtClock(S.plan.duration)} ist länger als eine Story-Seite (60 s).` : 'Als <b>Story</b> oder <b>Reel</b> posten; beides passt.'}</li>
+      <li>Titelbild: im Reel-Editor „Titelbild bearbeiten“ und das Bild bei <b>${fmtClock((hook.start + hook.end) / 2)}</b> wählen (dein Startbild) oder das Titelbild oben erstellen.</li>
+      <li>Keine Filter von Instagram darüberlegen: Farben und Look sind schon im Film.</li>
+      <li>Texte und Karten liegen außerhalb der Instagram-Schutzzonen (Namen, Knöpfe, Bildunterschrift).</li>
+    </ol>
+    <label class="field-label" for="igCaption">Bildunterschrift</label>
+    <textarea id="igCaption" class="ig-caption" rows="4" spellcheck="false">${esc(caption)}</textarea>
+    <button class="btn small" data-act="caption" type="button">Kopieren</button>
+  </details>`;
 }
 
 /** Reel-Titelbild: stärkstes Bild mit Titel, als JPEG in Exportgröße (bleibt auf dem Gerät). */

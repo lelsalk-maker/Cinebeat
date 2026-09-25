@@ -212,6 +212,9 @@ details.group > summary::after { content: ""; flex: none; width: 7px; height: 7p
 details.group[open] > summary::after { transform: rotate(225deg) translateY(-2px); }
 details.group[open] > summary { border-bottom: 1px solid var(--line); }
 details.group .group-body { display: grid; gap: 18px; padding: 16px; }
+details.ig-help { margin-top: 4px; }
+details.ig-help .steps { margin: 0; }
+.ig-caption { width: 100%; box-sizing: border-box; resize: vertical; font: 13px/1.45 var(--f-sans); color: var(--text); background: var(--navy-2); border: 1px solid var(--line-2); border-radius: 10px; padding: 10px 12px; }
 details.more { border-top: 1px solid var(--line); padding-top: 12px; }
 details.more summary { cursor: pointer; font-size: 13px; color: var(--muted); list-style: none; }
 details.more summary::-webkit-details-marker { display: none; }
