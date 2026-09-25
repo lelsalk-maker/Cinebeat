@@ -2601,7 +2601,7 @@ function pickWindow(an, { length, songStart }) {
  * Schnittpunkte per dynamischer Programmierung auf Beats, Takten, Phrasen,
  * Abschnittswechseln und Akzenten. Zieldauer je Einstellung folgt dem Songteil.
  */
-function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0) {
+function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0) {
   const D = win.end - win.start;
   const beatDur = an.beatPeriod;
   const bars = an.barStart || [];
@@ -2665,7 +2665,9 @@ function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0) {
       const g = tgt(pts[i].t);
       // Bonus für Schnitte auf Takt/Phrase nur anteilig bei kurzen Einstellungen: sonst gewinnen viele kurze Schnitte gegen die Wunschlänge
       let c = 4 * ((len - g) / g) ** 2 - 0.32 * pts[j].w * Math.min(1, len / g);
-      const lo = g < minLen ? beatMin : minLen;
+      // Songdynamik: ruhige Teile (Intro, Strophe, Break, Outro) behalten auch bei viel Material längere Einstellungen
+      const lab = sectionAt(an, win.start + pts[i].t + 0.01).label;
+      const lo = g < minLen ? beatMin : calmMin && (lab === 'intro' || lab === 'verse' || lab === 'break' || lab === 'outro') ? Math.max(minLen, calmMin) : minLen;
       if (len < lo) c += 50 + (lo - len) * 100;
       if (len > maxLen) c += 20;
       if (dp[i] + c < dp[j]) { dp[j] = dp[i] + c; from[j] = i; }
@@ -3101,7 +3103,9 @@ function buildPlan(opts) {
 function searchPlan(opts) {
   let best = planOnce(opts);
   if (opts.flight) return best;
-  const bad = (p) => p._m.repeats * 3 + p._m.dropped;
+  // „Beste Auswahl“: Weglassen ist gewollt – es zählt nur, dass sich nichts wiederholt (das Tempo bleibt beim Song)
+  const pick = best.resolved.allMedia === 'off' && !(opts.chapters && opts.chapters.length);
+  const bad = (p) => p._m.repeats * 3 + (pick ? 0 : p._m.dropped);
   const better = (p, q) => bad(p) < bad(q) || (bad(p) === bad(q) && !p._m.repeats && p._m.scale < q._m.scale);
   let cur = best;
   for (let ext = 0; ext < 3 && bad(best); ext++) {
@@ -3171,14 +3175,16 @@ function planOnce(opts) {
   const imgN = Math.max(1, good.filter((m) => m.kind === 'image').length);
   // Mindestlänge je Einstellung; müssen alle Aufnahmen hinein, darf es bis auf einen Beat dichter werden
   const minShot = flight ? 0 : level >= 1 ? Math.max(0.4, beatDur * 0.9) : fr.shotMin * (settings.pace === 'schnell' ? 0.5 : 0.7);
-  let segs = planCuts(an, win, s.pace, opts._scale || 1, shotBase, minShot);
+  // Mindestlänge in ruhigen Songteilen, wenn verdichtet wird: zwei Beats (Break/Intro/Outro), die Dynamik bleibt hörbar und sichtbar
+  const calmMin = level >= 1 && level < 4 ? Math.max(0.9, beatDur * 2) : 0;
+  let segs = planCuts(an, win, s.pace, opts._scale || 1, shotBase, minShot, calmMin);
   let usedScale = opts._scale || 1;
   // erste Schätzung; die Suche in buildPlan gibt die Schnittlänge danach direkt vor
   if (!flight && !opts._scale) {
     const imgTime = Math.max(barDur, D - Math.min(vidT, D * 0.7) - barDur);
     const haveShot = D / Math.max(1, segs.length), wantShot = imgTime / imgN;
     const scale = Math.max(fr.shotMin / fr.shot, Math.min(3, wantShot / haveShot));
-    if (Math.abs(scale - 1) > 0.12) { segs = planCuts(an, win, s.pace, scale, shotBase, minShot); usedScale = scale; }
+    if (Math.abs(scale - 1) > 0.12) { segs = planCuts(an, win, s.pace, scale, shotBase, minShot, calmMin); usedScale = scale; }
   }
 
   // Flug: Abflug (2 Takte) · Aufnahmen an Bord (je 1 Takt) · Fluganimation (2 Takte) · Landung (Rest)
@@ -3329,11 +3335,14 @@ function planOnce(opts) {
     const peaksB = peak ? [peak] : [];
     if (level >= 2) for (const x of secs) if (isPeak(x) && x.rel > introEnd + barDur && x.rel < D - 3 && !peaksB.some((y) => Math.abs(y.rel - x.rel) < barDur)) peaksB.push(x);
     // sehr viel Material: Foto-Serien auch zwischendurch, alle zwei Takte eine (Photo-Dump-Stil)
-    if (level >= 4) for (const b0 of (an.barStart || []).map((x) => x - win.start)) if (b0 > introEnd + barDur && b0 < D - 3 && !peaksB.some((y) => Math.abs(y.rel - b0) < barDur * 2.9)) peaksB.push({ rel: b0 });
+    // (nur in Aufbau, Refrain und Drop – ruhige Teile bleiben ruhig)
+    if (level >= 4) for (const b0 of (an.barStart || []).map((x) => x - win.start)) if (b0 > introEnd + barDur && b0 < D - 3 && !isCalmLabel(sectionAt(an, win.start + b0 + 0.02).label) || (b0 > introEnd + barDur && b0 < D - 3 && sectionAt(an, win.start + b0 + 0.02).label === 'build')) if (!peaksB.some((y) => Math.abs(y.rel - b0) < barDur * 2.9)) peaksB.push({ rel: b0 });
     peaksB.sort((x, y) => x.rel - y.rel);
     for (const pk of peaksB.slice(0, level >= 4 ? 40 : level >= 3 ? 6 : level >= 2 ? 3 : 1)) {
       const sub = beatDur / 2 >= 0.2 ? beatDur / 2 : beatDur;
-      const ds = pk.rel, de = Math.min(D - 1.2, ds + sub * (level >= 3 ? 16 : 8));
+      // die Serie bleibt in ihrem Songteil (läuft nicht in einen ruhigen Teil hinein)
+      const secEnd = sectionAt(an, win.start + pk.rel + 0.02).end - win.start;
+      const ds = pk.rel, de = Math.min(D - 1.2, ds + sub * (level >= 3 ? 16 : 8), Math.max(ds + sub * 4, secEnd));
       if (segs.some((g) => (g.burst || g.gridSeg || g.pre || g.reveal || g.leader || g.knock || g.rush) && g.start < de && g.end > ds)) continue;
       const out = [];
       for (const g of segs) {
@@ -3498,12 +3507,17 @@ function planOnce(opts) {
     // innerhalb eines Moments (wenige Minuten) darf ein Bild aus dem vorigen hervorgehen (Match-Cuts, Farbfluss)
     const flowed = spreadSimilar(flowOrder(all0.filter((m) => m !== hk), s.match !== 'off'));
     let queue = hk ? [hk, ...flowed] : flowed;
-    let res = layoutChrono(segs, queue);
+    let res = layoutChrono(segs, queue, 0);
+    // alle Aufnahmen: fehlen am Ende noch welche, früher etwas mehr zusammenfassen (Split-Screens)
+    for (let k = 0; k < 2 && allOn && res.dropped.length; k++) {
+      const r2 = layoutChrono(segs, queue, res.dropped.length * (k + 1));
+      if (r2.dropped.length < res.dropped.length) res = r2;
+    }
     // „Beste Auswahl“: passt nicht alles, fallen die schwächsten Aufnahmen weg (nie das Startbild oder Favoriten)
     for (let k = 0; k < 3 && !allOn && res.dropped.length; k++) {
       const weak = queue.filter((m) => m !== hk && !m.fav && m.kind === 'image').sort((a, b) => (a.score || 0) - (b.score || 0)).slice(0, res.dropped.length);
       queue = queue.filter((m) => !weak.includes(m));
-      res = layoutChrono(segs, queue);
+      res = layoutChrono(segs, queue, 0);
     }
     segs = res.segs;
     chronoInfo = { hook: hk, queue };
@@ -3515,7 +3529,7 @@ function planOnce(opts) {
    * Reicht die Zeit nicht für alle Fotos, nehmen Split-Screens aufeinanderfolgende Fotos zusammen.
    * Foto-Serie, Polaroid-Stapel und Raster nehmen die nächsten Fotos der Reihe.
    */
-  function layoutChrono(segs0, queue) {
+  function layoutChrono(segs0, queue, bias) {
     const sg = segs0.map((g) => ({ ...g }));
     const q = queue.slice();
     let qi = 0;
@@ -3557,7 +3571,8 @@ function planOnce(opts) {
       let vT = 0, img = 0;
       for (let k = qi; k < q.length; k++) if (q[k].kind === 'video') vT += want(q[k]); else img++;
       const avg = nN ? nT / nN : avgLen;
-      return img - Math.max(0, (nT - vT) / Math.max(0.3, avg)) - cap;
+      // Plätze = Einstellungen (nicht Sekunden): eine lange Schlusseinstellung ist trotzdem nur ein Platz
+      return img - Math.max(0, nN - vT / Math.max(0.3, avg)) - cap + bias;
     };
     let repeatPtr = 0;
     const repeatImg = () => {
@@ -3606,18 +3621,40 @@ function planOnce(opts) {
         const group = [head];
         if (vSplitOK && vidFit(head)) for (let j = qi + 1; j < q.length && group.length < splitN; j++) { if (vidFit(q[j]) && Math.abs((q[j].time || 0) - (head.time || 0)) < 20 * 60000) group.push(q[j]); else break; }
         const w = group.length > 1 ? Math.max(...group.map(want)) : want(head);
+        // beginnt das Video kurz vor einem Drop, bliebe es zu kurz oder liefe über den Einsatz hinweg:
+        // dann steht das Bild davor etwas länger, und das Video setzt genau mit dem Drop ein
+        {
+          let k = i, pk = -1;
+          while (k < sg.length && sg[k].end - g.start < w * 1.2) {
+            if (k > i && !normal(sg[k])) break;
+            if (isPeakSec(sectionAt(an, win.start + sg[k].end + 0.02)) && !isPeakSec(sectionAt(an, win.start + sg[k].end - 0.05))) { pk = k; break; }
+            k++;
+          }
+          const prev = sg[i - 1];
+          if (pk >= i && sg[pk].end - g.start < Math.max(minW(head), w * 0.5) && sg[pk].end - g.start < 3.2 && prev && (prev.mediaId || prev.splitIds) && !prev.vslot && !special(prev) && !skipSeg(prev) && pk + 1 < sg.length && (normal(sg[pk + 1]) || sg[pk + 1].burst || sg[pk + 1].stackSeg)) {
+            prev.end = sg[pk].end;
+            sg.splice(i, pk - i + 1);
+            i--;
+            continue;
+          }
+        }
         // ein Video darf auch Stücke einer Foto-Serie oder eines Stapels übernehmen (nie Einstieg, Vorspann, Ende)
         const absorb = (x) => x && (normal(x) || x.burst || x.stackSeg || x.gridMid) && !x.replaySeg;
         let j = i, end = g.end;
-        while (end - g.start < w * 0.95 && j + 1 < sg.length && absorb(sg[j + 1]) && sg[j + 1].end - g.start <= w * 1.2) { j++; end = sg[j].end; }
+        // Plätze für die Aufnahmen nach dem Video frei halten (Split-Screens können je zwei aufnehmen)
+        const after = q.slice(qi + group.length);
+        const imgsAfter = after.filter((m) => m.kind === 'image').length, vidsAfter = after.length - imgsAfter;
+        const needAfter = Math.ceil(imgsAfter / (allOn && s.split !== 'off' ? 2 : 1)) + vidsAfter;
+        const slotsAfter = (k) => { let n = 0; for (let x = k + 1; x < sg.length; x++) if (normal(sg[x]) || sg[x].burst) n++; else if (sg[x].stackSeg) n += 4; return n; };
+        const keepRoom = (k) => end - g.start < minW(head) || slotsAfter(k) >= needAfter;
+        while (end - g.start < w * 0.95 && j + 1 < sg.length && absorb(sg[j + 1]) && sg[j + 1].end - g.start <= w * 1.2 && keepRoom(j + 1)) { j++; end = sg[j].end; }
         const nx = sg[j + 1];
-        if (end - g.start < w * 0.9 && absorb(nx) && nx.end - g.start <= Math.min(w * 1.3, videoSpan(head) / 0.8) && nx.end - g.start - w < w - (end - g.start)) { j++; end = nx.end; }
-        // Speed-Ramp: läuft ein Video in einen Drop hinein, endet sein Platz genau auf dem Einsatz (beschleunigt hinein)
-        if (s.ramp === 'drop') {
-          for (let k = j - 1; k >= i; k--) {
-            const pkStart = sg[k].end;
-            if (pkStart - g.start >= minW(head) && isPeakSec(sectionAt(an, win.start + pkStart + 0.02)) && !isPeakSec(sectionAt(an, win.start + pkStart - 0.05))) { j = k; end = pkStart; break; }
-          }
+        if (end - g.start < w * 0.9 && absorb(nx) && nx.end - g.start <= Math.min(w * 1.3, videoSpan(head) / 0.8) && nx.end - g.start - w < w - (end - g.start) && keepRoom(j + 1)) { j++; end = nx.end; }
+        // Songdynamik: der Drop/Refrain setzt mit einem Schnitt ein – ein Video davor endet auf dem Einsatz,
+        // wenn es dabei fast seine Länge behält (mit Speed-Ramp immer: es beschleunigt in den Drop hinein)
+        for (let k = j - 1; k >= i; k--) {
+          const pkStart = sg[k].end;
+          if (pkStart - g.start >= Math.max(minW(head), s.ramp === 'drop' ? 0 : w >= 6 ? Math.min(w * 0.5, 3.5) : w * 0.8) && isPeakSec(sectionAt(an, win.start + pkStart + 0.02)) && !isPeakSec(sectionAt(an, win.start + pkStart - 0.05))) { j = k; end = pkStart; break; }
         }
         const merged = { start: g.start, end, w: g.w, vslot: true, freezeAt: undefined };
         if (group.length > 1) { merged.vsplitIds = group.map((m) => m.id); qi += group.length; } else { merged.vid = head.id; merged.mediaId = head.id; qi++; }
@@ -3628,7 +3665,8 @@ function planOnce(opts) {
       const need = allOn ? remaining(i) : 0;
       const beatsIn = len / beatDur;
       const styleSplit = s.split !== 'off' && peak && sinceSplit >= (s.split === 'more' ? 3 : 5) && beatsIn >= 2.8;
-      const needSplit = s.split !== 'off' && need > 0.5 && beatsIn >= (level >= 2 ? 0.9 : 1.8) && (peak || level >= 1);
+      // Split-Screens zuerst in Refrain und Drop; in ruhigen Teilen erst, wenn es sonst nicht passt
+      const needSplit = s.split !== 'off' && need > 0.5 && beatsIn >= (level >= 2 ? 0.9 : 1.8) && (peak || level >= 2);
       if (styleSplit || needSplit) {
         const k = needSplit ? Math.min(splitN, Math.max(2, Math.ceil(need) + 1)) : splitN;
         const ids = [];

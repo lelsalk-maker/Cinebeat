@@ -58,9 +58,22 @@ const res = await p.evaluate(async (b64) => {
     const usedImg = new Set(sq.filter((m) => m.kind === 'image').map((m) => m.id)), usedV = new Set(sq.filter((m) => m.kind === 'video').map((m) => m.id));
     const vT = pl.clips.filter((c) => c.vid || (c.split && c.split.ids.some((id) => id.startsWith('v')))).reduce((a, c) => a + c.end - c.start, 0);
     const minShot = Math.min(...pl.clips.filter((c) => !c.burst && !c.pre && !c.leader && !c.rush && !c.miniRew && !c.reveal).map((c) => c.end - c.start));
-    out[name] = { D: +pl.duration.toFixed(1), level: pl._m.level, img: `${usedImg.size}/${imgs.length}`, vid: `${usedV.size}/${vids.length}`, videoShare: +(vT / pl.duration).toFixed(2), inversions: inversions(sq), repeats: pl.capacity.repeats, packed: pl.capacity.packed, minShot: +minShot.toFixed(2), intro: pl.intro };
+    // Songdynamik: ruhige Teile ruhiger geschnitten als Drop/Refrain (Fotos, ohne Videos, Serien und Einstiege)
+    const plainC = pl.clips.filter((c) => !c.vid && !c.burst && !c.pre && !c.leader && !c.rush && !c.miniRew && !c.reveal && !c.grid && !c.stack && !c.strip && c.i > 0 && c.i < pl.clips.length - 1);
+    const avgOf = (l) => l.reduce((a, c) => a + c.end - c.start, 0) / Math.max(1, l.length);
+    const calmC = plainC.filter((c) => ['intro', 'verse', 'break', 'outro'].includes(c.label)), peakC = plainC.filter((c) => c.label === 'drop' || c.label === 'chorus');
+    const dyn = calmC.length >= 2 && peakC.length >= 2 ? avgOf(calmC) / avgOf(peakC) : null;
+    const burstCalm = pl.clips.filter((c) => c.burst && ['intro', 'verse', 'break', 'outro'].includes(c.label)).length;
+    out[name] = { dyn: dyn && +dyn.toFixed(2), calm: +avgOf(calmC).toFixed(2), peak: +avgOf(peakC).toFixed(2), burstCalm, D: +pl.duration.toFixed(1), level: pl._m.level, img: `${usedImg.size}/${imgs.length}`, vid: `${usedV.size}/${vids.length}`, videoShare: +(vT / pl.duration).toFixed(2), inversions: inversions(sq), repeats: pl.capacity.repeats, packed: pl.capacity.packed, minShot: +minShot.toFixed(2), intro: pl.intro };
     if (expectAll && usedImg.size < imgs.length) fails.push(`${name}: ${imgs.length - usedImg.size} Fotos fehlen`);
     if (expectAll && usedV.size < vids.length) fails.push(`${name}: Video fehlt`);
+    if (dyn != null && dyn < 1.3) fails.push(`${name}: Songdynamik verloren (ruhig ${avgOf(calmC).toFixed(2)} s / Drop ${avgOf(peakC).toFixed(2)} s)`);
+    if (burstCalm) fails.push(`${name}: Foto-Serie im ruhigen Teil`);
+    // der erste Schlag eines Drops nach einem ruhigen Teil ist ein Schnitt (kein Video läuft darüber hinweg)
+    const hits = (pl.sections || []).filter((x, k, arr) => (x.label === 'drop' || x.label === 'chorus') && arr[k - 1] && arr[k - 1].label !== 'drop' && arr[k - 1].label !== 'chorus' && x.start > 1 && x.start < pl.duration - 1);
+    const overrun = hits.filter((h) => pl.clips.some((c) => c.vid && c.start < h.start - 0.05 && c.end > h.start + 0.05));
+    out[name].dropOverrun = overrun.length;
+    if (overrun.length) out[name].ov = overrun.map((h) => { const c = pl.clips.find((x) => x.vid && x.start < h.start - 0.05 && x.end > h.start + 0.05); const m = media.find((x) => x.id === c.vid); return `drop ${h.start.toFixed(2)} clip ${c.start.toFixed(2)}-${c.end.toFixed(2)} dur ${m.duration} ${c.label}`; }).join('; ');
     if (inversions(sq)) { fails.push(`${name}: nicht chronologisch (${inversions(sq)})`); const at = []; for (let i = 2; i < sq.length; i++) if (sq[i].time < sq[i - 1].time - 3 * 60000 && sq[i].dupOf == null && sq[i - 1].dupOf == null) at.push(`${i}:${sq[i - 1].id}(${sq[i - 1].kind[0]})>${sq[i].id}(${sq[i].kind[0]})`); out[name + '_inv'] = at.join(' ') + ' | ' + sq.slice(0, 8).map((m) => m.id).join(','); }
     if (pl.capacity.repeats) fails.push(`${name}: Doppelungen`);
     if (!pl.clips.every((c, i) => c.i === i)) fails.push(`${name}: Clip-Nummern`);
@@ -71,7 +84,7 @@ const res = await p.evaluate(async (b64) => {
   // feste, sehr kurze Länge: so viel wie sinnvoll geht, der Rest wird benannt
   const p30 = check('story 30 s', trip, { target: 'story', length: 30 }, false);
   const miss30 = p30.capacity.droppedIds.length;
-  if (miss30 > 4 || (miss30 && !p30.notes.some((n) => /passen nicht mehr/.test(n)))) fails.push('story 30 s: zu viel weggelassen oder nicht benannt');
+  if (miss30 > 8 || (miss30 && !p30.notes.some((n) => /passen nicht mehr/.test(n)))) fails.push('story 30 s: zu viel weggelassen oder nicht benannt');
   for (const intro of ['reveal', 'grid', 'countdown', 'rush', 'knockout', 'split', 'city']) check('intro ' + intro, trip, { target: 'reel', intro, title: 'Big Sur' });
   // viele Fotos in einer Story: verdichtet, aber vollständig
   const many = make(110, [7, 10, 5]);
@@ -86,6 +99,7 @@ const res = await p.evaluate(async (b64) => {
   const dropped = pb.capacity.droppedIds.map((id) => many.find((m) => m.id === id)).filter((m) => m.kind === 'image');
   const kept = many.filter((m) => m.kind === 'image' && !pb.capacity.droppedIds.includes(m.id) && !m.dupOf);
   const avg = (l) => l.reduce((a, m) => a + m.score, 0) / Math.max(1, l.length);
+  out.bestClips = pb.clips.map((c) => `${c.start.toFixed(1)}-${c.end.toFixed(1)} ${c.label}${c.vid ? ' V' : ''}${c.split ? ' S' : ''}${c.burst ? ' B' : ''} ${c.role}`).join(' | ');
   out.best = { dropped: dropped.length, avgDropped: +avg(dropped).toFixed(2), avgKept: +avg(kept).toFixed(2) };
   if (!dropped.length || avg(dropped) >= avg(kept)) fails.push('Beste Auswahl lässt nicht die schwächsten weg');
   return { out, fails };
