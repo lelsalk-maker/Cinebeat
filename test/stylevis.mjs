@@ -16,14 +16,14 @@ const idle = () => page.waitForFunction(() => CineBeat.S.plan && document.getEle
 const settle = async () => { await page.waitForTimeout(700); await idle(); };
 const shot = async (t, name) => { await page.evaluate((tt) => CineBeat.engine.renderStill(tt), t); await page.waitForTimeout(1200); await page.locator('#monitor').screenshot({ path: `${OUT}/style_${name}.png` }); };
 await idle();
-await page.click('[data-tab="style"]');
+await page.click('[data-tab="style"]'); await page.evaluate(() => document.querySelectorAll('details.group').forEach((d) => { d.open = true; }));
 let info = await page.evaluate(() => ({ r: CineBeat.S.plan.resolved, notes: CineBeat.S.plan.notes.filter((n) => /Stil|Schwarzweiß|Echo|Polaroid/.test(n)), color: document.getElementById('colorHint').textContent, drum: document.getElementById('drumHint').textContent, pressed: [...document.querySelectorAll('#fxChips [aria-pressed="true"]')].map((b) => b.dataset.fx), knockHidden: document.getElementById('fxChapKnock').hidden }));
 console.log('Auto:', JSON.stringify({ color: info.r.color, accent: info.r.accent, echo: info.r.echo, stack: info.r.stack, mini: info.r.mini, drift: info.r.drift, parallax: info.r.parallax, notes: info.notes, color: info.color, drum: info.drum, pressed: info.pressed }));
 if (!info.knockHidden) fails.push('Kapitel-Schalter im Ortsfilm sichtbar');
 // Farbe vom Motiv aus + Stapel + Echo + Mini-Rewind, im ganzen Song als Reel
 await page.click('[data-tab="music"]').catch(() => {});
 await page.click('#lenChips [data-v="full"]'); await settle();
-await page.click('[data-tab="style"]');
+await page.click('[data-tab="style"]'); await page.evaluate(() => document.querySelectorAll('details.group').forEach((d) => { d.open = true; }));
 await page.click('#targetChips [data-v="reel"]'); await settle();
 await page.click('#colorChips [data-v="bloom"]'); await settle();
 for (const k of ['stack', 'echo', 'mini']) {

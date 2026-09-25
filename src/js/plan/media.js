@@ -171,6 +171,20 @@ function assignStream(clips, idxs, list, byId) {
   }
 }
 
+/** Vom Nutzer in der Zeitleiste verschobene Aufnahmen: [{ id, before }] (before: null = ans Ende). */
+function applyMoves(list, moves) {
+  if (!moves || !moves.length) return list;
+  let out = list.slice();
+  for (const mv of moves) {
+    const k = out.findIndex((m) => m.id === mv.id);
+    if (k < 0) continue;
+    const [m] = out.splice(k, 1);
+    const at = mv.before ? out.findIndex((x) => x.id === mv.before) : -1;
+    if (at < 0) out.push(m); else out.splice(at, 0, m);
+  }
+  return out;
+}
+
 function orderChrono(list) {
   return list.slice().sort((a, b) => (a.time || 0) - (b.time || 0) || String(a.name || '').localeCompare(String(b.name || ''), 'de', { numeric: true }));
 }

@@ -362,7 +362,8 @@ function planOnce(opts) {
     const hk = intro === 'split' ? null : (settings.hookId && all0.find((m) => m.id === settings.hookId)) || early.filter((m) => m.kind === 'image').sort((a, b) => (b.score || 0) - (a.score || 0))[0] || all0[0] || null;
     // innerhalb eines Moments (wenige Minuten) darf ein Bild aus dem vorigen hervorgehen (Match-Cuts, Farbfluss)
     const flowed = spreadSimilar(flowOrder(all0.filter((m) => m !== hk), s.match !== 'off'));
-    let queue = hk ? [hk, ...flowed] : flowed;
+    // eigene Reihenfolge aus der Zeitleiste geht vor
+    let queue = applyMoves(hk ? [hk, ...flowed] : flowed, overrides.moves);
     const chronoCtx = { s, an, win, fr, level, allOn, intro, outro, rush, reveal, leader, gridPlan, special, splitFit, splitN, barDur, beatDur, isPeakSec, scenes: sceneStarts(all0) };
     let res = layoutChrono(chronoCtx, segs, queue, 0);
     // alle Aufnahmen: fehlen am Ende noch welche, früher etwas mehr zusammenfassen (Split-Screens)
@@ -377,7 +378,7 @@ function planOnce(opts) {
       res = layoutChrono(chronoCtx, segs, queue, 0);
     }
     segs = res.segs;
-    chronoInfo = { hook: hk, queue };
+    chronoInfo = { hook: hk && queue[0] === hk ? hk : null, queue };
   }
 
 
@@ -682,6 +683,20 @@ function planOnce(opts) {
     const o = ov[c.i];
     if (o && o.mediaId && byId.has(o.mediaId)) { c.mediaId = o.mediaId; delete c.split; }
   }
+  // „Gefällt mir nicht“ bei „Beste Auswahl“: ein anderes, noch ungenutztes Foto aus derselben Zeit
+  if (!allOn) {
+    const used = new Set(clips.map((c) => c.mediaId));
+    for (const c of clips) {
+      const o = ov[c.i];
+      if (!o || !o.again || o.mediaId || c.split || c.grid || c.burst || c.stack || c.rush) continue;
+      const cur = byId.get(c.mediaId);
+      if (!cur || cur.kind !== 'image') continue;
+      const alts = goodMedia(usable, false).filter((m) => m.kind === 'image' && !used.has(m.id))
+        .sort((a, b) => Math.abs((a.time || 0) - (cur.time || 0)) - Math.abs((b.time || 0) - (cur.time || 0))).slice(0, 3);
+      const alt = alts[(o.again - 1) % Math.max(1, alts.length)];
+      if (alt) { used.delete(c.mediaId); c.mediaId = alt.id; used.add(alt.id); c.again = true; }
+    }
+  }
 
   // Raster füllen (Einstieg und im Film): Zielbild in der Mitte (bzw. zuletzt), die übrigen nach Qualität und Nähe, Fotos bevorzugt
   const fillGrid = (gi, gp, intro) => {
@@ -755,6 +770,16 @@ function planOnce(opts) {
     if (tr.type !== TR.CUT) lastTr = tr.type;
     if (tr.match) { B.matchCut = true; matches++; }
     if (tr.type === TR.MORPH || tr.type === TR.INK || tr.type === TR.DOUBLE) morphs++;
+    // „Gefällt mir nicht“: ein anderer, zum Songteil passender Übergang
+    const again = (ov[B.i] && ov[B.i].again) || 0;
+    if (again && !fixedCut && B.role !== 'chapter') {
+      const fam = isCalmLabel(B.label) ? [TR.DISSOLVE, TR.LUMA, TR.LEAK, TR.CUT, TR.DRIFT] : [TR.CUT, TR.WHIP, TR.PUSH, TR.ZOOM];
+      const opts = fam.filter((x) => x !== tr.type && (x !== TR.DRIFT || (!A.vid && !B.vid)));
+      const type = opts[(again - 1) % opts.length];
+      const beats = type === TR.CUT ? 0 : isCalmLabel(B.label) ? 1 : 0.5;
+      const dur = Math.min(beatDur * beats, 0.45 * (A.end - A.start), 0.45 * (B.end - B.start));
+      tr = { type: dur < 0.1 ? TR.CUT : type, dur: dur < 0.1 ? 0 : dur, punch: type === TR.CUT && !isCalmLabel(B.label) };
+    }
     if (fixedCut) tr = { type: TR.CUT, dur: 0, punch: false };
     // Szenenwechsel (anderer Ort/Tageszeit): im Drop ein harter Schnitt mit Impuls, in ruhigen Teilen eine Lichtblende
     else if (B.sceneStart && B.role !== 'chapter' && !tr.match && !B.vid && !A.vid) {
@@ -940,7 +965,20 @@ function planOnce(opts) {
       const fitFrac = srcAspect > outAspect ? outAspect / srcAspect : srcAspect / outAspect;
       const framed = fitFrac < 0.5 && !c.burst && !c.reveal && !c.pre && !(clips[c.i - 1] && clips[c.i - 1].reveal);
       const role = c.label === 'drop' || c.label === 'chorus' ? 'burst' : 'normal';
-      const mo = imageMotion(rng, m, outAspect, visDur, role, prevDir, panHint(c));
+      // „Gefällt mir nicht“: eigene Zufallsfolge je Versuch, die Richtung wechselt reihum
+      const ag = (ov[c.i] && ov[c.i].again) || 0;
+      // (die gemeinsame Zufallsfolge läuft trotzdem gleich weiter, damit sich die übrigen Einstellungen nicht ändern)
+      const mo0 = imageMotion(rng, m, outAspect, visDur, role, prevDir, panHint(c));
+      let mo = mo0;
+      if (ag) {
+        const r2 = mulberry32(((s.seed >>> 0) ^ (c.i * 977)) >>> 0);
+        const cands = [];
+        for (const h of ['left', 'right', 'down', 'up', null, 'in', 'out']) {
+          const q = imageMotion(r2, m, outAspect, visDur, role, h === 'in' || h === 'out' ? (h === 'in' ? 'out' : 'in') : null, h === 'in' || h === 'out' ? null : h);
+          if (q.dir !== mo0.dir && !cands.some((x) => x.dir === q.dir)) cands.push(q);
+        }
+        if (cands.length) mo = cands[(ag - 1) % cands.length];
+      }
       prevDir = mo.dir;
       c.motion = mo.m;
       c.dir = mo.dir;
@@ -948,10 +986,11 @@ function planOnce(opts) {
       const nx = clips[c.i + 1];
       if (nx && nx.sectionChange && !isCalmLabel(nx.label) && isCalmLabel(c.label)) { c.ease = 'in'; mo.m.to.s += 0.035; }
       else if (c.sectionChange && !isCalmLabel(c.label)) c.ease = 'out';
-      if (framed) {
+      // (bei „Gefällt mir nicht“ abwechselnd bildfüllend mit Fahrt oder gerahmt mit umgekehrter Richtung)
+      if (framed && ag % 2 === 0) {
         // schwebt knapp innerhalb des Rahmens und wächst langsam: nichts vom Bild geht verloren
         c.contain = true;
-        c.motion = { from: { s: 0.93, x: 0, y: 0 }, to: { s: 0.975, x: 0, y: 0 } };
+        c.motion = ag ? { from: { s: 0.975, x: 0, y: 0 }, to: { s: 0.93, x: 0, y: 0 } } : { from: { s: 0.93, x: 0, y: 0 }, to: { s: 0.975, x: 0, y: 0 } };
       }
       let pc = c.matchCut ? clips[c.i - 1] : null;
       // gerahmte Bilder haben keinen Ausschnitt, an den die Bewegung anschließen könnte

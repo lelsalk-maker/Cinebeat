@@ -53,6 +53,25 @@ const res = await p.evaluate(async (b64) => {
   out.sceneClips = starts.map((c) => `${c.start.toFixed(2)} ${c.mediaId} ${bars.some((x) => Math.abs(x - c.start) < 0.04) ? 'Takt' : 'neben'} ${c.tin ? TR_NAMES[c.tin.type] : ''}`);
   if (starts.length < 2) fails.push('Szenenwechsel fehlen');
   if (starts.filter((c) => bars.some((x) => Math.abs(x - c.start) < 0.04)).length < starts.length - 1) fails.push('Szenenwechsel nicht auf dem Takt');
+  // Zeitleiste: verschobene Aufnahme landet an der neuen Stelle, der Rest bleibt chronologisch
+  const set0 = { format: '9:16', look: 'natur', pace: 'auto', intro: 'hook', outro: 'auto', length: 'auto', songStart: 'auto', frame: 'auto', split: 'off', seed: 2, target: 'reel' };
+  const idxOf = (plan, id) => plan.clips.findIndex((c) => c.mediaId === id || (c.splitIds || []).includes(id));
+  const mv = buildPlan({ an, media, settings: set0, overrides: { texts: [], stickers: [], moves: [{ id: 'm20', before: 'm6' }] } });
+  out.moved = [idxOf(mv, 'm5'), idxOf(mv, 'm20'), idxOf(mv, 'm6')];
+  if (!(idxOf(mv, 'm20') >= 0 && idxOf(mv, 'm20') < idxOf(mv, 'm6') && idxOf(mv, 'm5') <= idxOf(mv, 'm20'))) fails.push('Verschieben wirkt nicht');
+  // „Gefällt mir nicht“: nur diese Einstellung ändert sich
+  const k = pl.clips.findIndex((c, i) => i > 3 && !c.vid && !c.split && !c.burst && c.motion && c.motion.to);
+  const ag = buildPlan({ an, media, settings: set0, overrides: { texts: [], stickers: [], clips: { [k]: { again: 1 } } } });
+  const same = (a, b) => JSON.stringify(a.motion) === JSON.stringify(b.motion);
+  out.again = { k, changed: !same(pl.clips[k], ag.clips[k]), others: pl.clips.filter((c, i) => i !== k && ag.clips[i] && !same(c, ag.clips[i])).length };
+  if (!out.again.changed || out.again.others > 0) fails.push('Gefällt mir nicht ändert falsch');
+  // drei Varianten: ruhig hat längere Einstellungen als energisch
+  const avg = (v) => { const q = buildPlan({ an, media, settings: { ...set0, variant: v }, overrides: { texts: [], stickers: [] } }); return q.duration / q.clips.length; };
+  out.variants = ['ruhig', 'ausgewogen', 'energisch'].map((v) => +avg(v).toFixed(2));
+  if (!(out.variants[0] >= out.variants[1] && out.variants[1] > out.variants[2])) fails.push('Varianten unterscheiden sich nicht');
+  // selbst aussortieren: Bildschirmfoto und schwarzes Bild nicht im Film, als Favorit schon
+  out.autoOut = [autoOut({ kind: 'image', name: 'Screenshot 2026.png' }), autoOut({ kind: 'image', name: 'x', expo: 0.01, luma: 0.03 }), autoOut({ kind: 'image', name: 'x', expo: 0.01, luma: 0.03, fav: true }), autoOut({ kind: 'image', name: 'x', expo: 0.6, luma: 0.5, sharp: 0.5 })];
+  if (!out.autoOut[0] || !out.autoOut[1] || out.autoOut[2] || out.autoOut[3]) fails.push('Aussortieren falsch');
   return { out, fails };
 }, wav);
 console.log(JSON.stringify(res.out, null, 1));

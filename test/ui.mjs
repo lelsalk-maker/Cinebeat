@@ -20,6 +20,41 @@ await page.waitForTimeout(1200);
 console.log('Demo-Plan:', await page.evaluate(() => { const p = CineBeat.S.plan; return { D: p.duration.toFixed(1), resolved: p.resolved, notes: p.notes }; }));
 await shot('2_editor', true);
 for (const tab of ['material', 'music', 'cut', 'text']) { await page.click(`[data-tab="${tab}"]`); await page.waitForTimeout(500); await shot('3_' + tab, true); }
+// Titel-Varianten
+await page.click('[data-tab="text"]'); await page.waitForTimeout(300);
+const tv = await page.evaluate(() => Array.from(document.querySelectorAll('#titleChips button')).map((b) => b.textContent));
+console.log('Titel-Varianten:', tv);
+if (tv.length !== 3) errs.push('Titel-Varianten fehlen');
+else {
+  await page.click('#titleChips [data-i="2"]'); await page.waitForTimeout(800);
+  const nm = await page.evaluate(() => CineBeat.S.ctx.rec.name);
+  if (!tv[2].startsWith(nm)) errs.push('Titel-Variante nicht übernommen: ' + nm);
+}
+// Zeitleiste: gedrückt halten und ziehen
+await page.click('[data-tab="cut"]'); await page.waitForTimeout(400);
+const tiles = await page.$$('#clipRow .clip');
+const b1 = await tiles[3].boundingBox(), b2 = await tiles[1].boundingBox();
+const id4 = await page.evaluate(() => CineBeat.S.plan.clips[3].mediaId);
+await page.mouse.move(b1.x + b1.width / 2, b1.y + b1.height / 2); await page.mouse.down(); await page.waitForTimeout(450);
+await page.mouse.move(b2.x + 5, b2.y + b2.height / 2, { steps: 6 }); await page.waitForTimeout(100);
+await shot('7_drag');
+await page.mouse.up();
+await page.waitForFunction(() => document.getElementById('busy').hidden, null, { timeout: 30000 }); await page.waitForTimeout(1200);
+const moved = await page.evaluate((id) => ({ moves: CineBeat.S.ctx.rec.overrides.moves, at: CineBeat.S.plan.clips.findIndex((c) => c.mediaId === id), sheet: !document.getElementById('sheet').hidden }), id4);
+console.log('Verschoben:', moved);
+if (!moved.moves || moved.at > 2 || moved.sheet) errs.push('Ziehen in der Zeitleiste wirkt nicht');
+await page.click('#resetCuts'); await page.waitForTimeout(800);
+// Gefällt mir nicht
+await page.click('#clipRow .clip:nth-child(4)'); await page.waitForTimeout(500);
+await page.click('#sheetBody [data-act="again"]'); await page.waitForTimeout(1000);
+console.log('Nochmal:', await page.evaluate(() => CineBeat.S.ctx.rec.overrides.clips[3]));
+await page.click('#sheetBody [data-act="done"]'); await page.waitForTimeout(400);
+// Varianten
+await page.click('[data-tab="style"]');
+await page.click('#variantChips [data-v="energisch"]'); await page.waitForTimeout(1500);
+console.log('Variante:', await page.evaluate(() => ({ v: CineBeat.S.ctx.rec.settings.variant, pace: CineBeat.S.plan.resolved.pace, intro: CineBeat.S.plan.intro })));
+await shot('8_variant', true);
+await page.click('#variantChips [data-v="ausgewogen"]'); await page.waitForTimeout(800);
 await page.click('[data-tab="style"]');
 await page.click('#fmtChips [data-v="16:9"]');
 await page.waitForTimeout(1500);

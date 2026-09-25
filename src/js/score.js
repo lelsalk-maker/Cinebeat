@@ -269,12 +269,12 @@ async function scoreFrames(grab, W, H, duration) {
 /** Markiert Beinahe-Duplikate (nur das beste Bild einer Serie bleibt aktiv). */
 function markDuplicates(items) {
   const list = items.filter((m) => m.hash && !m.bad);
-  for (const m of list) m.dupOf = null;
+  for (const m of list) { m.dupOf = null; m.dupD = m.dupDt = undefined; }
   const sorted = list.slice().sort((a, b) => (b.score || 0) - (a.score || 0));
   const kept = [];
   for (const m of sorted) {
     const sameColor = (a, b) => !a.avg || !b.avg || Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) < 40;
     const twin = kept.find((k) => k.kind === m.kind && hamming(k.hash, m.hash) <= 6 && sameColor(k, m) && Math.abs((k.time || 0) - (m.time || 0)) < 10 * 60 * 1000);
-    if (twin) m.dupOf = twin.id; else kept.push(m);
+    if (twin) { m.dupOf = twin.id; m.dupD = hamming(twin.hash, m.hash); m.dupDt = Math.abs((twin.time || 0) - (m.time || 0)); } else kept.push(m);
   }
 }

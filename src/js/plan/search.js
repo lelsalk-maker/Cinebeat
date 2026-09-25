@@ -2,7 +2,7 @@
 /**
  * Hauptfunktion.
  * opts: {an, media, settings, overrides, chapters}
- * overrides: {clips: {[i]: {mediaId?, srcOffset?, trans?, speed?}}, texts: [], stickers: []}
+ * overrides: {clips: {[i]: {mediaId?, srcOffset?, trans?, speed?, again?}}, moves: [{id, before}], texts: [], stickers: []}
  */
 /**
  * Plan mit passender Schnittlänge: jede Aufnahme genau einmal – keine Wiederholungen, um Zeit zu füllen,

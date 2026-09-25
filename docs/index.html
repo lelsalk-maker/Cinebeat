@@ -218,10 +218,22 @@ textarea.text-in { resize: vertical; min-height: 70px; }
 .formats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
 .formats button { display: grid; justify-items: center; align-content: center; gap: 5px; min-height: 84px; padding: 8px 4px; border-radius: 12px; border: 1px solid var(--line-2); background: transparent; cursor: pointer; color: var(--text); }
 .formats button .ar { margin-bottom: 2px; }
+.variants { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.variants button { min-height: 58px; }
+.again-btn { width: 100%; margin: 4px 0 12px; }
 .formats b { font-size: 12.5px; font-weight: 600; }
 .formats span { font: 10.5px/1 var(--f-mono); color: var(--muted); }
 .formats button[aria-checked="true"] { border-color: var(--beige); background: rgba(228, 213, 183, 0.08); color: var(--beige); }
 .formats button[aria-checked="true"] span { color: var(--beige-2); }
+details.group { border: 1px solid var(--line); border-radius: 14px; background: rgba(255, 255, 255, 0.015); }
+details.group > summary { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 14px 16px; cursor: pointer; list-style: none; }
+details.group > summary::-webkit-details-marker { display: none; }
+details.group > summary b { font-size: 14px; font-weight: 600; color: var(--text); white-space: nowrap; }
+details.group > summary span { font-size: 12px; color: var(--muted); text-align: right; }
+details.group > summary::after { content: ""; flex: none; width: 7px; height: 7px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(45deg) translateY(-2px); transition: transform 0.2s ease; }
+details.group[open] > summary::after { transform: rotate(225deg) translateY(-2px); }
+details.group[open] > summary { border-bottom: 1px solid var(--line); }
+details.group .group-body { display: grid; gap: 18px; padding: 16px; }
 details.more { border-top: 1px solid var(--line); padding-top: 12px; }
 details.more summary { cursor: pointer; font-size: 13px; color: var(--muted); list-style: none; }
 details.more summary::-webkit-details-marker { display: none; }
@@ -285,6 +297,10 @@ details.more[open] { display: grid; gap: 16px; }
 .clip .cs { position: absolute; right: 3px; top: 3px; font: 600 9px/1 var(--f-sans); background: rgba(5, 6, 8, 0.8); color: var(--beige); padding: 2px 4px; border-radius: 3px; letter-spacing: 0.06em; }
 .clip.edited::after { content: ""; position: absolute; right: 4px; bottom: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--beige); }
 .clip.sel { outline: 2px solid var(--beige); outline-offset: -2px; }
+.clip { -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; transition: transform 0.15s ease, opacity 0.15s ease; }
+.clip.dragging { transform: scale(1.06) translateY(-4px); opacity: 0.85; box-shadow: 0 8px 18px rgba(0, 0, 0, 0.5); z-index: 2; }
+.clip.drop-before { box-shadow: inset 3px 0 0 var(--beige); }
+.clip.drop-after { box-shadow: inset -3px 0 0 var(--beige); }
 .clip .sectag { position: absolute; right: 3px; bottom: 3px; font: 600 9px/1 var(--f-sans); letter-spacing: 0.06em; text-transform: uppercase; color: var(--beige-ink); background: var(--beige); padding: 2px 4px; border-radius: 3px; }
 
 /* Text */
@@ -495,7 +511,7 @@ details.more[open] { display: grid; gap: 16px; }
             <h2 id="regieTitle"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.6L18.5 9l-4.7 1.4L12 15l-1.8-4.6L5.5 9l4.7-1.4z" fill="currentColor"/><path d="M18 15l.8 2 2.2.8-2.2.8L18 21l-.8-2.4-2.2-.8 2.2-.8z" fill="currentColor"/></svg>Auto-Regie</h2>
             <button class="btn ghost small" id="remixBtn" type="button">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h11l-3-3M20 17H9l3 3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              Variante
+              Neu mischen
             </button>
           </div>
           <ul class="regie-notes" id="regieNotes"></ul>
@@ -513,6 +529,14 @@ details.more[open] { display: grid; gap: 16px; }
           <div class="style-card">
             <div class="style-text"><strong>Stil-Vorlage</strong><span id="styleInfo"></span></div>
             <button class="btn small" id="styleBtn" type="button">Vorlage</button>
+          </div>
+          <div class="field">
+            <span class="field-label" id="varLabel">Variante</span>
+            <div class="formats variants" role="radiogroup" aria-labelledby="varLabel" id="variantChips">
+              <button type="button" role="radio" data-v="ruhig"><b>Ruhig</b><span>lange Bilder, weich</span></button>
+              <button type="button" role="radio" data-v="ausgewogen"><b>Ausgewogen</b><span>wie der Song</span></button>
+              <button type="button" role="radio" data-v="energisch"><b>Energisch</b><span>schnell, Effekte</span></button>
+            </div>
           </div>
           <div class="field">
             <span class="field-label" id="fmtLabel">Wofür?</span>
@@ -545,156 +569,174 @@ details.more[open] { display: grid; gap: 16px; }
             <span class="field-label">Look</span>
             <div class="looks" role="radiogroup" aria-label="Farblook" id="lookGrid"></div>
           </div>
-          <div class="field" id="preField">
-            <span class="field-label" id="preLabel">Vorspann</span>
-            <div class="chips" role="radiogroup" aria-labelledby="preLabel" id="preChips">
-              <button type="button" role="radio" data-v="off">Keiner</button>
-              <button type="button" role="radio" data-v="countdown">Countdown 3 · 2 · 1</button>
-              <button type="button" role="radio" data-v="rewind">Rewind</button>
-            </div>
-            <p class="hint small" id="preHint">Läuft vor dem Einstieg und lässt sich mit jedem Einstieg kombinieren, z. B. Countdown und danach das 9er-Raster.</p>
-          </div>
-          <div class="field">
-            <span class="field-label" id="introLabel">Einstieg</span>
-            <div class="chips" role="radiogroup" aria-labelledby="introLabel" id="introChips">
-              <button type="button" role="radio" data-v="auto">Auto</button>
-              <button type="button" role="radio" data-v="reveal">Aufblende</button>
-              <button type="button" role="radio" data-v="rush">Bilderflut</button>
-              <button type="button" role="radio" data-v="countdown">Countdown</button>
-              <button type="button" role="radio" data-v="grid">9er-Raster</button>
-              <button type="button" role="radio" data-v="knockout">Durch den Namen</button>
-              <button type="button" role="radio" data-v="city">Ortsname</button>
-               <button type="button" role="radio" data-v="cinema">Titelkarte</button>
-              <button type="button" role="radio" data-v="hook">Stärkstes Bild</button>
-              <button type="button" role="radio" data-v="type">Wort für Wort</button>
-              <button type="button" role="radio" data-v="split">Split-Screen</button>
-            </div>
-          </div>
-          <div class="field">
-            <span class="field-label" id="outroLabel">Ende</span>
-            <div class="chips" role="radiogroup" aria-labelledby="outroLabel" id="outroChips">
-              <button type="button" role="radio" data-v="auto">Auto</button>
-              <button type="button" role="radio" data-v="credits">Schlusstitel</button>
-              <button type="button" role="radio" data-v="loop">Endlos-Loop</button>
-              <button type="button" role="radio" data-v="freeze">Standbild</button>
-              <button type="button" role="radio" data-v="strip">Filmstreifen</button>
-              <button type="button" role="radio" data-v="split">Split-Screen</button>
-            </div>
-          </div>
-          <div class="field">
-            <span class="field-label" id="fontLabel">Schrift der Titel</span>
-            <div class="chips font-chips" role="radiogroup" aria-labelledby="fontLabel" id="fontChips"></div>
-          </div>
-          <div class="field">
-            <span class="field-label" id="elLabel">Einblendungen</span>
-            <div class="chips" role="group" aria-labelledby="elLabel" id="elChips">
-              <button type="button" aria-pressed="true" data-k="showTitle">Titel</button>
-              <button type="button" aria-pressed="true" data-k="showChapters">Kapitel</button>
-              <button type="button" aria-pressed="true" data-k="showStats">Reise-Statistik</button>
-            </div>
-            <p class="hint small">Alles ist optional: Tippe, um es ein- oder auszuschalten.</p>
-          </div>
-          <div class="field">
-            <span class="field-label" id="motionLabel">Bewegung im Takt</span>
-            <div class="chips" role="radiogroup" aria-labelledby="motionLabel" id="motionChips">
-              <button type="button" role="radio" data-v="ken">Kamerafahrt</button>
-              <button type="button" role="radio" data-v="snap">Impact-Zoom</button>
-              <button type="button" role="radio" data-v="pulse">Puls</button>
-              <button type="button" role="radio" data-v="sway">Pendeln</button>
-              <button type="button" role="radio" data-v="float">Schweben</button>
-              <button type="button" role="radio" data-v="tilt">Neigen</button>
-              <button type="button" role="radio" data-v="handheld">Handkamera</button>
-            </div>
-            <div class="chips sub-chips" role="radiogroup" aria-label="Stärke der Bewegung" id="motionAmtChips">
-              <button type="button" role="radio" data-v="soft">Leicht</button>
-              <button type="button" role="radio" data-v="medium">Mittel</button>
-              <button type="button" role="radio" data-v="strong">Stark</button>
-            </div>
-            <p class="hint small" id="motionHint"></p>
-            <span class="field-label sub-label" id="drumLabel">Schlagzeug</span>
-            <div class="chips sub-chips" role="radiogroup" aria-labelledby="drumLabel" id="drumChips">
-              <button type="button" role="radio" data-v="auto">Auto</button>
-              <button type="button" role="radio" data-v="kick">Kick-Zoom</button>
-              <button type="button" role="radio" data-v="kicksnare">Kick + Snare</button>
-              <button type="button" role="radio" data-v="off">Aus</button>
-            </div>
-            <p class="hint small" id="drumHint"></p>
-          </div>
-          <div class="field">
-            <span class="field-label" id="colorLabel">Schwarzweiß → Farbe</span>
-            <div class="chips" role="radiogroup" aria-labelledby="colorLabel" id="colorChips">
-              <button type="button" role="radio" data-v="auto">Auto</button>
-              <button type="button" role="radio" data-v="drop">Auf dem Drop</button>
-              <button type="button" role="radio" data-v="steps">Beat für Beat</button>
-              <button type="button" role="radio" data-v="bloom">Vom Motiv aus</button>
-              <button type="button" role="radio" data-v="sweep">Farbwelle</button>
-              <button type="button" role="radio" data-v="pop">Farbtupfer</button>
-              <button type="button" role="radio" data-v="off">Aus</button>
-            </div>
-            <p class="hint small" id="colorHint"></p>
-          </div>
-          <div class="field">
-            <span class="field-label" id="fxLabel">Im Film <span class="muted">· beliebig kombinierbar</span></span>
-            <div class="chips" role="group" aria-labelledby="fxLabel" id="fxChips">
-              <button type="button" aria-pressed="false" data-fx="match">Match-Cuts</button>
-              <button type="button" aria-pressed="false" data-fx="morph">Bild aus Bild</button>
-              <button type="button" aria-pressed="false" data-fx="split">Split-Screens</button>
-              <button type="button" aria-pressed="false" data-fx="midGrid">Raster im Refrain</button>
-              <button type="button" aria-pressed="false" data-fx="midCount">Countdown vor dem Drop</button>
-              <button type="button" aria-pressed="false" data-fx="burst">Foto-Serie im Drop</button>
-              <button type="button" aria-pressed="false" data-fx="ramp">Speed-Ramp</button>
-              <button type="button" aria-pressed="false" data-fx="stamp">Datumsstempel</button>
-              <button type="button" aria-pressed="false" data-fx="echo">Echo-Bild</button>
-              <button type="button" aria-pressed="false" data-fx="stack">Polaroid-Stapel</button>
-              <button type="button" aria-pressed="false" data-fx="mini">Mini-Rewind</button>
-              <button type="button" aria-pressed="false" data-fx="drift">Drift-Übergang</button>
-              <button type="button" aria-pressed="false" data-fx="parallax">Tiefe (Parallax)</button>
-              <button type="button" aria-pressed="false" data-fx="chapKnock" id="fxChapKnock">Durch den Namen je Kapitel</button>
-              <button type="button" aria-pressed="false" data-fx="chapMap" id="fxChapMap">Karten-Moment je Etappe</button>
-            </div>
-            <p class="hint small" id="fxHint"></p>
-          </div>
-          <div class="field" id="kmField">
-            <span class="field-label" id="kmLabel">Unter dem Ortsnamen</span>
-            <div class="chips" role="radiogroup" aria-labelledby="kmLabel" id="kmChips">
-              <button type="button" role="radio" data-v="off">Nichts</button>
-              <button type="button" role="radio" data-v="coords">Koordinaten</button>
-              <button type="button" role="radio" data-v="leg">Koordinaten → Etappe</button>
-              <button type="button" role="radio" data-v="total">Koordinaten → gesamt</button>
-            </div>
-            <p class="hint small">Die Koordinaten erscheinen Ziffer für Ziffer und wechseln dann in die gefahrenen Kilometer: seit dem letzten Ort (+ km) oder seit Reisebeginn. Flugstrecken zählen nicht mit.</p>
-          </div>
-          <div class="field" id="mapField">
-            <span class="field-label">Flugkarte</span>
-            <div class="chips theme-chips" role="radiogroup" aria-label="Kartenstil" id="mapThemeChips"></div>
-            <div class="swatches" role="radiogroup" aria-label="Farbe von Route und Flugzeug" id="mapInkChips"></div>
-            <div class="chips sub-chips" role="radiogroup" aria-label="Kontinente" id="mapLandChips">
-              <button type="button" role="radio" data-v="dots">Kontinente als Punkte</button>
-              <button type="button" role="radio" data-v="solid">als Fläche</button>
-              <button type="button" role="radio" data-v="off">ohne</button>
-            </div>
-            <div class="chips sub-chips" role="radiogroup" aria-label="Ansicht" id="flightViewChips">
-              <button type="button" role="radio" data-v="globe">Globus</button>
-              <button type="button" role="radio" data-v="flat">Flache Karte</button>
-            </div>
-          </div>
-          <details class="more">
-            <summary>Tempo &amp; Split-Screens</summary>
-            <div class="field">
-              <span class="field-label" id="paceLabel">Schnitttempo</span>
-              <div class="chips" role="radiogroup" aria-labelledby="paceLabel" id="paceChips">
-                <button type="button" role="radio" data-v="auto">Auto</button>
-                <button type="button" role="radio" data-v="ruhig">Ruhig</button>
-                <button type="button" role="radio" data-v="mittel">Mittel</button>
-                <button type="button" role="radio" data-v="schnell">Schnell</button>
+          <details class="group" id="grpStart">
+            <summary><b>Anfang &amp; Ende</b><span>Vorspann, Einstieg, Schluss</span></summary>
+            <div class="group-body">
+              <div class="field" id="preField">
+                <span class="field-label" id="preLabel">Vorspann</span>
+                <div class="chips" role="radiogroup" aria-labelledby="preLabel" id="preChips">
+                  <button type="button" role="radio" data-v="off">Keiner</button>
+                  <button type="button" role="radio" data-v="countdown">Countdown 3 · 2 · 1</button>
+                  <button type="button" role="radio" data-v="rewind">Rewind</button>
+                </div>
+                <p class="hint small" id="preHint">Läuft vor dem Einstieg und lässt sich mit jedem Einstieg kombinieren, z. B. Countdown und danach das 9er-Raster.</p>
+              </div>
+              <div class="field">
+                <span class="field-label" id="introLabel">Einstieg</span>
+                <div class="chips" role="radiogroup" aria-labelledby="introLabel" id="introChips">
+                  <button type="button" role="radio" data-v="auto">Auto</button>
+                  <button type="button" role="radio" data-v="reveal">Aufblende</button>
+                  <button type="button" role="radio" data-v="rush">Bilderflut</button>
+                  <button type="button" role="radio" data-v="countdown">Countdown</button>
+                  <button type="button" role="radio" data-v="grid">9er-Raster</button>
+                  <button type="button" role="radio" data-v="knockout">Durch den Namen</button>
+                  <button type="button" role="radio" data-v="city">Ortsname</button>
+                   <button type="button" role="radio" data-v="cinema">Titelkarte</button>
+                  <button type="button" role="radio" data-v="hook">Stärkstes Bild</button>
+                  <button type="button" role="radio" data-v="type">Wort für Wort</button>
+                  <button type="button" role="radio" data-v="split">Split-Screen</button>
+                </div>
+              </div>
+              <div class="field">
+                <span class="field-label" id="outroLabel">Ende</span>
+                <div class="chips" role="radiogroup" aria-labelledby="outroLabel" id="outroChips">
+                  <button type="button" role="radio" data-v="auto">Auto</button>
+                  <button type="button" role="radio" data-v="credits">Schlusstitel</button>
+                  <button type="button" role="radio" data-v="loop">Endlos-Loop</button>
+                  <button type="button" role="radio" data-v="freeze">Standbild</button>
+                  <button type="button" role="radio" data-v="strip">Filmstreifen</button>
+                  <button type="button" role="radio" data-v="split">Split-Screen</button>
+                </div>
               </div>
             </div>
-            <div class="field">
-              <span class="field-label" id="splitLabel">Split-Screens im Refrain</span>
-              <div class="chips" role="radiogroup" aria-labelledby="splitLabel" id="splitChips">
-                <button type="button" role="radio" data-v="auto">Auto</button>
-                <button type="button" role="radio" data-v="more">Öfter</button>
-                <button type="button" role="radio" data-v="off">Aus</button>
+          </details>
+          <details class="group" id="grpRhythm">
+            <summary><b>Rhythmus &amp; Bewegung</b><span>Tempo, Kamera, Schlagzeug, Farbe</span></summary>
+            <div class="group-body">
+              <div class="field">
+                <span class="field-label" id="paceLabel">Schnitttempo</span>
+                <div class="chips" role="radiogroup" aria-labelledby="paceLabel" id="paceChips">
+                  <button type="button" role="radio" data-v="auto">Auto</button>
+                  <button type="button" role="radio" data-v="ruhig">Ruhig</button>
+                  <button type="button" role="radio" data-v="mittel">Mittel</button>
+                  <button type="button" role="radio" data-v="schnell">Schnell</button>
+                </div>
+              </div>
+              <div class="field">
+                <span class="field-label" id="motionLabel">Bewegung im Takt</span>
+                <div class="chips" role="radiogroup" aria-labelledby="motionLabel" id="motionChips">
+                  <button type="button" role="radio" data-v="ken">Kamerafahrt</button>
+                  <button type="button" role="radio" data-v="snap">Impact-Zoom</button>
+                  <button type="button" role="radio" data-v="pulse">Puls</button>
+                  <button type="button" role="radio" data-v="sway">Pendeln</button>
+                  <button type="button" role="radio" data-v="float">Schweben</button>
+                  <button type="button" role="radio" data-v="tilt">Neigen</button>
+                  <button type="button" role="radio" data-v="handheld">Handkamera</button>
+                </div>
+                <div class="chips sub-chips" role="radiogroup" aria-label="Stärke der Bewegung" id="motionAmtChips">
+                  <button type="button" role="radio" data-v="soft">Leicht</button>
+                  <button type="button" role="radio" data-v="medium">Mittel</button>
+                  <button type="button" role="radio" data-v="strong">Stark</button>
+                </div>
+                <p class="hint small" id="motionHint"></p>
+                <span class="field-label sub-label" id="drumLabel">Schlagzeug</span>
+                <div class="chips sub-chips" role="radiogroup" aria-labelledby="drumLabel" id="drumChips">
+                  <button type="button" role="radio" data-v="auto">Auto</button>
+                  <button type="button" role="radio" data-v="kick">Kick-Zoom</button>
+                  <button type="button" role="radio" data-v="kicksnare">Kick + Snare</button>
+                  <button type="button" role="radio" data-v="off">Aus</button>
+                </div>
+                <p class="hint small" id="drumHint"></p>
+              </div>
+              <div class="field">
+                <span class="field-label" id="colorLabel">Schwarzweiß → Farbe</span>
+                <div class="chips" role="radiogroup" aria-labelledby="colorLabel" id="colorChips">
+                  <button type="button" role="radio" data-v="auto">Auto</button>
+                  <button type="button" role="radio" data-v="drop">Auf dem Drop</button>
+                  <button type="button" role="radio" data-v="steps">Beat für Beat</button>
+                  <button type="button" role="radio" data-v="bloom">Vom Motiv aus</button>
+                  <button type="button" role="radio" data-v="sweep">Farbwelle</button>
+                  <button type="button" role="radio" data-v="pop">Farbtupfer</button>
+                  <button type="button" role="radio" data-v="off">Aus</button>
+                </div>
+                <p class="hint small" id="colorHint"></p>
+              </div>
+              <div class="field">
+                <span class="field-label" id="splitLabel">Split-Screens im Refrain</span>
+                <div class="chips" role="radiogroup" aria-labelledby="splitLabel" id="splitChips">
+                  <button type="button" role="radio" data-v="auto">Auto</button>
+                  <button type="button" role="radio" data-v="more">Öfter</button>
+                  <button type="button" role="radio" data-v="off">Aus</button>
+                </div>
+              </div>
+        
+            </div>
+          </details>
+          <details class="group" id="grpFx">
+            <summary><b>Effekte</b><span>was im Film vorkommt</span></summary>
+            <div class="group-body">
+              <div class="field">
+                <span class="field-label" id="fxLabel">Im Film <span class="muted">· beliebig kombinierbar</span></span>
+                <div class="chips" role="group" aria-labelledby="fxLabel" id="fxChips">
+                  <button type="button" aria-pressed="false" data-fx="match">Match-Cuts</button>
+                  <button type="button" aria-pressed="false" data-fx="morph">Bild aus Bild</button>
+                  <button type="button" aria-pressed="false" data-fx="split">Split-Screens</button>
+                  <button type="button" aria-pressed="false" data-fx="midGrid">Raster im Refrain</button>
+                  <button type="button" aria-pressed="false" data-fx="midCount">Countdown vor dem Drop</button>
+                  <button type="button" aria-pressed="false" data-fx="burst">Foto-Serie im Drop</button>
+                  <button type="button" aria-pressed="false" data-fx="ramp">Speed-Ramp</button>
+                  <button type="button" aria-pressed="false" data-fx="stamp">Datumsstempel</button>
+                  <button type="button" aria-pressed="false" data-fx="echo">Echo-Bild</button>
+                  <button type="button" aria-pressed="false" data-fx="stack">Polaroid-Stapel</button>
+                  <button type="button" aria-pressed="false" data-fx="mini">Mini-Rewind</button>
+                  <button type="button" aria-pressed="false" data-fx="drift">Drift-Übergang</button>
+                  <button type="button" aria-pressed="false" data-fx="parallax">Tiefe (Parallax)</button>
+                  <button type="button" aria-pressed="false" data-fx="chapKnock" id="fxChapKnock">Durch den Namen je Kapitel</button>
+                  <button type="button" aria-pressed="false" data-fx="chapMap" id="fxChapMap">Karten-Moment je Etappe</button>
+                </div>
+                <p class="hint small" id="fxHint"></p>
+              </div>
+            </div>
+          </details>
+          <details class="group" id="grpText">
+            <summary><b>Titel &amp; Orte</b><span>Schrift, Einblendungen, Karte</span></summary>
+            <div class="group-body">
+              <div class="field">
+                <span class="field-label" id="fontLabel">Schrift der Titel</span>
+                <div class="chips font-chips" role="radiogroup" aria-labelledby="fontLabel" id="fontChips"></div>
+              </div>
+              <div class="field">
+                <span class="field-label" id="elLabel">Einblendungen</span>
+                <div class="chips" role="group" aria-labelledby="elLabel" id="elChips">
+                  <button type="button" aria-pressed="true" data-k="showTitle">Titel</button>
+                  <button type="button" aria-pressed="true" data-k="showChapters">Kapitel</button>
+                  <button type="button" aria-pressed="true" data-k="showStats">Reise-Statistik</button>
+                </div>
+                <p class="hint small">Alles ist optional: Tippe, um es ein- oder auszuschalten.</p>
+              </div>
+              <div class="field" id="kmField">
+                <span class="field-label" id="kmLabel">Unter dem Ortsnamen</span>
+                <div class="chips" role="radiogroup" aria-labelledby="kmLabel" id="kmChips">
+                  <button type="button" role="radio" data-v="off">Nichts</button>
+                  <button type="button" role="radio" data-v="coords">Koordinaten</button>
+                  <button type="button" role="radio" data-v="leg">Koordinaten → Etappe</button>
+                  <button type="button" role="radio" data-v="total">Koordinaten → gesamt</button>
+                </div>
+                <p class="hint small">Die Koordinaten erscheinen Ziffer für Ziffer und wechseln dann in die gefahrenen Kilometer: seit dem letzten Ort (+ km) oder seit Reisebeginn. Flugstrecken zählen nicht mit.</p>
+              </div>
+              <div class="field" id="mapField">
+                <span class="field-label">Flugkarte</span>
+                <div class="chips theme-chips" role="radiogroup" aria-label="Kartenstil" id="mapThemeChips"></div>
+                <div class="swatches" role="radiogroup" aria-label="Farbe von Route und Flugzeug" id="mapInkChips"></div>
+                <div class="chips sub-chips" role="radiogroup" aria-label="Kontinente" id="mapLandChips">
+                  <button type="button" role="radio" data-v="dots">Kontinente als Punkte</button>
+                  <button type="button" role="radio" data-v="solid">als Fläche</button>
+                  <button type="button" role="radio" data-v="off">ohne</button>
+                </div>
+                <div class="chips sub-chips" role="radiogroup" aria-label="Ansicht" id="flightViewChips">
+                  <button type="button" role="radio" data-v="globe">Globus</button>
+                  <button type="button" role="radio" data-v="flat">Flache Karte</button>
+                </div>
               </div>
             </div>
           </details>
@@ -761,7 +803,7 @@ details.more[open] { display: grid; gap: 16px; }
         </div>
 
         <div class="tabpanel" id="tab-cut" role="tabpanel" aria-labelledby="tabbtn-cut" hidden>
-          <p class="hint">Jede Kachel ist eine Einstellung. Tippe darauf, um Motiv, Übergang, Tempo oder Videoausschnitt zu ändern.</p>
+          <p class="hint">Jede Kachel ist eine Einstellung. Antippen: Motiv, Übergang, Tempo ändern oder „Gefällt mir nicht“. Gedrückt halten und ziehen: an eine andere Stelle verschieben.</p>
           <div class="cliprow-wrap"><div class="cliprow" id="clipRow"></div></div>
           <div class="row">
             <button class="btn ghost small" id="resetCuts" type="button">Änderungen am Schnitt zurücksetzen</button>
@@ -769,7 +811,8 @@ details.more[open] { display: grid; gap: 16px; }
         </div>
 
         <div class="tabpanel" id="tab-text" role="tabpanel" aria-labelledby="tabbtn-text" hidden>
-          <div class="chips title-chips" role="radiogroup" aria-label="Titel-Varianten" id="titleChips" hidden></div>
+          <div class="field" id="titleField"><span class="field-label">Titel-Vorschläge</span>
+            <div class="chips title-chips" role="radiogroup" aria-label="Titel-Vorschläge" id="titleChips"></div></div>
           <div class="row wrap">
             <button class="btn small" id="addText" type="button">+ Text</button>
             <button class="btn small" id="addPin" type="button">+ Ort</button>
@@ -2583,13 +2626,13 @@ async function scoreFrames(grab, W, H, duration) {
 /** Markiert Beinahe-Duplikate (nur das beste Bild einer Serie bleibt aktiv). */
 function markDuplicates(items) {
   const list = items.filter((m) => m.hash && !m.bad);
-  for (const m of list) m.dupOf = null;
+  for (const m of list) { m.dupOf = null; m.dupD = m.dupDt = undefined; }
   const sorted = list.slice().sort((a, b) => (b.score || 0) - (a.score || 0));
   const kept = [];
   for (const m of sorted) {
     const sameColor = (a, b) => !a.avg || !b.avg || Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) < 40;
     const twin = kept.find((k) => k.kind === m.kind && hamming(k.hash, m.hash) <= 6 && sameColor(k, m) && Math.abs((k.time || 0) - (m.time || 0)) < 10 * 60 * 1000);
-    if (twin) m.dupOf = twin.id; else kept.push(m);
+    if (twin) { m.dupOf = twin.id; m.dupD = hamming(twin.hash, m.hash); m.dupDt = Math.abs((twin.time || 0) - (m.time || 0)); } else kept.push(m);
   }
 }
 
@@ -3091,6 +3134,20 @@ function assignStream(clips, idxs, list, byId) {
   }
 }
 
+/** Vom Nutzer in der Zeitleiste verschobene Aufnahmen: [{ id, before }] (before: null = ans Ende). */
+function applyMoves(list, moves) {
+  if (!moves || !moves.length) return list;
+  let out = list.slice();
+  for (const mv of moves) {
+    const k = out.findIndex((m) => m.id === mv.id);
+    if (k < 0) continue;
+    const [m] = out.splice(k, 1);
+    const at = mv.before ? out.findIndex((x) => x.id === mv.before) : -1;
+    if (at < 0) out.push(m); else out.splice(at, 0, m);
+  }
+  return out;
+}
+
 function orderChrono(list) {
   return list.slice().sort((a, b) => (a.time || 0) - (b.time || 0) || String(a.name || '').localeCompare(String(b.name || ''), 'de', { numeric: true }));
 }
@@ -3257,7 +3314,7 @@ function sceneStarts(list) {
 /**
  * Hauptfunktion.
  * opts: {an, media, settings, overrides, chapters}
- * overrides: {clips: {[i]: {mediaId?, srcOffset?, trans?, speed?}}, texts: [], stickers: []}
+ * overrides: {clips: {[i]: {mediaId?, srcOffset?, trans?, speed?, again?}}, moves: [{id, before}], texts: [], stickers: []}
  */
 /**
  * Plan mit passender Schnittlänge: jede Aufnahme genau einmal – keine Wiederholungen, um Zeit zu füllen,
@@ -3865,7 +3922,8 @@ function planOnce(opts) {
     const hk = intro === 'split' ? null : (settings.hookId && all0.find((m) => m.id === settings.hookId)) || early.filter((m) => m.kind === 'image').sort((a, b) => (b.score || 0) - (a.score || 0))[0] || all0[0] || null;
     // innerhalb eines Moments (wenige Minuten) darf ein Bild aus dem vorigen hervorgehen (Match-Cuts, Farbfluss)
     const flowed = spreadSimilar(flowOrder(all0.filter((m) => m !== hk), s.match !== 'off'));
-    let queue = hk ? [hk, ...flowed] : flowed;
+    // eigene Reihenfolge aus der Zeitleiste geht vor
+    let queue = applyMoves(hk ? [hk, ...flowed] : flowed, overrides.moves);
     const chronoCtx = { s, an, win, fr, level, allOn, intro, outro, rush, reveal, leader, gridPlan, special, splitFit, splitN, barDur, beatDur, isPeakSec, scenes: sceneStarts(all0) };
     let res = layoutChrono(chronoCtx, segs, queue, 0);
     // alle Aufnahmen: fehlen am Ende noch welche, früher etwas mehr zusammenfassen (Split-Screens)
@@ -3880,7 +3938,7 @@ function planOnce(opts) {
       res = layoutChrono(chronoCtx, segs, queue, 0);
     }
     segs = res.segs;
-    chronoInfo = { hook: hk, queue };
+    chronoInfo = { hook: hk && queue[0] === hk ? hk : null, queue };
   }
 
 
@@ -4185,6 +4243,20 @@ function planOnce(opts) {
     const o = ov[c.i];
     if (o && o.mediaId && byId.has(o.mediaId)) { c.mediaId = o.mediaId; delete c.split; }
   }
+  // „Gefällt mir nicht“ bei „Beste Auswahl“: ein anderes, noch ungenutztes Foto aus derselben Zeit
+  if (!allOn) {
+    const used = new Set(clips.map((c) => c.mediaId));
+    for (const c of clips) {
+      const o = ov[c.i];
+      if (!o || !o.again || o.mediaId || c.split || c.grid || c.burst || c.stack || c.rush) continue;
+      const cur = byId.get(c.mediaId);
+      if (!cur || cur.kind !== 'image') continue;
+      const alts = goodMedia(usable, false).filter((m) => m.kind === 'image' && !used.has(m.id))
+        .sort((a, b) => Math.abs((a.time || 0) - (cur.time || 0)) - Math.abs((b.time || 0) - (cur.time || 0))).slice(0, 3);
+      const alt = alts[(o.again - 1) % Math.max(1, alts.length)];
+      if (alt) { used.delete(c.mediaId); c.mediaId = alt.id; used.add(alt.id); c.again = true; }
+    }
+  }
 
   // Raster füllen (Einstieg und im Film): Zielbild in der Mitte (bzw. zuletzt), die übrigen nach Qualität und Nähe, Fotos bevorzugt
   const fillGrid = (gi, gp, intro) => {
@@ -4258,6 +4330,16 @@ function planOnce(opts) {
     if (tr.type !== TR.CUT) lastTr = tr.type;
     if (tr.match) { B.matchCut = true; matches++; }
     if (tr.type === TR.MORPH || tr.type === TR.INK || tr.type === TR.DOUBLE) morphs++;
+    // „Gefällt mir nicht“: ein anderer, zum Songteil passender Übergang
+    const again = (ov[B.i] && ov[B.i].again) || 0;
+    if (again && !fixedCut && B.role !== 'chapter') {
+      const fam = isCalmLabel(B.label) ? [TR.DISSOLVE, TR.LUMA, TR.LEAK, TR.CUT, TR.DRIFT] : [TR.CUT, TR.WHIP, TR.PUSH, TR.ZOOM];
+      const opts = fam.filter((x) => x !== tr.type && (x !== TR.DRIFT || (!A.vid && !B.vid)));
+      const type = opts[(again - 1) % opts.length];
+      const beats = type === TR.CUT ? 0 : isCalmLabel(B.label) ? 1 : 0.5;
+      const dur = Math.min(beatDur * beats, 0.45 * (A.end - A.start), 0.45 * (B.end - B.start));
+      tr = { type: dur < 0.1 ? TR.CUT : type, dur: dur < 0.1 ? 0 : dur, punch: type === TR.CUT && !isCalmLabel(B.label) };
+    }
     if (fixedCut) tr = { type: TR.CUT, dur: 0, punch: false };
     // Szenenwechsel (anderer Ort/Tageszeit): im Drop ein harter Schnitt mit Impuls, in ruhigen Teilen eine Lichtblende
     else if (B.sceneStart && B.role !== 'chapter' && !tr.match && !B.vid && !A.vid) {
@@ -4443,7 +4525,20 @@ function planOnce(opts) {
       const fitFrac = srcAspect > outAspect ? outAspect / srcAspect : srcAspect / outAspect;
       const framed = fitFrac < 0.5 && !c.burst && !c.reveal && !c.pre && !(clips[c.i - 1] && clips[c.i - 1].reveal);
       const role = c.label === 'drop' || c.label === 'chorus' ? 'burst' : 'normal';
-      const mo = imageMotion(rng, m, outAspect, visDur, role, prevDir, panHint(c));
+      // „Gefällt mir nicht“: eigene Zufallsfolge je Versuch, die Richtung wechselt reihum
+      const ag = (ov[c.i] && ov[c.i].again) || 0;
+      // (die gemeinsame Zufallsfolge läuft trotzdem gleich weiter, damit sich die übrigen Einstellungen nicht ändern)
+      const mo0 = imageMotion(rng, m, outAspect, visDur, role, prevDir, panHint(c));
+      let mo = mo0;
+      if (ag) {
+        const r2 = mulberry32(((s.seed >>> 0) ^ (c.i * 977)) >>> 0);
+        const cands = [];
+        for (const h of ['left', 'right', 'down', 'up', null, 'in', 'out']) {
+          const q = imageMotion(r2, m, outAspect, visDur, role, h === 'in' || h === 'out' ? (h === 'in' ? 'out' : 'in') : null, h === 'in' || h === 'out' ? null : h);
+          if (q.dir !== mo0.dir && !cands.some((x) => x.dir === q.dir)) cands.push(q);
+        }
+        if (cands.length) mo = cands[(ag - 1) % cands.length];
+      }
       prevDir = mo.dir;
       c.motion = mo.m;
       c.dir = mo.dir;
@@ -4451,10 +4546,11 @@ function planOnce(opts) {
       const nx = clips[c.i + 1];
       if (nx && nx.sectionChange && !isCalmLabel(nx.label) && isCalmLabel(c.label)) { c.ease = 'in'; mo.m.to.s += 0.035; }
       else if (c.sectionChange && !isCalmLabel(c.label)) c.ease = 'out';
-      if (framed) {
+      // (bei „Gefällt mir nicht“ abwechselnd bildfüllend mit Fahrt oder gerahmt mit umgekehrter Richtung)
+      if (framed && ag % 2 === 0) {
         // schwebt knapp innerhalb des Rahmens und wächst langsam: nichts vom Bild geht verloren
         c.contain = true;
-        c.motion = { from: { s: 0.93, x: 0, y: 0 }, to: { s: 0.975, x: 0, y: 0 } };
+        c.motion = ag ? { from: { s: 0.975, x: 0, y: 0 }, to: { s: 0.93, x: 0, y: 0 } } : { from: { s: 0.93, x: 0, y: 0 }, to: { s: 0.975, x: 0, y: 0 } };
       }
       let pc = c.matchCut ? clips[c.i - 1] : null;
       // gerahmte Bilder haben keinen Ausschnitt, an den die Bewegung anschließen könnte
@@ -4937,9 +5033,23 @@ function fmtMS(s) {
   return Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
 }
 
+/**
+ * Aufnahmen, die sicher nicht in den Film gehören (auch bei „Alle Aufnahmen“): Bildschirmfotos,
+ * fast schwarze oder ausgebrannte Bilder (Taschenauslöser), unscharf und zugleich schlecht belichtet,
+ * und identische Serienbilder innerhalb weniger Sekunden. Liefert den Grund oder ''. Favoriten bleiben immer.
+ */
+function autoOut(m) {
+  if (m.fav || m.kind !== 'image') return '';
+  if (/^(screenshot|bildschirmfoto|screen shot)/i.test(m.name || '')) return 'Bildschirmfoto';
+  if (m.expo != null && m.expo < 0.04 && (m.luma < 0.08 || m.luma > 0.94)) return m.luma < 0.5 ? 'fast schwarz' : 'überbelichtet';
+  if (m.sharp != null && m.sharp < 0.03 && m.expo != null && m.expo < 0.35) return 'unscharf';
+  if (m.dupOf && m.dupD != null && m.dupD <= 2 && m.dupDt != null && m.dupDt < 20000) return 'Serienbild';
+  return '';
+}
+
 /** Verwendbare Aufnahmen; all: auch Serienbilder (Beinahe-Doppel), wenn alle Aufnahmen in den Film sollen. */
 function goodMedia(media, all) {
-  return media.filter((m) => !m.bad && !m.loading && !m.excluded && (all || !m.dupOf || m.fav));
+  return media.filter((m) => !m.bad && !m.loading && !m.excluded && (all ? !autoOut(m) : !m.dupOf || m.fav));
 }
 
 function isLandscape(m) { return m.w && m.h && m.w > m.h * 1.15; }
@@ -5074,8 +5184,30 @@ function autoLook(list, format) {
  * Hauptentscheidung. s = gespeicherte Einstellungen (Werte oder 'auto').
  * Rückgabe: {rs, win, notes, corr}
  */
+/**
+ * Drei Varianten desselben Films. Sie füllen nur, was auf „Auto“ steht (eigene Entscheidungen bleiben),
+ * und mischen mit eigenem Zufall, damit Bewegungen und Übergänge wirklich anders ausfallen.
+ */
+const VARIANTS = {
+  ruhig: { label: 'Ruhig', set: { pace: 'ruhig', echo: 'off', mini: 'off', accent: 'off', drift: 'on', color: 'bloom', stack: 'on' }, intro: 'cinema', seed: 0x5a17 },
+  ausgewogen: { label: 'Ausgewogen', set: {}, seed: 0 },
+  energisch: { label: 'Energisch', set: { pace: 'schnell', echo: 'on', mini: 'on', accent: 'kicksnare', drift: 'off', color: 'pop', stack: 'off' }, intro: 'rush', burst: true, seed: 0x3e9b },
+};
+function withVariant(s) {
+  const v = VARIANTS[s.variant];
+  if (!v || s.variant === 'ausgewogen') return s;
+  const o = { ...s, seed: ((s.seed >>> 0) ^ v.seed) >>> 0 };
+  for (const [k, val] of Object.entries(v.set)) if (o[k] == null || o[k] === 'auto') o[k] = val;
+  if (s.variant === 'ruhig' && o.motionAmt === 'medium') o.motionAmt = 'soft';
+  if (s.variant === 'energisch' && o.motionAmt === 'medium') o.motionAmt = 'strong';
+  if (v.intro && o.intro === 'auto') o.intro = v.intro === 'cinema' && !(s.title && s.title.trim() && s.showTitle !== false) ? 'hook' : v.intro;
+  if (v.burst && o.burst === 'off') { o.burst = 'drop'; o.ramp = 'drop'; }
+  return o;
+}
+
 function direct(an, media, s, chapters, flight) {
   const notes = [];
+  s = withVariant(s);
   const rs = { ...s };
   const list = goodMedia(media, s.allMedia !== 'off' && !(chapters && chapters.length) && !flight);
   const all = media.filter((m) => !m.bad && !m.loading);
@@ -9243,6 +9375,7 @@ function normalizeSettings(st, defaults) {
     pre: pick1(s.pre, ['off', 'countdown', 'rewind'], 'off'),
     target: pick1(s.target, ['story', 'reel'], 'story'),
     allMedia: pick1(s.allMedia, ['on', 'off'], 'on'),
+    variant: pick1(s.variant, ['ausgewogen', 'ruhig', 'energisch'], 'ausgewogen'),
     match: pick1(s.match, ['auto', 'off'], 'auto'),
     morph: pick1(s.morph, ['off', 'on'], 'off'),
     ramp: pick1(s.ramp, ['off', 'drop'], 'off'),
@@ -9279,7 +9412,7 @@ function normalizeSettings(st, defaults) {
 }
 
 /* ---------- Stil-Vorlage: ein Stil für alle Filme der Reise ---------- */
-const STYLE_KEYS = ['look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'allMedia', 'color', 'accent', 'parallax', 'drift', 'echo', 'stack', 'mini', 'chapKnock', 'chapMap', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
+const STYLE_KEYS = ['variant', 'look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'allMedia', 'color', 'accent', 'parallax', 'drift', 'echo', 'stack', 'mini', 'chapKnock', 'chapMap', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
 const styleOf = (st) => Object.fromEntries(STYLE_KEYS.map((k) => [k, st[k]]));
 /** Einstellungen für neue Filme: Standard, darüber die Vorlage der Reise */
 function baseSettings(defaults) {
@@ -10831,7 +10964,7 @@ function renderMaterial() {
     return `<button class="${cls}" type="button" data-id="${esc(m.id)}" aria-label="${esc(m.name)}${m.fav ? ', Favorit' : ''}${isStart ? ', Startbild' : ''}">
       ${m.thumb ? `<img src="${m.thumb}" alt="" draggable="false">` : ''}
       ${m.kind === 'video' && m.duration ? `<span class="badge${tooLong.has(m.id) ? ' warn' : ''}">▶ ${m.trim ? '✂ ' + fmtClock(videoSpan(m)) : fmtClock(m.duration)}</span>` : ''}
-      ${dropped.has(m.id) && !m.excluded ? '<span class="out">nicht im Film</span>' : ''}
+      ${!m.excluded && !m.bad && autoOut(m) ? `<span class="out">aussortiert · ${autoOut(m)}</span>` : dropped.has(m.id) && !m.excluded ? '<span class="out">nicht im Film</span>' : ''}
       ${m.fav ? '<span class="flag fav">♥</span>' : ''}
       ${m.kind === 'video' && m.sound ? '<span class="flag snd" aria-label="Originalton an"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z" fill="currentColor"/><path d="M15.5 9a4 4 0 010 6M17.8 6.8a7 7 0 010 10.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>' : ''}
       ${isStart ? '<span class="flag start">START</span>' : ''}
@@ -11022,6 +11155,7 @@ function renderStyle() {
   setRadio($('targetChips'), st.target);
   $('targetChips').hidden = st.format !== '9:16';
   setRadio($('allChips'), st.allMedia);
+  setRadio($('variantChips'), st.variant);
   $('allChips').hidden = S.ctx.kind === 'bestof' || isFlight(S.ctx.rec);
   $('capHint').textContent = capacityText();
   setRadio($('preChips'), st.pre);
@@ -11069,6 +11203,8 @@ function capacityText() {
   const parts = [`Zu diesem Song passen in ${c.story ? 'eine Story' : c.label === 'Reel' ? 'ein Reel' : 'diesen Film'} etwa ${c.imgFit} Fotos${c.videos ? ` neben ${c.videos} ${c.videos === 1 ? 'Video' : 'Videos'}` : ''}.`];
   if (c.droppedIds.length) parts.push(`${c.droppedIds.length} ${c.droppedIds.length === 1 ? 'Aufnahme bleibt' : 'Aufnahmen bleiben'} draußen (${len} voll)${c.story ? '; als Reel passen mehr' : ''}.`);
   else parts.push(`Alle ${c.images + c.videos} Aufnahmen sind im Film (${len}), in ihrer Aufnahme-Reihenfolge, keine doppelt.`);
+  const outs = S.ctx.media.filter((m) => !m.excluded && !m.bad && autoOut(m));
+  if (outs.length && S.plan.resolved.allMedia !== 'off') parts.push(`${outs.length} ${outs.length === 1 ? 'Aufnahme hat' : 'Aufnahmen hat'} die App aussortiert (${[...new Set(outs.map(autoOut))].join(', ')}); als Favorit (♥) kommt sie trotzdem hinein.`);
   const pk = c.packed || {};
   const how = [pk.split ? `${pk.split} Fotos im Split-Screen` : '', pk.vsplit ? `${pk.vsplit} Videos gleichzeitig` : '', pk.burst ? `${pk.burst} in Foto-Serien` : '', pk.stack ? `${pk.stack} im Polaroid-Stapel` : '', pk.grid ? `${pk.grid} im Raster` : ''].filter(Boolean);
   if (how.length) parts.push(`Verdichtet: ${how.join(', ')}.`);
@@ -11151,6 +11287,85 @@ function renderCut() {
   }).join('');
 }
 
+/**
+ * Zeitleiste zum Ziehen: Kachel gedrückt halten, dann an eine andere Stelle ziehen.
+ * Die Aufnahme wandert in der Reihenfolge dorthin; Schnitte und Songbogen plant die Regie neu.
+ */
+function setupClipDrag() {
+  const row = $('clipRow'), wrap = row.parentElement;
+  let st = null;
+  const reset = () => {
+    if (!st) return;
+    clearTimeout(st.timer);
+    if (st.el) st.el.classList.remove('dragging');
+    for (const x of row.querySelectorAll('.drop-before,.drop-after')) x.classList.remove('drop-before', 'drop-after');
+    cancelAnimationFrame(st.raf);
+    st = null;
+  };
+  const target = (x, y) => {
+    const el = document.elementFromPoint(x, y);
+    const c = el && el.closest && el.closest('[data-clip]');
+    if (!c || c === st.el || !row.contains(c)) return null;
+    const r = c.getBoundingClientRect();
+    return { c, after: x > r.left + r.width / 2 };
+  };
+  row.addEventListener('pointerdown', (e) => {
+    const el = e.target.closest('[data-clip]');
+    if (!el || !S.plan || S.exporting || S.ctx.kind !== 'place' || isFlight(S.ctx.rec)) return;
+    reset();
+    st = { el, id: e.pointerId, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, on: false };
+    st.timer = setTimeout(() => {
+      if (!st) return;
+      st.on = true;
+      el.classList.add('dragging');
+      try { el.setPointerCapture(st.id); } catch (err) { /* ignore */ }
+      if (navigator.vibrate) navigator.vibrate(8);
+      // am Rand automatisch weiterscrollen
+      const tick = () => {
+        if (!st || !st.on) return;
+        const r = wrap.getBoundingClientRect();
+        const edge = 44;
+        if (st.x < r.left + edge) wrap.scrollLeft -= 9; else if (st.x > r.right - edge) wrap.scrollLeft += 9;
+        st.raf = requestAnimationFrame(tick);
+      };
+      tick();
+    }, 320);
+  });
+  row.addEventListener('pointermove', (e) => {
+    if (!st || e.pointerId !== st.id) return;
+    st.x = e.clientX; st.y = e.clientY;
+    if (!st.on) { if (Math.hypot(e.clientX - st.x0, e.clientY - st.y0) > 8) reset(); return; }
+    for (const x of row.querySelectorAll('.drop-before,.drop-after')) x.classList.remove('drop-before', 'drop-after');
+    const tg = target(e.clientX, e.clientY);
+    if (tg) tg.c.classList.add(tg.after ? 'drop-after' : 'drop-before');
+  });
+  // iOS: während des Ziehens nicht scrollen
+  row.addEventListener('touchmove', (e) => { if (st && st.on) e.preventDefault(); }, { passive: false });
+  const end = (e) => {
+    if (!st || e.pointerId !== st.id) return;
+    const was = st.on, from = st.el;
+    const tg = was ? target(e.clientX, e.clientY) : null;
+    reset();
+    if (!was) return;
+    setupClipDrag.justDropped = true;
+    setTimeout(() => { setupClipDrag.justDropped = false; }, 350);
+    if (!tg || e.type === 'pointercancel') return;
+    const clips = S.plan.clips;
+    const a = clips[+from.dataset.clip], b = clips[+tg.c.dataset.clip];
+    const nextIdx = +tg.c.dataset.clip + (tg.after ? 1 : 0);
+    const bef = tg.after ? clips.slice(nextIdx).find((c) => c.mediaId && c.mediaId !== a.mediaId) : b;
+    if (!a || !a.mediaId || (bef && bef.mediaId === a.mediaId)) return;
+    const ov = S.ctx.rec.overrides;
+    ov.moves = (ov.moves || []).filter((mv) => mv.id !== a.mediaId).concat([{ id: a.mediaId, before: bef ? bef.mediaId : null }]);
+    commit(); savePlaceSoon();
+    rebuild().then(() => { const k = S.plan.clips.findIndex((c) => c.mediaId === a.mediaId); if (k >= 0) { const t = (S.plan.clips[k].start + S.plan.clips[k].end) / 2; engine.t = t; engine.renderStill(t); updateTime(t); } });
+    toast('Verschoben. Die Regie legt die Schnitte neu auf den Song.');
+  };
+  row.addEventListener('pointerup', end);
+  row.addEventListener('pointercancel', end);
+  row.addEventListener('contextmenu', (e) => { if (st) e.preventDefault(); });
+}
+
 function openClipSheet(i) {
   const plan = S.plan, ctx = S.ctx;
   const c = plan.clips[i];
@@ -11172,6 +11387,7 @@ function openClipSheet(i) {
   const body = openSheet(`
     <h3 id="sheetTitle">Einstellung ${i + 1} · ${fmtClock(c.start)}–${fmtClock(c.end)}</h3>
     <p class="hint">${SECTION_DE[c.label] || ''} · ${(c.end - c.start).toFixed(2).replace('.', ',')} s${c.freezeAt != null ? ' · friert im Stopp ein' : ''}</p>
+    <button class="btn small again-btn" data-act="again" type="button">Gefällt mir nicht · anders versuchen</button>
     <div class="field"><span class="field-label">Motiv</span>
       <div class="pick-grid" role="radiogroup" aria-label="Motiv wählen">${usable.map((x) => `<button type="button" role="radio" data-media="${esc(x.id)}" aria-checked="${x.id === c.mediaId}" aria-label="${esc(x.name)}"><img src="${x.thumb || ''}" alt=""></button>`).join('')}</div>
     </div>
@@ -11219,6 +11435,13 @@ function openClipSheet(i) {
       addOverlay('text', { anchor: { mediaId: c.mediaId, idx: i }, start: c.start, end: c.end, anim: 'fade', style: 'editorial', y: 0.7 });
       return;
     }
+    if (a && a.dataset.act === 'again') {
+      ov.again = (ov.again || 0) + 1;
+      const img = m && m.kind === 'image';
+      toast(img && S.plan.resolved.allMedia === 'off' && !ov.mediaId ? 'Anderes Foto aus derselben Zeit, neue Bewegung und neuer Übergang.' : img ? 'Neue Kamerabewegung und neuer Übergang. Nochmal tippen für die nächste Idee.' : 'Neuer Übergang. Nochmal tippen für die nächste Idee.');
+      changed();
+      return;
+    }
     if (a && a.dataset.act === 'reset') { delete ctx.rec.overrides.clips[i]; closeSheet(); changed(); }
     if (a && a.dataset.act === 'done') closeSheet();
   });
@@ -11251,14 +11474,14 @@ function titleVariants(rec, media) {
   const season = ['Winter', 'Winter', 'Frühling', 'Frühling', 'Frühling', 'Sommer', 'Sommer', 'Sommer', 'Herbst', 'Herbst', 'Herbst', 'Winter'][a.getMonth()];
   const yy = String(a.getFullYear()).slice(2);
   const story = days === 1 ? 'Ein Tag in ' : days <= 3 && [5, 6, 0].includes(a.getDay()) ? 'Wochenende in ' : 'Tage in ';
-  return [[name, range], [`${name} ’${yy}`, `${season} · ${days} ${days === 1 ? 'Tag' : 'Tage'}`], [story + name, monthLabel(ts)]];
+  return [[name, range], [`${name} ’${yy}`, days === 1 ? `${a.toLocaleDateString('de-DE', { weekday: 'long' })} im ${season}` : `${season} · ${days} Tage`], [story + name, monthLabel(ts)]];
 }
 
 function renderTitleChips() {
   const box = $('titleChips');
   const rec = S.ctx && S.ctx.rec;
   const vs = rec && S.ctx.kind === 'place' && !isFlight(rec) ? titleVariants(rec, S.ctx.media) : [];
-  box.hidden = !vs.length;
+  $('titleField').hidden = !vs.length;
   box.innerHTML = vs.map(([t, sub], i) => `<button type="button" role="radio" aria-checked="${rec.name === t && (rec.sub || '') === sub}" data-i="${i}"><b>${esc(t)}</b>${sub ? `<span>${esc(sub)}</span>` : ''}</button>`).join('');
   box._vs = vs;
 }
@@ -11787,6 +12010,7 @@ async function init() {
   bindSetting('motionAmtChips', 'motionAmt');
   bindSetting('drumChips', 'accent');
   bindSetting('allChips', 'allMedia');
+  bindSetting('variantChips', 'variant');
   bindSetting('colorChips', 'color');
   bindSetting('preChips', 'pre');
   bindSetting('targetChips', 'target');
@@ -11834,8 +12058,14 @@ async function init() {
     const txt = S.plan ? igStart() : '';
     try { await navigator.clipboard.writeText(txt); toast(`Startzeit ${txt} kopiert.`); } catch (e) { toast(`Startzeit: ${txt}`); }
   });
-  $('clipRow').addEventListener('click', (e) => { const c = e.target.closest('[data-clip]'); if (c) openClipSheet(+c.dataset.clip); });
-  $('resetCuts').addEventListener('click', () => { S.ctx.rec.overrides.clips = {}; commit(); savePlaceSoon(); rebuild(); toast('Schnitt zurückgesetzt.'); });
+  $('clipRow').addEventListener('click', (e) => { const c = e.target.closest('[data-clip]'); if (c && !setupClipDrag.justDropped) openClipSheet(+c.dataset.clip); });
+  setupClipDrag();
+  // aufgeklappte Gruppen im Look-Tab merken (nur Bequemlichkeit, fehlt der Speicher, bleiben sie zu)
+  for (const d of document.querySelectorAll('details.group')) {
+    try { d.open = localStorage.getItem('cb.grp.' + d.id) === '1'; } catch (err) { /* ignore */ }
+    d.addEventListener('toggle', () => { try { localStorage.setItem('cb.grp.' + d.id, d.open ? '1' : '0'); } catch (err) { /* ignore */ } });
+  }
+  $('resetCuts').addEventListener('click', () => { S.ctx.rec.overrides.clips = {}; delete S.ctx.rec.overrides.moves; commit(); savePlaceSoon(); rebuild(); toast('Schnitt zurückgesetzt.'); });
   $('addText').addEventListener('click', () => addOverlay('text'));
   $('addPin').addEventListener('click', () => addOverlay('pin'));
   $('addDate').addEventListener('click', () => addOverlay('date'));

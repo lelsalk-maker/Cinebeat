@@ -116,6 +116,7 @@ await page.click('#backBtn'); await page.waitForSelector('.place');
 // Stil-Vorlage: in Lissabon speichern, auf alle übertragen, neuer Ort übernimmt sie
 await page.evaluate(async () => { await CineBeat.openPlace(CineBeat.S.places.find((p) => p.name === 'Lissabon').id); });
 await page.waitForFunction(() => CineBeat.S.plan && document.getElementById('busy').hidden, null, { timeout: 90000 });
+await page.evaluate(() => document.querySelectorAll('details.group').forEach((d) => { d.open = true; }));
 await page.click('#lookGrid [data-v="golden"]'); await page.waitForTimeout(400);
 await page.click('#fontChips [data-v="editorial"]'); await page.waitForTimeout(400);
 await page.click('#motionChips [data-v="sway"]'); await page.waitForTimeout(400);

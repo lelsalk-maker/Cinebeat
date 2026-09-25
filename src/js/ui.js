@@ -36,6 +36,7 @@ function normalizeSettings(st, defaults) {
     pre: pick1(s.pre, ['off', 'countdown', 'rewind'], 'off'),
     target: pick1(s.target, ['story', 'reel'], 'story'),
     allMedia: pick1(s.allMedia, ['on', 'off'], 'on'),
+    variant: pick1(s.variant, ['ausgewogen', 'ruhig', 'energisch'], 'ausgewogen'),
     match: pick1(s.match, ['auto', 'off'], 'auto'),
     morph: pick1(s.morph, ['off', 'on'], 'off'),
     ramp: pick1(s.ramp, ['off', 'drop'], 'off'),
@@ -72,7 +73,7 @@ function normalizeSettings(st, defaults) {
 }
 
 /* ---------- Stil-Vorlage: ein Stil für alle Filme der Reise ---------- */
-const STYLE_KEYS = ['look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'allMedia', 'color', 'accent', 'parallax', 'drift', 'echo', 'stack', 'mini', 'chapKnock', 'chapMap', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
+const STYLE_KEYS = ['variant', 'look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'allMedia', 'color', 'accent', 'parallax', 'drift', 'echo', 'stack', 'mini', 'chapKnock', 'chapMap', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
 const styleOf = (st) => Object.fromEntries(STYLE_KEYS.map((k) => [k, st[k]]));
 /** Einstellungen für neue Filme: Standard, darüber die Vorlage der Reise */
 function baseSettings(defaults) {
@@ -1624,7 +1625,7 @@ function renderMaterial() {
     return `<button class="${cls}" type="button" data-id="${esc(m.id)}" aria-label="${esc(m.name)}${m.fav ? ', Favorit' : ''}${isStart ? ', Startbild' : ''}">
       ${m.thumb ? `<img src="${m.thumb}" alt="" draggable="false">` : ''}
       ${m.kind === 'video' && m.duration ? `<span class="badge${tooLong.has(m.id) ? ' warn' : ''}">▶ ${m.trim ? '✂ ' + fmtClock(videoSpan(m)) : fmtClock(m.duration)}</span>` : ''}
-      ${dropped.has(m.id) && !m.excluded ? '<span class="out">nicht im Film</span>' : ''}
+      ${!m.excluded && !m.bad && autoOut(m) ? `<span class="out">aussortiert · ${autoOut(m)}</span>` : dropped.has(m.id) && !m.excluded ? '<span class="out">nicht im Film</span>' : ''}
       ${m.fav ? '<span class="flag fav">♥</span>' : ''}
       ${m.kind === 'video' && m.sound ? '<span class="flag snd" aria-label="Originalton an"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z" fill="currentColor"/><path d="M15.5 9a4 4 0 010 6M17.8 6.8a7 7 0 010 10.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>' : ''}
       ${isStart ? '<span class="flag start">START</span>' : ''}
@@ -1815,6 +1816,7 @@ function renderStyle() {
   setRadio($('targetChips'), st.target);
   $('targetChips').hidden = st.format !== '9:16';
   setRadio($('allChips'), st.allMedia);
+  setRadio($('variantChips'), st.variant);
   $('allChips').hidden = S.ctx.kind === 'bestof' || isFlight(S.ctx.rec);
   $('capHint').textContent = capacityText();
   setRadio($('preChips'), st.pre);
@@ -1862,6 +1864,8 @@ function capacityText() {
   const parts = [`Zu diesem Song passen in ${c.story ? 'eine Story' : c.label === 'Reel' ? 'ein Reel' : 'diesen Film'} etwa ${c.imgFit} Fotos${c.videos ? ` neben ${c.videos} ${c.videos === 1 ? 'Video' : 'Videos'}` : ''}.`];
   if (c.droppedIds.length) parts.push(`${c.droppedIds.length} ${c.droppedIds.length === 1 ? 'Aufnahme bleibt' : 'Aufnahmen bleiben'} draußen (${len} voll)${c.story ? '; als Reel passen mehr' : ''}.`);
   else parts.push(`Alle ${c.images + c.videos} Aufnahmen sind im Film (${len}), in ihrer Aufnahme-Reihenfolge, keine doppelt.`);
+  const outs = S.ctx.media.filter((m) => !m.excluded && !m.bad && autoOut(m));
+  if (outs.length && S.plan.resolved.allMedia !== 'off') parts.push(`${outs.length} ${outs.length === 1 ? 'Aufnahme hat' : 'Aufnahmen hat'} die App aussortiert (${[...new Set(outs.map(autoOut))].join(', ')}); als Favorit (♥) kommt sie trotzdem hinein.`);
   const pk = c.packed || {};
   const how = [pk.split ? `${pk.split} Fotos im Split-Screen` : '', pk.vsplit ? `${pk.vsplit} Videos gleichzeitig` : '', pk.burst ? `${pk.burst} in Foto-Serien` : '', pk.stack ? `${pk.stack} im Polaroid-Stapel` : '', pk.grid ? `${pk.grid} im Raster` : ''].filter(Boolean);
   if (how.length) parts.push(`Verdichtet: ${how.join(', ')}.`);
@@ -1944,6 +1948,85 @@ function renderCut() {
   }).join('');
 }
 
+/**
+ * Zeitleiste zum Ziehen: Kachel gedrückt halten, dann an eine andere Stelle ziehen.
+ * Die Aufnahme wandert in der Reihenfolge dorthin; Schnitte und Songbogen plant die Regie neu.
+ */
+function setupClipDrag() {
+  const row = $('clipRow'), wrap = row.parentElement;
+  let st = null;
+  const reset = () => {
+    if (!st) return;
+    clearTimeout(st.timer);
+    if (st.el) st.el.classList.remove('dragging');
+    for (const x of row.querySelectorAll('.drop-before,.drop-after')) x.classList.remove('drop-before', 'drop-after');
+    cancelAnimationFrame(st.raf);
+    st = null;
+  };
+  const target = (x, y) => {
+    const el = document.elementFromPoint(x, y);
+    const c = el && el.closest && el.closest('[data-clip]');
+    if (!c || c === st.el || !row.contains(c)) return null;
+    const r = c.getBoundingClientRect();
+    return { c, after: x > r.left + r.width / 2 };
+  };
+  row.addEventListener('pointerdown', (e) => {
+    const el = e.target.closest('[data-clip]');
+    if (!el || !S.plan || S.exporting || S.ctx.kind !== 'place' || isFlight(S.ctx.rec)) return;
+    reset();
+    st = { el, id: e.pointerId, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, on: false };
+    st.timer = setTimeout(() => {
+      if (!st) return;
+      st.on = true;
+      el.classList.add('dragging');
+      try { el.setPointerCapture(st.id); } catch (err) { /* ignore */ }
+      if (navigator.vibrate) navigator.vibrate(8);
+      // am Rand automatisch weiterscrollen
+      const tick = () => {
+        if (!st || !st.on) return;
+        const r = wrap.getBoundingClientRect();
+        const edge = 44;
+        if (st.x < r.left + edge) wrap.scrollLeft -= 9; else if (st.x > r.right - edge) wrap.scrollLeft += 9;
+        st.raf = requestAnimationFrame(tick);
+      };
+      tick();
+    }, 320);
+  });
+  row.addEventListener('pointermove', (e) => {
+    if (!st || e.pointerId !== st.id) return;
+    st.x = e.clientX; st.y = e.clientY;
+    if (!st.on) { if (Math.hypot(e.clientX - st.x0, e.clientY - st.y0) > 8) reset(); return; }
+    for (const x of row.querySelectorAll('.drop-before,.drop-after')) x.classList.remove('drop-before', 'drop-after');
+    const tg = target(e.clientX, e.clientY);
+    if (tg) tg.c.classList.add(tg.after ? 'drop-after' : 'drop-before');
+  });
+  // iOS: während des Ziehens nicht scrollen
+  row.addEventListener('touchmove', (e) => { if (st && st.on) e.preventDefault(); }, { passive: false });
+  const end = (e) => {
+    if (!st || e.pointerId !== st.id) return;
+    const was = st.on, from = st.el;
+    const tg = was ? target(e.clientX, e.clientY) : null;
+    reset();
+    if (!was) return;
+    setupClipDrag.justDropped = true;
+    setTimeout(() => { setupClipDrag.justDropped = false; }, 350);
+    if (!tg || e.type === 'pointercancel') return;
+    const clips = S.plan.clips;
+    const a = clips[+from.dataset.clip], b = clips[+tg.c.dataset.clip];
+    const nextIdx = +tg.c.dataset.clip + (tg.after ? 1 : 0);
+    const bef = tg.after ? clips.slice(nextIdx).find((c) => c.mediaId && c.mediaId !== a.mediaId) : b;
+    if (!a || !a.mediaId || (bef && bef.mediaId === a.mediaId)) return;
+    const ov = S.ctx.rec.overrides;
+    ov.moves = (ov.moves || []).filter((mv) => mv.id !== a.mediaId).concat([{ id: a.mediaId, before: bef ? bef.mediaId : null }]);
+    commit(); savePlaceSoon();
+    rebuild().then(() => { const k = S.plan.clips.findIndex((c) => c.mediaId === a.mediaId); if (k >= 0) { const t = (S.plan.clips[k].start + S.plan.clips[k].end) / 2; engine.t = t; engine.renderStill(t); updateTime(t); } });
+    toast('Verschoben. Die Regie legt die Schnitte neu auf den Song.');
+  };
+  row.addEventListener('pointerup', end);
+  row.addEventListener('pointercancel', end);
+  row.addEventListener('contextmenu', (e) => { if (st) e.preventDefault(); });
+}
+
 function openClipSheet(i) {
   const plan = S.plan, ctx = S.ctx;
   const c = plan.clips[i];
@@ -1965,6 +2048,7 @@ function openClipSheet(i) {
   const body = openSheet(`
     <h3 id="sheetTitle">Einstellung ${i + 1} · ${fmtClock(c.start)}–${fmtClock(c.end)}</h3>
     <p class="hint">${SECTION_DE[c.label] || ''} · ${(c.end - c.start).toFixed(2).replace('.', ',')} s${c.freezeAt != null ? ' · friert im Stopp ein' : ''}</p>
+    <button class="btn small again-btn" data-act="again" type="button">Gefällt mir nicht · anders versuchen</button>
     <div class="field"><span class="field-label">Motiv</span>
       <div class="pick-grid" role="radiogroup" aria-label="Motiv wählen">${usable.map((x) => `<button type="button" role="radio" data-media="${esc(x.id)}" aria-checked="${x.id === c.mediaId}" aria-label="${esc(x.name)}"><img src="${x.thumb || ''}" alt=""></button>`).join('')}</div>
     </div>
@@ -2012,6 +2096,13 @@ function openClipSheet(i) {
       addOverlay('text', { anchor: { mediaId: c.mediaId, idx: i }, start: c.start, end: c.end, anim: 'fade', style: 'editorial', y: 0.7 });
       return;
     }
+    if (a && a.dataset.act === 'again') {
+      ov.again = (ov.again || 0) + 1;
+      const img = m && m.kind === 'image';
+      toast(img && S.plan.resolved.allMedia === 'off' && !ov.mediaId ? 'Anderes Foto aus derselben Zeit, neue Bewegung und neuer Übergang.' : img ? 'Neue Kamerabewegung und neuer Übergang. Nochmal tippen für die nächste Idee.' : 'Neuer Übergang. Nochmal tippen für die nächste Idee.');
+      changed();
+      return;
+    }
     if (a && a.dataset.act === 'reset') { delete ctx.rec.overrides.clips[i]; closeSheet(); changed(); }
     if (a && a.dataset.act === 'done') closeSheet();
   });
@@ -2044,14 +2135,14 @@ function titleVariants(rec, media) {
   const season = ['Winter', 'Winter', 'Frühling', 'Frühling', 'Frühling', 'Sommer', 'Sommer', 'Sommer', 'Herbst', 'Herbst', 'Herbst', 'Winter'][a.getMonth()];
   const yy = String(a.getFullYear()).slice(2);
   const story = days === 1 ? 'Ein Tag in ' : days <= 3 && [5, 6, 0].includes(a.getDay()) ? 'Wochenende in ' : 'Tage in ';
-  return [[name, range], [`${name} ’${yy}`, `${season} · ${days} ${days === 1 ? 'Tag' : 'Tage'}`], [story + name, monthLabel(ts)]];
+  return [[name, range], [`${name} ’${yy}`, days === 1 ? `${a.toLocaleDateString('de-DE', { weekday: 'long' })} im ${season}` : `${season} · ${days} Tage`], [story + name, monthLabel(ts)]];
 }
 
 function renderTitleChips() {
   const box = $('titleChips');
   const rec = S.ctx && S.ctx.rec;
   const vs = rec && S.ctx.kind === 'place' && !isFlight(rec) ? titleVariants(rec, S.ctx.media) : [];
-  box.hidden = !vs.length;
+  $('titleField').hidden = !vs.length;
   box.innerHTML = vs.map(([t, sub], i) => `<button type="button" role="radio" aria-checked="${rec.name === t && (rec.sub || '') === sub}" data-i="${i}"><b>${esc(t)}</b>${sub ? `<span>${esc(sub)}</span>` : ''}</button>`).join('');
   box._vs = vs;
 }
@@ -2580,6 +2671,7 @@ async function init() {
   bindSetting('motionAmtChips', 'motionAmt');
   bindSetting('drumChips', 'accent');
   bindSetting('allChips', 'allMedia');
+  bindSetting('variantChips', 'variant');
   bindSetting('colorChips', 'color');
   bindSetting('preChips', 'pre');
   bindSetting('targetChips', 'target');
@@ -2627,8 +2719,14 @@ async function init() {
     const txt = S.plan ? igStart() : '';
     try { await navigator.clipboard.writeText(txt); toast(`Startzeit ${txt} kopiert.`); } catch (e) { toast(`Startzeit: ${txt}`); }
   });
-  $('clipRow').addEventListener('click', (e) => { const c = e.target.closest('[data-clip]'); if (c) openClipSheet(+c.dataset.clip); });
-  $('resetCuts').addEventListener('click', () => { S.ctx.rec.overrides.clips = {}; commit(); savePlaceSoon(); rebuild(); toast('Schnitt zurückgesetzt.'); });
+  $('clipRow').addEventListener('click', (e) => { const c = e.target.closest('[data-clip]'); if (c && !setupClipDrag.justDropped) openClipSheet(+c.dataset.clip); });
+  setupClipDrag();
+  // aufgeklappte Gruppen im Look-Tab merken (nur Bequemlichkeit, fehlt der Speicher, bleiben sie zu)
+  for (const d of document.querySelectorAll('details.group')) {
+    try { d.open = localStorage.getItem('cb.grp.' + d.id) === '1'; } catch (err) { /* ignore */ }
+    d.addEventListener('toggle', () => { try { localStorage.setItem('cb.grp.' + d.id, d.open ? '1' : '0'); } catch (err) { /* ignore */ } });
+  }
+  $('resetCuts').addEventListener('click', () => { S.ctx.rec.overrides.clips = {}; delete S.ctx.rec.overrides.moves; commit(); savePlaceSoon(); rebuild(); toast('Schnitt zurückgesetzt.'); });
   $('addText').addEventListener('click', () => addOverlay('text'));
   $('addPin').addEventListener('click', () => addOverlay('pin'));
   $('addDate').addEventListener('click', () => addOverlay('date'));

@@ -116,7 +116,7 @@
             <h2 id="regieTitle"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.6L18.5 9l-4.7 1.4L12 15l-1.8-4.6L5.5 9l4.7-1.4z" fill="currentColor"/><path d="M18 15l.8 2 2.2.8-2.2.8L18 21l-.8-2.4-2.2-.8 2.2-.8z" fill="currentColor"/></svg>Auto-Regie</h2>
             <button class="btn ghost small" id="remixBtn" type="button">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h11l-3-3M20 17H9l3 3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              Variante
+              Neu mischen
             </button>
           </div>
           <ul class="regie-notes" id="regieNotes"></ul>
@@ -134,6 +134,14 @@
           <div class="style-card">
             <div class="style-text"><strong>Stil-Vorlage</strong><span id="styleInfo"></span></div>
             <button class="btn small" id="styleBtn" type="button">Vorlage</button>
+          </div>
+          <div class="field">
+            <span class="field-label" id="varLabel">Variante</span>
+            <div class="formats variants" role="radiogroup" aria-labelledby="varLabel" id="variantChips">
+              <button type="button" role="radio" data-v="ruhig"><b>Ruhig</b><span>lange Bilder, weich</span></button>
+              <button type="button" role="radio" data-v="ausgewogen"><b>Ausgewogen</b><span>wie der Song</span></button>
+              <button type="button" role="radio" data-v="energisch"><b>Energisch</b><span>schnell, Effekte</span></button>
+            </div>
           </div>
           <div class="field">
             <span class="field-label" id="fmtLabel">Wofür?</span>
@@ -166,156 +174,174 @@
             <span class="field-label">Look</span>
             <div class="looks" role="radiogroup" aria-label="Farblook" id="lookGrid"></div>
           </div>
-          <div class="field" id="preField">
-            <span class="field-label" id="preLabel">Vorspann</span>
-            <div class="chips" role="radiogroup" aria-labelledby="preLabel" id="preChips">
-              <button type="button" role="radio" data-v="off">Keiner</button>
-              <button type="button" role="radio" data-v="countdown">Countdown 3 · 2 · 1</button>
-              <button type="button" role="radio" data-v="rewind">Rewind</button>
-            </div>
-            <p class="hint small" id="preHint">Läuft vor dem Einstieg und lässt sich mit jedem Einstieg kombinieren, z. B. Countdown und danach das 9er-Raster.</p>
-          </div>
-          <div class="field">
-            <span class="field-label" id="introLabel">Einstieg</span>
-            <div class="chips" role="radiogroup" aria-labelledby="introLabel" id="introChips">
-              <button type="button" role="radio" data-v="auto">Auto</button>
-              <button type="button" role="radio" data-v="reveal">Aufblende</button>
-              <button type="button" role="radio" data-v="rush">Bilderflut</button>
-              <button type="button" role="radio" data-v="countdown">Countdown</button>
-              <button type="button" role="radio" data-v="grid">9er-Raster</button>
-              <button type="button" role="radio" data-v="knockout">Durch den Namen</button>
-              <button type="button" role="radio" data-v="city">Ortsname</button>
-               <button type="button" role="radio" data-v="cinema">Titelkarte</button>
-              <button type="button" role="radio" data-v="hook">Stärkstes Bild</button>
-              <button type="button" role="radio" data-v="type">Wort für Wort</button>
-              <button type="button" role="radio" data-v="split">Split-Screen</button>
-            </div>
-          </div>
-          <div class="field">
-            <span class="field-label" id="outroLabel">Ende</span>
-            <div class="chips" role="radiogroup" aria-labelledby="outroLabel" id="outroChips">
-              <button type="button" role="radio" data-v="auto">Auto</button>
-              <button type="button" role="radio" data-v="credits">Schlusstitel</button>
-              <button type="button" role="radio" data-v="loop">Endlos-Loop</button>
-              <button type="button" role="radio" data-v="freeze">Standbild</button>
-              <button type="button" role="radio" data-v="strip">Filmstreifen</button>
-              <button type="button" role="radio" data-v="split">Split-Screen</button>
-            </div>
-          </div>
-          <div class="field">
-            <span class="field-label" id="fontLabel">Schrift der Titel</span>
-            <div class="chips font-chips" role="radiogroup" aria-labelledby="fontLabel" id="fontChips"></div>
-          </div>
-          <div class="field">
-            <span class="field-label" id="elLabel">Einblendungen</span>
-            <div class="chips" role="group" aria-labelledby="elLabel" id="elChips">
-              <button type="button" aria-pressed="true" data-k="showTitle">Titel</button>
-              <button type="button" aria-pressed="true" data-k="showChapters">Kapitel</button>
-              <button type="button" aria-pressed="true" data-k="showStats">Reise-Statistik</button>
-            </div>
-            <p class="hint small">Alles ist optional: Tippe, um es ein- oder auszuschalten.</p>
-          </div>
-          <div class="field">
-            <span class="field-label" id="motionLabel">Bewegung im Takt</span>
-            <div class="chips" role="radiogroup" aria-labelledby="motionLabel" id="motionChips">
-              <button type="button" role="radio" data-v="ken">Kamerafahrt</button>
-              <button type="button" role="radio" data-v="snap">Impact-Zoom</button>
-              <button type="button" role="radio" data-v="pulse">Puls</button>
-              <button type="button" role="radio" data-v="sway">Pendeln</button>
-              <button type="button" role="radio" data-v="float">Schweben</button>
-              <button type="button" role="radio" data-v="tilt">Neigen</button>
-              <button type="button" role="radio" data-v="handheld">Handkamera</button>
-            </div>
-            <div class="chips sub-chips" role="radiogroup" aria-label="Stärke der Bewegung" id="motionAmtChips">
-              <button type="button" role="radio" data-v="soft">Leicht</button>
-              <button type="button" role="radio" data-v="medium">Mittel</button>
-              <button type="button" role="radio" data-v="strong">Stark</button>
-            </div>
-            <p class="hint small" id="motionHint"></p>
-            <span class="field-label sub-label" id="drumLabel">Schlagzeug</span>
-            <div class="chips sub-chips" role="radiogroup" aria-labelledby="drumLabel" id="drumChips">
-              <button type="button" role="radio" data-v="auto">Auto</button>
-              <button type="button" role="radio" data-v="kick">Kick-Zoom</button>
-              <button type="button" role="radio" data-v="kicksnare">Kick + Snare</button>
-              <button type="button" role="radio" data-v="off">Aus</button>
-            </div>
-            <p class="hint small" id="drumHint"></p>
-          </div>
-          <div class="field">
-            <span class="field-label" id="colorLabel">Schwarzweiß → Farbe</span>
-            <div class="chips" role="radiogroup" aria-labelledby="colorLabel" id="colorChips">
-              <button type="button" role="radio" data-v="auto">Auto</button>
-              <button type="button" role="radio" data-v="drop">Auf dem Drop</button>
-              <button type="button" role="radio" data-v="steps">Beat für Beat</button>
-              <button type="button" role="radio" data-v="bloom">Vom Motiv aus</button>
-              <button type="button" role="radio" data-v="sweep">Farbwelle</button>
-              <button type="button" role="radio" data-v="pop">Farbtupfer</button>
-              <button type="button" role="radio" data-v="off">Aus</button>
-            </div>
-            <p class="hint small" id="colorHint"></p>
-          </div>
-          <div class="field">
-            <span class="field-label" id="fxLabel">Im Film <span class="muted">· beliebig kombinierbar</span></span>
-            <div class="chips" role="group" aria-labelledby="fxLabel" id="fxChips">
-              <button type="button" aria-pressed="false" data-fx="match">Match-Cuts</button>
-              <button type="button" aria-pressed="false" data-fx="morph">Bild aus Bild</button>
-              <button type="button" aria-pressed="false" data-fx="split">Split-Screens</button>
-              <button type="button" aria-pressed="false" data-fx="midGrid">Raster im Refrain</button>
-              <button type="button" aria-pressed="false" data-fx="midCount">Countdown vor dem Drop</button>
-              <button type="button" aria-pressed="false" data-fx="burst">Foto-Serie im Drop</button>
-              <button type="button" aria-pressed="false" data-fx="ramp">Speed-Ramp</button>
-              <button type="button" aria-pressed="false" data-fx="stamp">Datumsstempel</button>
-              <button type="button" aria-pressed="false" data-fx="echo">Echo-Bild</button>
-              <button type="button" aria-pressed="false" data-fx="stack">Polaroid-Stapel</button>
-              <button type="button" aria-pressed="false" data-fx="mini">Mini-Rewind</button>
-              <button type="button" aria-pressed="false" data-fx="drift">Drift-Übergang</button>
-              <button type="button" aria-pressed="false" data-fx="parallax">Tiefe (Parallax)</button>
-              <button type="button" aria-pressed="false" data-fx="chapKnock" id="fxChapKnock">Durch den Namen je Kapitel</button>
-              <button type="button" aria-pressed="false" data-fx="chapMap" id="fxChapMap">Karten-Moment je Etappe</button>
-            </div>
-            <p class="hint small" id="fxHint"></p>
-          </div>
-          <div class="field" id="kmField">
-            <span class="field-label" id="kmLabel">Unter dem Ortsnamen</span>
-            <div class="chips" role="radiogroup" aria-labelledby="kmLabel" id="kmChips">
-              <button type="button" role="radio" data-v="off">Nichts</button>
-              <button type="button" role="radio" data-v="coords">Koordinaten</button>
-              <button type="button" role="radio" data-v="leg">Koordinaten → Etappe</button>
-              <button type="button" role="radio" data-v="total">Koordinaten → gesamt</button>
-            </div>
-            <p class="hint small">Die Koordinaten erscheinen Ziffer für Ziffer und wechseln dann in die gefahrenen Kilometer: seit dem letzten Ort (+ km) oder seit Reisebeginn. Flugstrecken zählen nicht mit.</p>
-          </div>
-          <div class="field" id="mapField">
-            <span class="field-label">Flugkarte</span>
-            <div class="chips theme-chips" role="radiogroup" aria-label="Kartenstil" id="mapThemeChips"></div>
-            <div class="swatches" role="radiogroup" aria-label="Farbe von Route und Flugzeug" id="mapInkChips"></div>
-            <div class="chips sub-chips" role="radiogroup" aria-label="Kontinente" id="mapLandChips">
-              <button type="button" role="radio" data-v="dots">Kontinente als Punkte</button>
-              <button type="button" role="radio" data-v="solid">als Fläche</button>
-              <button type="button" role="radio" data-v="off">ohne</button>
-            </div>
-            <div class="chips sub-chips" role="radiogroup" aria-label="Ansicht" id="flightViewChips">
-              <button type="button" role="radio" data-v="globe">Globus</button>
-              <button type="button" role="radio" data-v="flat">Flache Karte</button>
-            </div>
-          </div>
-          <details class="more">
-            <summary>Tempo &amp; Split-Screens</summary>
-            <div class="field">
-              <span class="field-label" id="paceLabel">Schnitttempo</span>
-              <div class="chips" role="radiogroup" aria-labelledby="paceLabel" id="paceChips">
-                <button type="button" role="radio" data-v="auto">Auto</button>
-                <button type="button" role="radio" data-v="ruhig">Ruhig</button>
-                <button type="button" role="radio" data-v="mittel">Mittel</button>
-                <button type="button" role="radio" data-v="schnell">Schnell</button>
+          <details class="group" id="grpStart">
+            <summary><b>Anfang &amp; Ende</b><span>Vorspann, Einstieg, Schluss</span></summary>
+            <div class="group-body">
+              <div class="field" id="preField">
+                <span class="field-label" id="preLabel">Vorspann</span>
+                <div class="chips" role="radiogroup" aria-labelledby="preLabel" id="preChips">
+                  <button type="button" role="radio" data-v="off">Keiner</button>
+                  <button type="button" role="radio" data-v="countdown">Countdown 3 · 2 · 1</button>
+                  <button type="button" role="radio" data-v="rewind">Rewind</button>
+                </div>
+                <p class="hint small" id="preHint">Läuft vor dem Einstieg und lässt sich mit jedem Einstieg kombinieren, z. B. Countdown und danach das 9er-Raster.</p>
+              </div>
+              <div class="field">
+                <span class="field-label" id="introLabel">Einstieg</span>
+                <div class="chips" role="radiogroup" aria-labelledby="introLabel" id="introChips">
+                  <button type="button" role="radio" data-v="auto">Auto</button>
+                  <button type="button" role="radio" data-v="reveal">Aufblende</button>
+                  <button type="button" role="radio" data-v="rush">Bilderflut</button>
+                  <button type="button" role="radio" data-v="countdown">Countdown</button>
+                  <button type="button" role="radio" data-v="grid">9er-Raster</button>
+                  <button type="button" role="radio" data-v="knockout">Durch den Namen</button>
+                  <button type="button" role="radio" data-v="city">Ortsname</button>
+                   <button type="button" role="radio" data-v="cinema">Titelkarte</button>
+                  <button type="button" role="radio" data-v="hook">Stärkstes Bild</button>
+                  <button type="button" role="radio" data-v="type">Wort für Wort</button>
+                  <button type="button" role="radio" data-v="split">Split-Screen</button>
+                </div>
+              </div>
+              <div class="field">
+                <span class="field-label" id="outroLabel">Ende</span>
+                <div class="chips" role="radiogroup" aria-labelledby="outroLabel" id="outroChips">
+                  <button type="button" role="radio" data-v="auto">Auto</button>
+                  <button type="button" role="radio" data-v="credits">Schlusstitel</button>
+                  <button type="button" role="radio" data-v="loop">Endlos-Loop</button>
+                  <button type="button" role="radio" data-v="freeze">Standbild</button>
+                  <button type="button" role="radio" data-v="strip">Filmstreifen</button>
+                  <button type="button" role="radio" data-v="split">Split-Screen</button>
+                </div>
               </div>
             </div>
-            <div class="field">
-              <span class="field-label" id="splitLabel">Split-Screens im Refrain</span>
-              <div class="chips" role="radiogroup" aria-labelledby="splitLabel" id="splitChips">
-                <button type="button" role="radio" data-v="auto">Auto</button>
-                <button type="button" role="radio" data-v="more">Öfter</button>
-                <button type="button" role="radio" data-v="off">Aus</button>
+          </details>
+          <details class="group" id="grpRhythm">
+            <summary><b>Rhythmus &amp; Bewegung</b><span>Tempo, Kamera, Schlagzeug, Farbe</span></summary>
+            <div class="group-body">
+              <div class="field">
+                <span class="field-label" id="paceLabel">Schnitttempo</span>
+                <div class="chips" role="radiogroup" aria-labelledby="paceLabel" id="paceChips">
+                  <button type="button" role="radio" data-v="auto">Auto</button>
+                  <button type="button" role="radio" data-v="ruhig">Ruhig</button>
+                  <button type="button" role="radio" data-v="mittel">Mittel</button>
+                  <button type="button" role="radio" data-v="schnell">Schnell</button>
+                </div>
+              </div>
+              <div class="field">
+                <span class="field-label" id="motionLabel">Bewegung im Takt</span>
+                <div class="chips" role="radiogroup" aria-labelledby="motionLabel" id="motionChips">
+                  <button type="button" role="radio" data-v="ken">Kamerafahrt</button>
+                  <button type="button" role="radio" data-v="snap">Impact-Zoom</button>
+                  <button type="button" role="radio" data-v="pulse">Puls</button>
+                  <button type="button" role="radio" data-v="sway">Pendeln</button>
+                  <button type="button" role="radio" data-v="float">Schweben</button>
+                  <button type="button" role="radio" data-v="tilt">Neigen</button>
+                  <button type="button" role="radio" data-v="handheld">Handkamera</button>
+                </div>
+                <div class="chips sub-chips" role="radiogroup" aria-label="Stärke der Bewegung" id="motionAmtChips">
+                  <button type="button" role="radio" data-v="soft">Leicht</button>
+                  <button type="button" role="radio" data-v="medium">Mittel</button>
+                  <button type="button" role="radio" data-v="strong">Stark</button>
+                </div>
+                <p class="hint small" id="motionHint"></p>
+                <span class="field-label sub-label" id="drumLabel">Schlagzeug</span>
+                <div class="chips sub-chips" role="radiogroup" aria-labelledby="drumLabel" id="drumChips">
+                  <button type="button" role="radio" data-v="auto">Auto</button>
+                  <button type="button" role="radio" data-v="kick">Kick-Zoom</button>
+                  <button type="button" role="radio" data-v="kicksnare">Kick + Snare</button>
+                  <button type="button" role="radio" data-v="off">Aus</button>
+                </div>
+                <p class="hint small" id="drumHint"></p>
+              </div>
+              <div class="field">
+                <span class="field-label" id="colorLabel">Schwarzweiß → Farbe</span>
+                <div class="chips" role="radiogroup" aria-labelledby="colorLabel" id="colorChips">
+                  <button type="button" role="radio" data-v="auto">Auto</button>
+                  <button type="button" role="radio" data-v="drop">Auf dem Drop</button>
+                  <button type="button" role="radio" data-v="steps">Beat für Beat</button>
+                  <button type="button" role="radio" data-v="bloom">Vom Motiv aus</button>
+                  <button type="button" role="radio" data-v="sweep">Farbwelle</button>
+                  <button type="button" role="radio" data-v="pop">Farbtupfer</button>
+                  <button type="button" role="radio" data-v="off">Aus</button>
+                </div>
+                <p class="hint small" id="colorHint"></p>
+              </div>
+              <div class="field">
+                <span class="field-label" id="splitLabel">Split-Screens im Refrain</span>
+                <div class="chips" role="radiogroup" aria-labelledby="splitLabel" id="splitChips">
+                  <button type="button" role="radio" data-v="auto">Auto</button>
+                  <button type="button" role="radio" data-v="more">Öfter</button>
+                  <button type="button" role="radio" data-v="off">Aus</button>
+                </div>
+              </div>
+        
+            </div>
+          </details>
+          <details class="group" id="grpFx">
+            <summary><b>Effekte</b><span>was im Film vorkommt</span></summary>
+            <div class="group-body">
+              <div class="field">
+                <span class="field-label" id="fxLabel">Im Film <span class="muted">· beliebig kombinierbar</span></span>
+                <div class="chips" role="group" aria-labelledby="fxLabel" id="fxChips">
+                  <button type="button" aria-pressed="false" data-fx="match">Match-Cuts</button>
+                  <button type="button" aria-pressed="false" data-fx="morph">Bild aus Bild</button>
+                  <button type="button" aria-pressed="false" data-fx="split">Split-Screens</button>
+                  <button type="button" aria-pressed="false" data-fx="midGrid">Raster im Refrain</button>
+                  <button type="button" aria-pressed="false" data-fx="midCount">Countdown vor dem Drop</button>
+                  <button type="button" aria-pressed="false" data-fx="burst">Foto-Serie im Drop</button>
+                  <button type="button" aria-pressed="false" data-fx="ramp">Speed-Ramp</button>
+                  <button type="button" aria-pressed="false" data-fx="stamp">Datumsstempel</button>
+                  <button type="button" aria-pressed="false" data-fx="echo">Echo-Bild</button>
+                  <button type="button" aria-pressed="false" data-fx="stack">Polaroid-Stapel</button>
+                  <button type="button" aria-pressed="false" data-fx="mini">Mini-Rewind</button>
+                  <button type="button" aria-pressed="false" data-fx="drift">Drift-Übergang</button>
+                  <button type="button" aria-pressed="false" data-fx="parallax">Tiefe (Parallax)</button>
+                  <button type="button" aria-pressed="false" data-fx="chapKnock" id="fxChapKnock">Durch den Namen je Kapitel</button>
+                  <button type="button" aria-pressed="false" data-fx="chapMap" id="fxChapMap">Karten-Moment je Etappe</button>
+                </div>
+                <p class="hint small" id="fxHint"></p>
+              </div>
+            </div>
+          </details>
+          <details class="group" id="grpText">
+            <summary><b>Titel &amp; Orte</b><span>Schrift, Einblendungen, Karte</span></summary>
+            <div class="group-body">
+              <div class="field">
+                <span class="field-label" id="fontLabel">Schrift der Titel</span>
+                <div class="chips font-chips" role="radiogroup" aria-labelledby="fontLabel" id="fontChips"></div>
+              </div>
+              <div class="field">
+                <span class="field-label" id="elLabel">Einblendungen</span>
+                <div class="chips" role="group" aria-labelledby="elLabel" id="elChips">
+                  <button type="button" aria-pressed="true" data-k="showTitle">Titel</button>
+                  <button type="button" aria-pressed="true" data-k="showChapters">Kapitel</button>
+                  <button type="button" aria-pressed="true" data-k="showStats">Reise-Statistik</button>
+                </div>
+                <p class="hint small">Alles ist optional: Tippe, um es ein- oder auszuschalten.</p>
+              </div>
+              <div class="field" id="kmField">
+                <span class="field-label" id="kmLabel">Unter dem Ortsnamen</span>
+                <div class="chips" role="radiogroup" aria-labelledby="kmLabel" id="kmChips">
+                  <button type="button" role="radio" data-v="off">Nichts</button>
+                  <button type="button" role="radio" data-v="coords">Koordinaten</button>
+                  <button type="button" role="radio" data-v="leg">Koordinaten → Etappe</button>
+                  <button type="button" role="radio" data-v="total">Koordinaten → gesamt</button>
+                </div>
+                <p class="hint small">Die Koordinaten erscheinen Ziffer für Ziffer und wechseln dann in die gefahrenen Kilometer: seit dem letzten Ort (+ km) oder seit Reisebeginn. Flugstrecken zählen nicht mit.</p>
+              </div>
+              <div class="field" id="mapField">
+                <span class="field-label">Flugkarte</span>
+                <div class="chips theme-chips" role="radiogroup" aria-label="Kartenstil" id="mapThemeChips"></div>
+                <div class="swatches" role="radiogroup" aria-label="Farbe von Route und Flugzeug" id="mapInkChips"></div>
+                <div class="chips sub-chips" role="radiogroup" aria-label="Kontinente" id="mapLandChips">
+                  <button type="button" role="radio" data-v="dots">Kontinente als Punkte</button>
+                  <button type="button" role="radio" data-v="solid">als Fläche</button>
+                  <button type="button" role="radio" data-v="off">ohne</button>
+                </div>
+                <div class="chips sub-chips" role="radiogroup" aria-label="Ansicht" id="flightViewChips">
+                  <button type="button" role="radio" data-v="globe">Globus</button>
+                  <button type="button" role="radio" data-v="flat">Flache Karte</button>
+                </div>
               </div>
             </div>
           </details>
@@ -382,7 +408,7 @@
         </div>
 
         <div class="tabpanel" id="tab-cut" role="tabpanel" aria-labelledby="tabbtn-cut" hidden>
-          <p class="hint">Jede Kachel ist eine Einstellung. Tippe darauf, um Motiv, Übergang, Tempo oder Videoausschnitt zu ändern.</p>
+          <p class="hint">Jede Kachel ist eine Einstellung. Antippen: Motiv, Übergang, Tempo ändern oder „Gefällt mir nicht“. Gedrückt halten und ziehen: an eine andere Stelle verschieben.</p>
           <div class="cliprow-wrap"><div class="cliprow" id="clipRow"></div></div>
           <div class="row">
             <button class="btn ghost small" id="resetCuts" type="button">Änderungen am Schnitt zurücksetzen</button>
@@ -390,7 +416,8 @@
         </div>
 
         <div class="tabpanel" id="tab-text" role="tabpanel" aria-labelledby="tabbtn-text" hidden>
-          <div class="chips title-chips" role="radiogroup" aria-label="Titel-Varianten" id="titleChips" hidden></div>
+          <div class="field" id="titleField"><span class="field-label">Titel-Vorschläge</span>
+            <div class="chips title-chips" role="radiogroup" aria-label="Titel-Vorschläge" id="titleChips"></div></div>
           <div class="row wrap">
             <button class="btn small" id="addText" type="button">+ Text</button>
             <button class="btn small" id="addPin" type="button">+ Ort</button>

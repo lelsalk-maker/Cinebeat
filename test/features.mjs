@@ -15,7 +15,7 @@ await page.click('.place');
 const idle = () => page.waitForFunction(() => CineBeat.S.plan && document.getElementById('busy').hidden, null, { timeout: 90000 });
 const settle = async () => { await page.waitForTimeout(700); await idle(); };
 await idle();
-await page.click('[data-tab="style"]');
+await page.click('[data-tab="style"]'); await page.evaluate(() => document.querySelectorAll('details.group').forEach((d) => { d.open = true; }));
 await page.click('#preChips [data-v="countdown"]'); await settle();
 await page.click('#introChips [data-v="grid"]'); await settle();
 let info = await page.evaluate(() => { const p = CineBeat.S.plan; return { pre: p.clips.filter((c) => c.pre).length, grid: p.clips.findIndex((c) => c.grid), leader: p.overlays.filter((o) => o.type === 'leader').length }; });

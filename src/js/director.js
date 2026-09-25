@@ -24,9 +24,23 @@ function fmtMS(s) {
   return Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
 }
 
+/**
+ * Aufnahmen, die sicher nicht in den Film gehören (auch bei „Alle Aufnahmen“): Bildschirmfotos,
+ * fast schwarze oder ausgebrannte Bilder (Taschenauslöser), unscharf und zugleich schlecht belichtet,
+ * und identische Serienbilder innerhalb weniger Sekunden. Liefert den Grund oder ''. Favoriten bleiben immer.
+ */
+function autoOut(m) {
+  if (m.fav || m.kind !== 'image') return '';
+  if (/^(screenshot|bildschirmfoto|screen shot)/i.test(m.name || '')) return 'Bildschirmfoto';
+  if (m.expo != null && m.expo < 0.04 && (m.luma < 0.08 || m.luma > 0.94)) return m.luma < 0.5 ? 'fast schwarz' : 'überbelichtet';
+  if (m.sharp != null && m.sharp < 0.03 && m.expo != null && m.expo < 0.35) return 'unscharf';
+  if (m.dupOf && m.dupD != null && m.dupD <= 2 && m.dupDt != null && m.dupDt < 20000) return 'Serienbild';
+  return '';
+}
+
 /** Verwendbare Aufnahmen; all: auch Serienbilder (Beinahe-Doppel), wenn alle Aufnahmen in den Film sollen. */
 function goodMedia(media, all) {
-  return media.filter((m) => !m.bad && !m.loading && !m.excluded && (all || !m.dupOf || m.fav));
+  return media.filter((m) => !m.bad && !m.loading && !m.excluded && (all ? !autoOut(m) : !m.dupOf || m.fav));
 }
 
 function isLandscape(m) { return m.w && m.h && m.w > m.h * 1.15; }
@@ -161,8 +175,30 @@ function autoLook(list, format) {
  * Hauptentscheidung. s = gespeicherte Einstellungen (Werte oder 'auto').
  * Rückgabe: {rs, win, notes, corr}
  */
+/**
+ * Drei Varianten desselben Films. Sie füllen nur, was auf „Auto“ steht (eigene Entscheidungen bleiben),
+ * und mischen mit eigenem Zufall, damit Bewegungen und Übergänge wirklich anders ausfallen.
+ */
+const VARIANTS = {
+  ruhig: { label: 'Ruhig', set: { pace: 'ruhig', echo: 'off', mini: 'off', accent: 'off', drift: 'on', color: 'bloom', stack: 'on' }, intro: 'cinema', seed: 0x5a17 },
+  ausgewogen: { label: 'Ausgewogen', set: {}, seed: 0 },
+  energisch: { label: 'Energisch', set: { pace: 'schnell', echo: 'on', mini: 'on', accent: 'kicksnare', drift: 'off', color: 'pop', stack: 'off' }, intro: 'rush', burst: true, seed: 0x3e9b },
+};
+function withVariant(s) {
+  const v = VARIANTS[s.variant];
+  if (!v || s.variant === 'ausgewogen') return s;
+  const o = { ...s, seed: ((s.seed >>> 0) ^ v.seed) >>> 0 };
+  for (const [k, val] of Object.entries(v.set)) if (o[k] == null || o[k] === 'auto') o[k] = val;
+  if (s.variant === 'ruhig' && o.motionAmt === 'medium') o.motionAmt = 'soft';
+  if (s.variant === 'energisch' && o.motionAmt === 'medium') o.motionAmt = 'strong';
+  if (v.intro && o.intro === 'auto') o.intro = v.intro === 'cinema' && !(s.title && s.title.trim() && s.showTitle !== false) ? 'hook' : v.intro;
+  if (v.burst && o.burst === 'off') { o.burst = 'drop'; o.ramp = 'drop'; }
+  return o;
+}
+
 function direct(an, media, s, chapters, flight) {
   const notes = [];
+  s = withVariant(s);
   const rs = { ...s };
   const list = goodMedia(media, s.allMedia !== 'off' && !(chapters && chapters.length) && !flight);
   const all = media.filter((m) => !m.bad && !m.loading);
