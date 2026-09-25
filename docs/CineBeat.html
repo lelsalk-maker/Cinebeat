@@ -765,9 +765,31 @@ function waitEvent(target, okEvents, failEvents, timeoutMs) {
   });
 }
 
-/** Bild dekodieren und verkleinern (EXIF-Ausrichtung übernimmt der Browser). */
-async function decodeImage(item, maxDim) {
+/**
+ * Bild dekodieren und verkleinern (EXIF-Ausrichtung übernimmt der Browser).
+ * fast: für die Vorschau direkt in Zielgröße dekodieren (createImageBitmap mit Größe): kein Umweg über das
+ * volle Kamerabild (48 MP ≈ 190 MB), läuft außerhalb des Hauptthreads. Der Export nutzt immer den
+ * hochwertigen Weg mit schrittweiser Verkleinerung.
+ */
+async function decodeImage(item, maxDim, fast) {
   if (item.canvas) return item.canvas;
+  if (fast && item.file && item.w && item.h && typeof createImageBitmap === 'function' && !decodeImage.noResize) {
+    const sc = Math.min(1, maxDim / Math.max(item.w, item.h));
+    const bw = Math.max(1, Math.round(item.w * sc)), bh = Math.max(1, Math.round(item.h * sc));
+    try {
+      // nur die Breite vorgeben: die Höhe ergibt sich aus dem Bild und verrät, ob die EXIF-Drehung angewandt wurde
+      let bmp;
+      try { bmp = await createImageBitmap(item.file, { resizeWidth: bw, resizeQuality: 'high', imageOrientation: 'from-image' }); } catch (e) {
+        if (!(e && e.name === 'TypeError')) throw e;
+        bmp = await createImageBitmap(item.file, { resizeWidth: bw, resizeQuality: 'high' });
+      }
+      if (Math.abs(bmp.height - bh) <= Math.max(2, bh * 0.01)) return bmp;
+      bmp.close();
+      decodeImage.noResize = true; // dieser Browser dreht hier nicht: künftig direkt den sicheren Weg
+    } catch (e) {
+      if (e && e.name === 'TypeError') decodeImage.noResize = true;
+    }
+  }
   const img = new Image();
   img.decoding = 'async';
   img.src = item.url;
@@ -782,12 +804,14 @@ async function decodeImage(item, maxDim) {
   const cw = Math.max(1, Math.round(w * sc)), ch = Math.max(1, Math.round(h * sc));
   // Starke Verkleinerung in Halbierungsschritten: sauberer als ein einzelner großer Sprung
   let src = img, sw = w, sh = h;
+  const temps = [];
   while (sw / 2 >= cw * 1.05 && sh / 2 >= ch * 1.05) {
     const t = document.createElement('canvas');
     t.width = Math.round(sw / 2); t.height = Math.round(sh / 2);
     const tx = t.getContext('2d');
     tx.imageSmoothingQuality = 'high';
     tx.drawImage(src, 0, 0, t.width, t.height);
+    temps.push(t);
     src = t; sw = t.width; sh = t.height;
   }
   const c = document.createElement('canvas');
@@ -796,6 +820,9 @@ async function decodeImage(item, maxDim) {
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(src, 0, 0, cw, ch);
+  // Zwischenstufen und das volle Bild sofort freigeben (Safari hält Leinwand-Speicher sonst lange fest)
+  for (const t of temps) { t.width = 0; t.height = 0; }
+  img.src = '';
   return c;
 }
 
@@ -4090,12 +4117,25 @@ void main() {
 class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
-    const attrs = { alpha: false, antialias: false, depth: false, stencil: false, premultipliedAlpha: false, preserveDrawingBuffer: true, powerPreference: 'high-performance' };
+    // Kein preserveDrawingBuffer: spart pro Bild eine Kopie des ganzen Bildpuffers (Wärme, Akku).
+    // Ausgelesen wird die Leinwand nur direkt nach dem Zeichnen (Export, Titelbild).
+    const attrs = { alpha: false, antialias: false, depth: false, stencil: false, premultipliedAlpha: false, preserveDrawingBuffer: false, powerPreference: 'default' };
     let gl = canvas.getContext('webgl2', attrs);
     this.isGL2 = !!gl;
     if (!gl) gl = canvas.getContext('webgl', attrs) || canvas.getContext('experimental-webgl', attrs);
     if (!gl) throw new Error('WebGL wird von diesem Browser nicht unterstützt.');
     this.gl = gl;
+    this._setup();
+    // iOS entzieht Webseiten unter Speicherdruck die Grafikkarte: dann neu aufsetzen statt schwarz zu bleiben
+    canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); this.lost = true; });
+    canvas.addEventListener('webglcontextrestored', () => {
+      this._setup();
+      this.onRestore && this.onRestore();
+    });
+  }
+
+  _setup() {
+    const gl = this.gl;
     const sh = (type, src) => {
       const s = gl.createShader(type);
       gl.shaderSource(s, src);
@@ -4134,8 +4174,8 @@ class Renderer {
     this.ovTex = { top: this.createTexture() };
     gl.bindTexture(gl.TEXTURE_2D, this.ovTex.top);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 0]));
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     this.lost = false;
-    canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); this.lost = true; });
   }
 
   createTexture() {
@@ -5764,6 +5804,7 @@ class FrameReader {
     this.cur = null;
     if (this.dec) { try { this.dec.close(); } catch (e) { /* ignore */ } }
     this.dec = null;
+    this.canvas.width = 0; this.canvas.height = 0;
     this._wake();
   }
 }
@@ -5836,6 +5877,8 @@ class Engine {
   constructor(canvas) {
     this.canvas = canvas;
     this.r = new Renderer(canvas);
+    // Grafikkarte kam zurück (iOS unter Speicherdruck): alle Texturen neu aufbauen
+    this.r.onRestore = () => { this.releaseAll(); if (this.plan && !this.exporting) this.renderStill(this.t); };
     this.painter = new OverlayPainter();
     this.slots = new Map();
     this.videos = [];
@@ -5921,7 +5964,8 @@ class Engine {
       this.imgCache.set(key, v);
       return v;
     }
-    const p = decodeImage(m, maxDim);
+    // Vorschau: direkt verkleinert dekodieren (spart Speicher); Export: volle Qualität
+    const p = decodeImage(m, maxDim, !this.exporting);
     this.imgCache.set(key, p);
     try {
       const c = await p;
@@ -5929,10 +5973,14 @@ class Engine {
       // Zwischenspeicher nach Speicherbedarf begrenzen (etwa 160 MB dekodierte Bilder)
       let px = 0;
       for (const v of this.imgCache.values()) if (v && v.width) px += v.width * v.height;
-      while (px > 40e6 && this.imgCache.size > 2) {
+      // Vorschau: etwa 50 MB dekodierte Bilder, Export (größere Bilder): etwa 110 MB
+      const budget = this.exporting ? 28e6 : 12e6;
+      while (px > budget && this.imgCache.size > 2) {
         const k0 = this.imgCache.keys().next().value, v0 = this.imgCache.get(k0);
         if (v0 && v0.width) px -= v0.width * v0.height;
         this.imgCache.delete(k0);
+        // nur freigeben, wenn kein Raster/Filmstreifen es gerade zeichnet
+        if (v0 && v0.close && ![...this.slots.values()].some((sl) => (sl.grid || sl.strip || []).includes(v0))) { try { v0.close(); } catch (e) { /* ignore */ } }
       }
       return c;
     } catch (e) {
@@ -5953,7 +6001,7 @@ class Engine {
     try { v.pause(); } catch (e) { /* ignore */ }
     v._busy = false;
     const free = this.videos.filter((x) => !x._busy);
-    if (free.length > 3) {
+    if (free.length > 2) {
       const drop = free[0];
       drop.removeAttribute('src');
       drop._url = null;
@@ -5971,6 +6019,9 @@ class Engine {
     this.releaseVideo(s.video);
     if (s.fr) { s.fr.close(); s.fr = null; }
     if (s.panels) for (const p of s.panels) this.releaseVideo(p.video);
+    // eigene Leinwände sofort freigeben (Safari gibt Leinwand-Speicher sonst erst spät frei und hat dafür ein Limit)
+    for (const cv of [s.canvas, s.pv]) if (cv) { cv.width = 0; cv.height = 0; }
+    s.canvas = s.pv = null;
     this.slots.delete(k);
   }
 
@@ -6595,6 +6646,8 @@ class Engine {
     if (token !== this._token) return;
     if (this.ac.state !== 'running') { try { await this.ac.resume(); } catch (e) { /* ignore */ } }
     if (!this.exporting && this.scale > this.playMax) this._setScale(this.playMax);
+    this._lastDraw = 0;
+    clearTimeout(this._acSleep);
     this._startAudio(t0, this.master);
     this._t0 = t0;
     this.playing = true;
@@ -6747,8 +6800,12 @@ class Engine {
     else if (avg < base * 1.12 && this.scale < this.playMax && ++this._calm >= 3) { this._setScale(Math.min(this.playMax, +(this.scale * 1.15).toFixed(2))); this._calm = 0; }
   }
 
-  _loop() {
+  _loop(now) {
     if (!this.playing) return;
+    // Vorschau mit höchstens 30 Bildern pro Sekunde: Videos haben selten mehr, und bei 60/120-Hz-Displays
+    // halbiert bzw. viertelt das die Arbeit von Grafikkarte und Prozessor (Wärme, Akku). Der Ton läuft unabhängig.
+    if (!this.exportMode && now && this._lastDraw && now - this._lastDraw < 1000 / 30 - 3) { this._raf = requestAnimationFrame(this._loop); return; }
+    this._lastDraw = now || performance.now();
     this._adapt();
     const D = this.plan.duration;
     const t = Math.max(this._t0 || 0, this.clock());
@@ -6761,7 +6818,7 @@ class Engine {
       return;
     }
     this.t = t;
-    this.ensureWindow(t, 3.0);
+    this.ensureWindow(t, 2.0);
     this.drawAt(t, 'play');
     this.onTime && this.onTime(t);
     this._raf = requestAnimationFrame(this._loop);
@@ -6788,6 +6845,9 @@ class Engine {
   pause() {
     this._token++;
     this._stopPlayback();
+    // Audio-Hardware schlafen legen, solange nichts läuft (spart Akku, das iPhone bleibt kühler)
+    clearTimeout(this._acSleep);
+    this._acSleep = setTimeout(() => { if (this.ac && !this.playing && !this.exporting && this.ac.state === 'running') this.ac.suspend().catch(() => {}); }, 2000);
     this._lastFrame = 0;
     // angehaltenes Bild in voller Schärfe
     if (this.scale < 1 && this.plan && !this.exporting) { this._setScale(1); this.renderStill(this.t); }
@@ -6808,6 +6868,8 @@ class Engine {
       this.r.resize(size.w, size.h); this.painter.resize(size.w, size.h); this.size = size;
       this.releaseAll();
       await this.renderStill(t);
+      // direkt vor dem Auslesen zeichnen (die Leinwand behält ihr Bild nicht über ein Bildschirmupdate hinaus)
+      this.drawAt(t, 'still');
       const out = document.createElement('canvas');
       out.width = size.w; out.height = size.h;
       out.getContext('2d').drawImage(this.canvas, 0, 0);
@@ -7562,8 +7624,16 @@ function decodeAudioFile(arrayBuf) {
   });
 }
 
+/** Dekodierte Songs belegen viel Speicher (3 min ≈ 60 MB): nur den aktuellen, den vorigen und das Beispiel behalten. */
+function keepSong(song) {
+  S.songs.delete(song.id);
+  S.songs.set(song.id, song);
+  const others = [...S.songs.keys()].filter((k) => k !== 'demo');
+  while (others.length > 2) S.songs.delete(others.shift());
+}
+
 async function getSong(songId) {
-  if (S.songs.has(songId)) return S.songs.get(songId);
+  if (S.songs.has(songId)) { const sg = S.songs.get(songId); keepSong(sg); return sg; }
   if (songId !== 'demo') {
     const r = await S.store.get('work', songId).catch(() => null);
     if (!r || r.type !== 'song') throw new Error('Song nicht geladen');
@@ -7575,7 +7645,7 @@ async function getSong(songId) {
       const an = fresh ? r.an : await analyzeAudio(buffer, (p) => busy(`Analysiere Songaufbau … ${Math.round(p * 100)} %`));
       if (!fresh) { r.an = an; S.store.put('work', r).catch(() => {}); }
       const song = { id: r.id, name: r.name, buffer, an, mic: r.mic, offset: r.offset || 0 };
-      S.songs.set(song.id, song);
+      keepSong(song);
       return song;
     } finally { busy(null); }
   }
@@ -7608,7 +7678,7 @@ async function importSong(file) {
   if (!audio || audio.duration < 5) throw new Error('kurz');
   const an = await analyzeAudio(audio, (p) => busy(`Analysiere Songaufbau … ${Math.round(p * 100)} %`));
   const song = { id: uid('s'), name: file.name.replace(/\.[^.]+$/, ''), buffer: audio, an };
-  S.songs.set(song.id, song);
+  keepSong(song);
   saveSong(song, file);
   return song;
 }
@@ -7689,7 +7759,7 @@ function openMicSheet() {
       busy('Analysiere Songaufbau …');
       const an = await analyzeAudio(buffer, (p) => busy(`Analysiere Songaufbau … ${Math.round(p * 100)} %`));
       const song = { id: uid('s'), name, buffer, an, mic: true, offset };
-      S.songs.set(song.id, song);
+      keepSong(song);
       saveSong(song);
       await useSong(song);
     } catch (e) {
@@ -7856,36 +7926,27 @@ function thumbFrom(source, sw, sh, size) {
   const ctx = c.getContext('2d');
   const s = Math.max(size / sw, size / sh);
   ctx.drawImage(source, (size - sw * s) / 2, (size - sh * s) / 2, sw * s, sh * s);
-  return c.toDataURL('image/jpeg', 0.75);
+  const url = c.toDataURL('image/jpeg', 0.75);
+  c.width = 0; c.height = 0;
+  return url;
 }
 
-async function loadImageEl(url) {
-  const img = new Image();
-  img.decoding = 'async';
-  img.src = url;
-  try { await img.decode(); } catch (e) {
-    if (!(img.complete && img.naturalWidth)) {
-      const ok = await waitEvent(img, ['load'], ['error'], 15000);
-      if (!ok || !img.naturalWidth) throw new Error('Bild nicht lesbar');
-    }
-  }
-  return img;
-}
 
 async function probeAndScore(item) {
   if (item.kind === 'image') {
-    let img = await loadImageEl(item.url);
+    // Maße aus dem Dateikopf (ohne das Bild zu dekodieren), dann direkt klein dekodieren:
+    // Bewertung und Vorschaubild brauchen nur 480 px, nicht das volle Kamerabild
+    const img = new Image();
+    img.src = item.url;
+    const ok = await waitEvent(img, ['load'], ['error'], 15000);
+    if (!ok || !img.naturalWidth) throw new Error('Bild nicht lesbar');
     item.w = img.naturalWidth; item.h = img.naturalHeight;
-    // Einmal auf Arbeitsgröße verkleinern, alles Weitere (Bewertung, Vorschaubild) daraus: spart Rechenzeit und Akku
-    const sc = Math.min(1, 480 / Math.max(item.w, item.h));
-    const c = document.createElement('canvas');
-    c.width = Math.max(2, Math.round(item.w * sc)); c.height = Math.max(2, Math.round(item.h * sc));
-    const x = c.getContext('2d');
-    x.imageSmoothingQuality = 'high';
-    x.drawImage(img, 0, 0, c.width, c.height);
-    img.src = ''; img = null;
-    item.thumb = thumbFrom(c, c.width, c.height, 160);
-    Object.assign(item, scoreImage(c, c.width, c.height));
+    const small = await decodeImage({ ...item, url: item.url }, 480, true);
+    img.src = '';
+    const sw = small.width, sh = small.height;
+    item.thumb = thumbFrom(small, sw, sh, 160);
+    Object.assign(item, scoreImage(small, sw, sh));
+    if (small.close) small.close(); else { small.width = 0; small.height = 0; }
     return;
   }
   // Schnell: benötigte Stellen direkt aus der Datei dekodieren (MP4/MOV, WebCodecs)
@@ -7972,10 +8033,10 @@ async function ingestFiles(fileList, onProgress) {
     all.push(it);
   }
   let done = 0, bad = 0;
-  // Parallel nach Gerät: Fotos breit, Videos höchstens zwei gleichzeitig (Hardware-Dekoder sind knapp)
-  const cores = navigator.hardwareConcurrency || 4;
-  const vids = semaphore(2);
-  await mapLimit(fresh, Math.max(2, Math.min(6, cores - 1)), async (it) => {
+  // Parallel, aber schonend: ein Foto wird beim Lesen kurz in voller Kameraauflösung dekodiert (48 MP ≈ 190 MB),
+  // Videos brauchen einen der wenigen Hardware-Dekoder. Mehr gleichzeitig bringt kaum Tempo, aber Abstürze.
+  const vids = semaphore(1);
+  await mapLimit(fresh, 2, async (it) => {
     const release = it.kind === 'video' ? await vids() : null;
     try { await ingestOne(it); } finally { release && release(); }
     done++;
@@ -8483,10 +8544,11 @@ async function rebuild(opts = {}) {
   mon.style.setProperty('--arw', f.w);
   mon.style.setProperty('--arh', f.h);
   mon.dataset.fmt = s.format;
-  // Vorschau in der Pixeldichte des Displays (Retina), damit sie nicht hochskaliert und weich wirkt
+  // Vorschau scharf genug fürs Display, aber begrenzt (kurze Seite höchstens 720 px): die volle Retina-Auflösung
+  // kostet das Mehrfache an Rechenleistung und Speicher, ohne dass man es auf dem Handy sieht. Export: immer voll.
   const r = mon.getBoundingClientRect();
   const shortCss = Math.min(r.width || 0, r.height || 0);
-  const size = outputSize(s.format, 'preview', shortCss ? Math.round(shortCss * Math.min(3, window.devicePixelRatio || 1)) : 540);
+  const size = outputSize(s.format, 'preview', shortCss ? Math.min(720, Math.round(shortCss * Math.min(2, window.devicePixelRatio || 1))) : 540);
   const wasPlaying = engine.setProject({ plan, media, audioBuffer: ctx.song.buffer, size });
   engine.selectedOverlay = S.selOverlay;
   updatePlanInfo();
@@ -8624,7 +8686,14 @@ function updateTime(t) {
 
 function setupStrip() {
   const c = $('strip');
-  let dragging = false, resumeAfter = false, last = 0;
+  let dragging = false, resumeAfter = false, pendingT = null, stillDone = Promise.resolve(), busyStill = false;
+  // immer nur ein Standbild in Arbeit; danach sofort die neueste Position (kein Stau beim schnellen Ziehen)
+  const queueStill = (t) => {
+    pendingT = t;
+    if (busyStill) return;
+    busyStill = true;
+    stillDone = (async () => { while (pendingT != null) { const tt = pendingT; pendingT = null; await engine.renderStill(tt); } busyStill = false; })();
+  };
   const tAt = (e) => { const r = c.getBoundingClientRect(); return clamp01((e.clientX - r.left) / r.width) * (S.plan ? S.plan.duration : 0); };
   c.addEventListener('pointerdown', (e) => {
     if (!S.plan || S.exporting) return;
@@ -8634,16 +8703,20 @@ function setupStrip() {
     engine.pause();
     try { c.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
     const t = tAt(e);
-    engine.t = t; updateTime(t); engine.renderStill(t);
+    engine.t = t; updateTime(t); queueStill(t);
   });
   c.addEventListener('pointermove', (e) => {
     if (!dragging) return;
     const t = tAt(e);
     engine.t = t; updateTime(t);
-    const now = performance.now();
-    if (now - last > 90) { last = now; engine.renderStill(t); }
+    // immer nur ein Standbild in Arbeit; danach sofort die neueste Position (kein Stau beim schnellen Ziehen)
+    queueStill(t);
   });
-  const end = () => { if (!dragging) return; dragging = false; if (resumeAfter) engine.play(engine.t); else engine.renderStill(engine.t); };
+  const end = async () => {
+    if (!dragging) return;
+    dragging = false;
+    if (resumeAfter) { await stillDone; engine.play(engine.t); } else queueStill(engine.t);
+  };
   c.addEventListener('pointerup', end);
   c.addEventListener('pointercancel', end);
   c.addEventListener('keydown', (e) => {

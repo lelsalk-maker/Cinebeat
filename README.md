@@ -77,6 +77,8 @@ Jedes Bild wird einzeln berechnet (ruckelfrei, auch bei 60 fps). Videos (MP4/MOV
 
 **Takt-Genauigkeit**: Jeder Beat wird auf den tatsächlichen Anschlag im Signal gezogen (zwischen den Analyse-Frames genau), Taktanfänge werden über den ganzen Song verfolgt (auch nach Breaks oder Tempowechseln), Schnitte liegen ausschließlich auf Beats. Getestet mit 3-Minuten-Songs mit krummem Tempo und Tempodrift: Schlagzeug-Beats auf ±3 ms genau, im fertigen Video liegt jeder Schnitt höchstens ein halbes Bild neben dem Beat.
 
+**Schonend fürs Handy**: Die Vorschau zeichnet höchstens 30 Bilder pro Sekunde (bei 120-Hz-Displays ein Viertel der Arbeit), rechnet in begrenzter Auflösung (kurze Seite höchstens 720 px) und dekodiert Fotos direkt in der benötigten Größe statt in voller Kameraauflösung. Der Bildspeicher ist begrenzt, Leinwände werden sofort freigegeben, nur zwei Songs bleiben dekodiert, die Audio-Hardware schläft in Pausen, und im Hintergrund gibt die App Speicher frei. Entzieht iOS ihr kurz die Grafikkarte, baut sie das Bild selbst wieder auf. Beim Export gilt weiterhin volle Qualität.
+
 Die Vorschau passt sich an: Ruckelt das Gerät, sinkt beim Abspielen die Auflösung stufenweise, angehalten ist sie wieder voll scharf. Der Export ist davon nie betroffen. Fotos werden so hoch aufgelöst geladen, dass auch der Ausschnitt (z. B. Querfoto in der Story) nie hochskaliert wird; dazu eine leichte Nachschärfung. Die Vorschau rendert in der Pixeldichte des Displays.
 
 ## Aufbau

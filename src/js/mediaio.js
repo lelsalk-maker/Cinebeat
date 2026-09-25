@@ -25,9 +25,31 @@ function waitEvent(target, okEvents, failEvents, timeoutMs) {
   });
 }
 
-/** Bild dekodieren und verkleinern (EXIF-Ausrichtung übernimmt der Browser). */
-async function decodeImage(item, maxDim) {
+/**
+ * Bild dekodieren und verkleinern (EXIF-Ausrichtung übernimmt der Browser).
+ * fast: für die Vorschau direkt in Zielgröße dekodieren (createImageBitmap mit Größe): kein Umweg über das
+ * volle Kamerabild (48 MP ≈ 190 MB), läuft außerhalb des Hauptthreads. Der Export nutzt immer den
+ * hochwertigen Weg mit schrittweiser Verkleinerung.
+ */
+async function decodeImage(item, maxDim, fast) {
   if (item.canvas) return item.canvas;
+  if (fast && item.file && item.w && item.h && typeof createImageBitmap === 'function' && !decodeImage.noResize) {
+    const sc = Math.min(1, maxDim / Math.max(item.w, item.h));
+    const bw = Math.max(1, Math.round(item.w * sc)), bh = Math.max(1, Math.round(item.h * sc));
+    try {
+      // nur die Breite vorgeben: die Höhe ergibt sich aus dem Bild und verrät, ob die EXIF-Drehung angewandt wurde
+      let bmp;
+      try { bmp = await createImageBitmap(item.file, { resizeWidth: bw, resizeQuality: 'high', imageOrientation: 'from-image' }); } catch (e) {
+        if (!(e && e.name === 'TypeError')) throw e;
+        bmp = await createImageBitmap(item.file, { resizeWidth: bw, resizeQuality: 'high' });
+      }
+      if (Math.abs(bmp.height - bh) <= Math.max(2, bh * 0.01)) return bmp;
+      bmp.close();
+      decodeImage.noResize = true; // dieser Browser dreht hier nicht: künftig direkt den sicheren Weg
+    } catch (e) {
+      if (e && e.name === 'TypeError') decodeImage.noResize = true;
+    }
+  }
   const img = new Image();
   img.decoding = 'async';
   img.src = item.url;
@@ -42,12 +64,14 @@ async function decodeImage(item, maxDim) {
   const cw = Math.max(1, Math.round(w * sc)), ch = Math.max(1, Math.round(h * sc));
   // Starke Verkleinerung in Halbierungsschritten: sauberer als ein einzelner großer Sprung
   let src = img, sw = w, sh = h;
+  const temps = [];
   while (sw / 2 >= cw * 1.05 && sh / 2 >= ch * 1.05) {
     const t = document.createElement('canvas');
     t.width = Math.round(sw / 2); t.height = Math.round(sh / 2);
     const tx = t.getContext('2d');
     tx.imageSmoothingQuality = 'high';
     tx.drawImage(src, 0, 0, t.width, t.height);
+    temps.push(t);
     src = t; sw = t.width; sh = t.height;
   }
   const c = document.createElement('canvas');
@@ -56,6 +80,9 @@ async function decodeImage(item, maxDim) {
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(src, 0, 0, cw, ch);
+  // Zwischenstufen und das volle Bild sofort freigeben (Safari hält Leinwand-Speicher sonst lange fest)
+  for (const t of temps) { t.width = 0; t.height = 0; }
+  img.src = '';
   return c;
 }
 

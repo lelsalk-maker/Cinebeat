@@ -233,8 +233,16 @@ function decodeAudioFile(arrayBuf) {
   });
 }
 
+/** Dekodierte Songs belegen viel Speicher (3 min ≈ 60 MB): nur den aktuellen, den vorigen und das Beispiel behalten. */
+function keepSong(song) {
+  S.songs.delete(song.id);
+  S.songs.set(song.id, song);
+  const others = [...S.songs.keys()].filter((k) => k !== 'demo');
+  while (others.length > 2) S.songs.delete(others.shift());
+}
+
 async function getSong(songId) {
-  if (S.songs.has(songId)) return S.songs.get(songId);
+  if (S.songs.has(songId)) { const sg = S.songs.get(songId); keepSong(sg); return sg; }
   if (songId !== 'demo') {
     const r = await S.store.get('work', songId).catch(() => null);
     if (!r || r.type !== 'song') throw new Error('Song nicht geladen');
@@ -246,7 +254,7 @@ async function getSong(songId) {
       const an = fresh ? r.an : await analyzeAudio(buffer, (p) => busy(`Analysiere Songaufbau … ${Math.round(p * 100)} %`));
       if (!fresh) { r.an = an; S.store.put('work', r).catch(() => {}); }
       const song = { id: r.id, name: r.name, buffer, an, mic: r.mic, offset: r.offset || 0 };
-      S.songs.set(song.id, song);
+      keepSong(song);
       return song;
     } finally { busy(null); }
   }
@@ -279,7 +287,7 @@ async function importSong(file) {
   if (!audio || audio.duration < 5) throw new Error('kurz');
   const an = await analyzeAudio(audio, (p) => busy(`Analysiere Songaufbau … ${Math.round(p * 100)} %`));
   const song = { id: uid('s'), name: file.name.replace(/\.[^.]+$/, ''), buffer: audio, an };
-  S.songs.set(song.id, song);
+  keepSong(song);
   saveSong(song, file);
   return song;
 }
@@ -360,7 +368,7 @@ function openMicSheet() {
       busy('Analysiere Songaufbau …');
       const an = await analyzeAudio(buffer, (p) => busy(`Analysiere Songaufbau … ${Math.round(p * 100)} %`));
       const song = { id: uid('s'), name, buffer, an, mic: true, offset };
-      S.songs.set(song.id, song);
+      keepSong(song);
       saveSong(song);
       await useSong(song);
     } catch (e) {
@@ -527,36 +535,27 @@ function thumbFrom(source, sw, sh, size) {
   const ctx = c.getContext('2d');
   const s = Math.max(size / sw, size / sh);
   ctx.drawImage(source, (size - sw * s) / 2, (size - sh * s) / 2, sw * s, sh * s);
-  return c.toDataURL('image/jpeg', 0.75);
+  const url = c.toDataURL('image/jpeg', 0.75);
+  c.width = 0; c.height = 0;
+  return url;
 }
 
-async function loadImageEl(url) {
-  const img = new Image();
-  img.decoding = 'async';
-  img.src = url;
-  try { await img.decode(); } catch (e) {
-    if (!(img.complete && img.naturalWidth)) {
-      const ok = await waitEvent(img, ['load'], ['error'], 15000);
-      if (!ok || !img.naturalWidth) throw new Error('Bild nicht lesbar');
-    }
-  }
-  return img;
-}
 
 async function probeAndScore(item) {
   if (item.kind === 'image') {
-    let img = await loadImageEl(item.url);
+    // Maße aus dem Dateikopf (ohne das Bild zu dekodieren), dann direkt klein dekodieren:
+    // Bewertung und Vorschaubild brauchen nur 480 px, nicht das volle Kamerabild
+    const img = new Image();
+    img.src = item.url;
+    const ok = await waitEvent(img, ['load'], ['error'], 15000);
+    if (!ok || !img.naturalWidth) throw new Error('Bild nicht lesbar');
     item.w = img.naturalWidth; item.h = img.naturalHeight;
-    // Einmal auf Arbeitsgröße verkleinern, alles Weitere (Bewertung, Vorschaubild) daraus: spart Rechenzeit und Akku
-    const sc = Math.min(1, 480 / Math.max(item.w, item.h));
-    const c = document.createElement('canvas');
-    c.width = Math.max(2, Math.round(item.w * sc)); c.height = Math.max(2, Math.round(item.h * sc));
-    const x = c.getContext('2d');
-    x.imageSmoothingQuality = 'high';
-    x.drawImage(img, 0, 0, c.width, c.height);
-    img.src = ''; img = null;
-    item.thumb = thumbFrom(c, c.width, c.height, 160);
-    Object.assign(item, scoreImage(c, c.width, c.height));
+    const small = await decodeImage({ ...item, url: item.url }, 480, true);
+    img.src = '';
+    const sw = small.width, sh = small.height;
+    item.thumb = thumbFrom(small, sw, sh, 160);
+    Object.assign(item, scoreImage(small, sw, sh));
+    if (small.close) small.close(); else { small.width = 0; small.height = 0; }
     return;
   }
   // Schnell: benötigte Stellen direkt aus der Datei dekodieren (MP4/MOV, WebCodecs)
@@ -643,10 +642,10 @@ async function ingestFiles(fileList, onProgress) {
     all.push(it);
   }
   let done = 0, bad = 0;
-  // Parallel nach Gerät: Fotos breit, Videos höchstens zwei gleichzeitig (Hardware-Dekoder sind knapp)
-  const cores = navigator.hardwareConcurrency || 4;
-  const vids = semaphore(2);
-  await mapLimit(fresh, Math.max(2, Math.min(6, cores - 1)), async (it) => {
+  // Parallel, aber schonend: ein Foto wird beim Lesen kurz in voller Kameraauflösung dekodiert (48 MP ≈ 190 MB),
+  // Videos brauchen einen der wenigen Hardware-Dekoder. Mehr gleichzeitig bringt kaum Tempo, aber Abstürze.
+  const vids = semaphore(1);
+  await mapLimit(fresh, 2, async (it) => {
     const release = it.kind === 'video' ? await vids() : null;
     try { await ingestOne(it); } finally { release && release(); }
     done++;
@@ -1154,10 +1153,11 @@ async function rebuild(opts = {}) {
   mon.style.setProperty('--arw', f.w);
   mon.style.setProperty('--arh', f.h);
   mon.dataset.fmt = s.format;
-  // Vorschau in der Pixeldichte des Displays (Retina), damit sie nicht hochskaliert und weich wirkt
+  // Vorschau scharf genug fürs Display, aber begrenzt (kurze Seite höchstens 720 px): die volle Retina-Auflösung
+  // kostet das Mehrfache an Rechenleistung und Speicher, ohne dass man es auf dem Handy sieht. Export: immer voll.
   const r = mon.getBoundingClientRect();
   const shortCss = Math.min(r.width || 0, r.height || 0);
-  const size = outputSize(s.format, 'preview', shortCss ? Math.round(shortCss * Math.min(3, window.devicePixelRatio || 1)) : 540);
+  const size = outputSize(s.format, 'preview', shortCss ? Math.min(720, Math.round(shortCss * Math.min(2, window.devicePixelRatio || 1))) : 540);
   const wasPlaying = engine.setProject({ plan, media, audioBuffer: ctx.song.buffer, size });
   engine.selectedOverlay = S.selOverlay;
   updatePlanInfo();
@@ -1295,7 +1295,14 @@ function updateTime(t) {
 
 function setupStrip() {
   const c = $('strip');
-  let dragging = false, resumeAfter = false, last = 0;
+  let dragging = false, resumeAfter = false, pendingT = null, stillDone = Promise.resolve(), busyStill = false;
+  // immer nur ein Standbild in Arbeit; danach sofort die neueste Position (kein Stau beim schnellen Ziehen)
+  const queueStill = (t) => {
+    pendingT = t;
+    if (busyStill) return;
+    busyStill = true;
+    stillDone = (async () => { while (pendingT != null) { const tt = pendingT; pendingT = null; await engine.renderStill(tt); } busyStill = false; })();
+  };
   const tAt = (e) => { const r = c.getBoundingClientRect(); return clamp01((e.clientX - r.left) / r.width) * (S.plan ? S.plan.duration : 0); };
   c.addEventListener('pointerdown', (e) => {
     if (!S.plan || S.exporting) return;
@@ -1305,16 +1312,20 @@ function setupStrip() {
     engine.pause();
     try { c.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
     const t = tAt(e);
-    engine.t = t; updateTime(t); engine.renderStill(t);
+    engine.t = t; updateTime(t); queueStill(t);
   });
   c.addEventListener('pointermove', (e) => {
     if (!dragging) return;
     const t = tAt(e);
     engine.t = t; updateTime(t);
-    const now = performance.now();
-    if (now - last > 90) { last = now; engine.renderStill(t); }
+    // immer nur ein Standbild in Arbeit; danach sofort die neueste Position (kein Stau beim schnellen Ziehen)
+    queueStill(t);
   });
-  const end = () => { if (!dragging) return; dragging = false; if (resumeAfter) engine.play(engine.t); else engine.renderStill(engine.t); };
+  const end = async () => {
+    if (!dragging) return;
+    dragging = false;
+    if (resumeAfter) { await stillDone; engine.play(engine.t); } else queueStill(engine.t);
+  };
   c.addEventListener('pointerup', end);
   c.addEventListener('pointercancel', end);
   c.addEventListener('keydown', (e) => {

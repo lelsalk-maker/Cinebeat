@@ -27,6 +27,8 @@ class Engine {
   constructor(canvas) {
     this.canvas = canvas;
     this.r = new Renderer(canvas);
+    // Grafikkarte kam zurück (iOS unter Speicherdruck): alle Texturen neu aufbauen
+    this.r.onRestore = () => { this.releaseAll(); if (this.plan && !this.exporting) this.renderStill(this.t); };
     this.painter = new OverlayPainter();
     this.slots = new Map();
     this.videos = [];
@@ -112,7 +114,8 @@ class Engine {
       this.imgCache.set(key, v);
       return v;
     }
-    const p = decodeImage(m, maxDim);
+    // Vorschau: direkt verkleinert dekodieren (spart Speicher); Export: volle Qualität
+    const p = decodeImage(m, maxDim, !this.exporting);
     this.imgCache.set(key, p);
     try {
       const c = await p;
@@ -120,10 +123,14 @@ class Engine {
       // Zwischenspeicher nach Speicherbedarf begrenzen (etwa 160 MB dekodierte Bilder)
       let px = 0;
       for (const v of this.imgCache.values()) if (v && v.width) px += v.width * v.height;
-      while (px > 40e6 && this.imgCache.size > 2) {
+      // Vorschau: etwa 50 MB dekodierte Bilder, Export (größere Bilder): etwa 110 MB
+      const budget = this.exporting ? 28e6 : 12e6;
+      while (px > budget && this.imgCache.size > 2) {
         const k0 = this.imgCache.keys().next().value, v0 = this.imgCache.get(k0);
         if (v0 && v0.width) px -= v0.width * v0.height;
         this.imgCache.delete(k0);
+        // nur freigeben, wenn kein Raster/Filmstreifen es gerade zeichnet
+        if (v0 && v0.close && ![...this.slots.values()].some((sl) => (sl.grid || sl.strip || []).includes(v0))) { try { v0.close(); } catch (e) { /* ignore */ } }
       }
       return c;
     } catch (e) {
@@ -144,7 +151,7 @@ class Engine {
     try { v.pause(); } catch (e) { /* ignore */ }
     v._busy = false;
     const free = this.videos.filter((x) => !x._busy);
-    if (free.length > 3) {
+    if (free.length > 2) {
       const drop = free[0];
       drop.removeAttribute('src');
       drop._url = null;
@@ -162,6 +169,9 @@ class Engine {
     this.releaseVideo(s.video);
     if (s.fr) { s.fr.close(); s.fr = null; }
     if (s.panels) for (const p of s.panels) this.releaseVideo(p.video);
+    // eigene Leinwände sofort freigeben (Safari gibt Leinwand-Speicher sonst erst spät frei und hat dafür ein Limit)
+    for (const cv of [s.canvas, s.pv]) if (cv) { cv.width = 0; cv.height = 0; }
+    s.canvas = s.pv = null;
     this.slots.delete(k);
   }
 
@@ -786,6 +796,8 @@ class Engine {
     if (token !== this._token) return;
     if (this.ac.state !== 'running') { try { await this.ac.resume(); } catch (e) { /* ignore */ } }
     if (!this.exporting && this.scale > this.playMax) this._setScale(this.playMax);
+    this._lastDraw = 0;
+    clearTimeout(this._acSleep);
     this._startAudio(t0, this.master);
     this._t0 = t0;
     this.playing = true;
@@ -938,8 +950,12 @@ class Engine {
     else if (avg < base * 1.12 && this.scale < this.playMax && ++this._calm >= 3) { this._setScale(Math.min(this.playMax, +(this.scale * 1.15).toFixed(2))); this._calm = 0; }
   }
 
-  _loop() {
+  _loop(now) {
     if (!this.playing) return;
+    // Vorschau mit höchstens 30 Bildern pro Sekunde: Videos haben selten mehr, und bei 60/120-Hz-Displays
+    // halbiert bzw. viertelt das die Arbeit von Grafikkarte und Prozessor (Wärme, Akku). Der Ton läuft unabhängig.
+    if (!this.exportMode && now && this._lastDraw && now - this._lastDraw < 1000 / 30 - 3) { this._raf = requestAnimationFrame(this._loop); return; }
+    this._lastDraw = now || performance.now();
     this._adapt();
     const D = this.plan.duration;
     const t = Math.max(this._t0 || 0, this.clock());
@@ -952,7 +968,7 @@ class Engine {
       return;
     }
     this.t = t;
-    this.ensureWindow(t, 3.0);
+    this.ensureWindow(t, 2.0);
     this.drawAt(t, 'play');
     this.onTime && this.onTime(t);
     this._raf = requestAnimationFrame(this._loop);
@@ -979,6 +995,9 @@ class Engine {
   pause() {
     this._token++;
     this._stopPlayback();
+    // Audio-Hardware schlafen legen, solange nichts läuft (spart Akku, das iPhone bleibt kühler)
+    clearTimeout(this._acSleep);
+    this._acSleep = setTimeout(() => { if (this.ac && !this.playing && !this.exporting && this.ac.state === 'running') this.ac.suspend().catch(() => {}); }, 2000);
     this._lastFrame = 0;
     // angehaltenes Bild in voller Schärfe
     if (this.scale < 1 && this.plan && !this.exporting) { this._setScale(1); this.renderStill(this.t); }
@@ -999,6 +1018,8 @@ class Engine {
       this.r.resize(size.w, size.h); this.painter.resize(size.w, size.h); this.size = size;
       this.releaseAll();
       await this.renderStill(t);
+      // direkt vor dem Auslesen zeichnen (die Leinwand behält ihr Bild nicht über ein Bildschirmupdate hinaus)
+      this.drawAt(t, 'still');
       const out = document.createElement('canvas');
       out.width = size.w; out.height = size.h;
       out.getContext('2d').drawImage(this.canvas, 0, 0);

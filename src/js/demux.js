@@ -301,6 +301,7 @@ class FrameReader {
     this.cur = null;
     if (this.dec) { try { this.dec.close(); } catch (e) { /* ignore */ } }
     this.dec = null;
+    this.canvas.width = 0; this.canvas.height = 0;
     this._wake();
   }
 }

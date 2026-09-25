@@ -227,12 +227,25 @@ void main() {
 class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
-    const attrs = { alpha: false, antialias: false, depth: false, stencil: false, premultipliedAlpha: false, preserveDrawingBuffer: true, powerPreference: 'high-performance' };
+    // Kein preserveDrawingBuffer: spart pro Bild eine Kopie des ganzen Bildpuffers (Wärme, Akku).
+    // Ausgelesen wird die Leinwand nur direkt nach dem Zeichnen (Export, Titelbild).
+    const attrs = { alpha: false, antialias: false, depth: false, stencil: false, premultipliedAlpha: false, preserveDrawingBuffer: false, powerPreference: 'default' };
     let gl = canvas.getContext('webgl2', attrs);
     this.isGL2 = !!gl;
     if (!gl) gl = canvas.getContext('webgl', attrs) || canvas.getContext('experimental-webgl', attrs);
     if (!gl) throw new Error('WebGL wird von diesem Browser nicht unterstützt.');
     this.gl = gl;
+    this._setup();
+    // iOS entzieht Webseiten unter Speicherdruck die Grafikkarte: dann neu aufsetzen statt schwarz zu bleiben
+    canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); this.lost = true; });
+    canvas.addEventListener('webglcontextrestored', () => {
+      this._setup();
+      this.onRestore && this.onRestore();
+    });
+  }
+
+  _setup() {
+    const gl = this.gl;
     const sh = (type, src) => {
       const s = gl.createShader(type);
       gl.shaderSource(s, src);
@@ -271,8 +284,8 @@ class Renderer {
     this.ovTex = { top: this.createTexture() };
     gl.bindTexture(gl.TEXTURE_2D, this.ovTex.top);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 0]));
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     this.lost = false;
-    canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); this.lost = true; });
   }
 
   createTexture() {
