@@ -140,8 +140,12 @@ class OverlayPainter {
     if (!text) return;
     ctx.save();
     ctx.globalAlpha *= alpha;
+    // kleine Zeilen etwas größer und mit weichem Schatten: auf dem Handy auch über hellen Bildern lesbar
+    size = Math.max(size * 1.12, Math.min(this.w, this.h) * 0.024);
     ctx.font = this.small(size);
     ctx.fillStyle = this.ink;
+    ctx.shadowColor = 'rgba(0,0,0,0.35)';
+    ctx.shadowBlur = size * 0.5;
     ctx.textBaseline = 'alphabetic';
     drawTracked(ctx, String(text).toLocaleUpperCase('de-DE'), x, y, track, size, align, true);
     ctx.restore();

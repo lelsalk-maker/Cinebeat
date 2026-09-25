@@ -182,7 +182,7 @@ function autoLook(list, format) {
 const VARIANTS = {
   ruhig: { label: 'Ruhig', set: { pace: 'ruhig', echo: 'off', mini: 'off', accent: 'off', drift: 'on', color: 'bloom', stack: 'on' }, intro: 'cinema', seed: 0x5a17 },
   ausgewogen: { label: 'Ausgewogen', set: {}, seed: 0 },
-  energisch: { label: 'Energisch', set: { pace: 'schnell', echo: 'on', mini: 'on', accent: 'kicksnare', drift: 'off', color: 'pop', stack: 'off' }, intro: 'rush', burst: true, seed: 0x3e9b },
+  energisch: { label: 'Energisch', set: { pace: 'schnell', echo: 'on', mini: 'on', accent: 'kick', drift: 'off', color: 'pop', stack: 'off' }, intro: 'rush', burst: true, seed: 0x3e9b },
 };
 function withVariant(s) {
   const v = VARIANTS[s.variant];

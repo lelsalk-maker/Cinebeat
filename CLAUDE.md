@@ -6,7 +6,7 @@ beat-synchrone Filme macht. Läuft komplett auf dem Gerät (iPhone ist Hauptziel
 ## Befehle
 - `npm run build` – bündelt `src/` nach `docs/index.html` (PWA, GitHub Pages), `docs/CineBeat.html` (offline, CSP) und `dist/cinebeat.html` (Claude-Artefakt).
 - `npm test` – Lint + schnelle Tests (analysis, flow, style, videos, allmedia, ui, e2e, features), eine Zeile je Test.
-  Export nach App-Wechsel: `npm test -- bgexport`; Etappenkarte/Kapitel: `npm test -- trip`.
+  Glätte (Schwenktempo, Richtungswechsel, Effektdichte): `npm test -- smooth`; Export nach App-Wechsel: `npm test -- bgexport`; Etappenkarte/Kapitel: `npm test -- trip`.
 - `npm test -- all` – alle Tests (~10 min). `npm test -- flow videos` – einzelne. Tests brauchen Playwright/Chromium (vorinstalliert).
 - Veröffentlichen: `docs/sw.js` Cache-Version erhöhen (`cinebeat-vNN`), bauen, committen, pushen; Artefakt mit `dist/cinebeat.html` an die bestehende URL.
 
@@ -20,7 +20,7 @@ beat-synchrone Filme macht. Läuft komplett auf dem Gerät (iPhone ist Hauptziel
 | `plan/base.js` | Zufall, `LOOKS`, `FORMATS`, `TR` (Übergänge), `sectionAt`, `pickWindow` |
 | `plan/cuts.js` | Schnittraster auf Beats (`planCuts`, DP), `adjustCuts` |
 | `plan/transitions.js` | Wahl der Übergänge |
-| `plan/media.js` | Tempo-Kurven, `videoPlay`, Reihenfolge (`flowOrder`, `applyMoves`), Szenen (`sceneStarts`), `imageMotion`/`fitSubject` |
+| `plan/media.js` | Tempo-Kurven, `videoPlay`, Reihenfolge (`flowOrder`, `applyMoves`), Szenen (`sceneStarts`), Einstellungsgröße (`shotSize`), `imageMotion`/`fitSubject` |
 | `plan/search.js` | `buildPlan`: Suche über Schnittlänge (`_scale`) und Verdichtungsstufe (`_level` 0–4) |
 | `plan/chrono.js` | `layoutChrono`: Aufnahmen streng chronologisch auf die Schnitte (Split, Serie, Stapel, Videoplätze) |
 | `plan/plan.js` | `planOnce`: Einstiege, Stil-Mittel, Zuteilung, Übergänge, Bewegung, Effekte, Overlays, Kapazität |

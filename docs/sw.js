@@ -1,5 +1,5 @@
 // Offline-Cache nur für die App-Hülle. Fotos, Videos und Songs laufen nie über den Service Worker.
-const CACHE = 'cinebeat-v19';
+const CACHE = 'cinebeat-v20';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg', './icon-512.png'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim())); });
