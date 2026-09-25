@@ -662,7 +662,8 @@ class Engine {
     const srcA = sw / sh;
     const tt = c.freezeAt != null ? Math.min(t, c.freezeAt) : t;
     const u = clamp01((tt - c.visStart) / Math.max(0.001, c.visEnd - c.visStart));
-    const e = easeMotion(u);
+    // weiche Tempo-Rampe: vor dem Drop beschleunigt die Fahrt, auf dem Einsatz setzt sie schwungvoll ein und läuft aus
+    const e = c.ease === 'in' ? 0.45 * u + 0.55 * u * u * u : c.ease === 'out' ? 1 - Math.pow(1 - u, 2.6) : easeMotion(u);
     const mo = c.motion || { from: { s: 1, x: 0, y: 0 }, to: { s: 1, x: 0, y: 0 } };
     const s = lerp(mo.from.s, mo.to.s, e) * extra.zoom * fx.zoom;
     const x = lerp(mo.from.x, mo.to.x, e), y = lerp(mo.from.y, mo.to.y, e);

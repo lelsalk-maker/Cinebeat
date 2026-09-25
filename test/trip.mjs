@@ -104,6 +104,14 @@ console.log('Kapitel:', bestofChapters);
 await page.evaluate((t) => CineBeat.engine.renderStill(t), bestofChapters[1] ? bestofChapters[1].start + 2 : 3);
 await page.waitForTimeout(300);
 await page.locator('#monitor').screenshot({ path: `${OUT}/chapter_geo.png` });
+const maps = await page.evaluate(async () => { Object.assign(CineBeat.S.ctx.rec.settings, { format: '9:16', mapTheme: 'nacht' }); await CineBeat.rebuild(); return CineBeat.S.plan.overlays.filter((o) => o.type === 'routemap').map((o) => ({ start: +o.start.toFixed(2), idx: o.idx })); });
+console.log('Karten-Momente:', maps);
+if (!maps.length) errs.push('kein Karten-Moment im Gesamtfilm');
+else {
+  await page.evaluate((t) => CineBeat.engine.renderStill(t), maps[0].start + 2.6);
+  await page.waitForTimeout(300);
+  await page.locator('#monitor').screenshot({ path: `${OUT}/routemap.png` });
+}
 await page.click('#backBtn'); await page.waitForSelector('.place');
 // Stil-Vorlage: in Lissabon speichern, auf alle übertragen, neuer Ort übernimmt sie
 await page.evaluate(async () => { await CineBeat.openPlace(CineBeat.S.places.find((p) => p.name === 'Lissabon').id); });

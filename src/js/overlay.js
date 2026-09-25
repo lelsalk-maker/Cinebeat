@@ -220,7 +220,7 @@ class OverlayPainter {
     const active = plan.overlays.filter((o) => t >= o.start - 0.001 && t < o.end);
     if (!active.length) { this.lastKey = ''; return res; }
     // Titel und Kapitel stehen nach dem Einblenden still bis zum Ausstieg: dann nicht in jedem Bild neu zeichnen
-    const anim = active.some((o) => (o.type === 'lower' || o.type === 'chapter' ? !this.quiet(o, t) : o.type !== 'usertext' && o.type !== 'sticker') || ((o.type === 'usertext' || o.type === 'sticker') && (t - o.start < (o.anim === 'type' || o.anim === 'words' ? 6 : 1) || o.end - t < 0.4)));
+    const anim = active.some((o) => (o.type === 'lower' || o.type === 'chapter' ? !this.quiet(o, t) : o.type === 'routemap' ? t - o.start < 2.6 || o.end - t < 0.5 : o.type !== 'usertext' && o.type !== 'sticker') || ((o.type === 'usertext' || o.type === 'sticker') && (t - o.start < (o.anim === 'type' || o.anim === 'words' ? 6 : 1) || o.end - t < 0.4)));
     const key = anim ? 't' + t.toFixed(4) : 's' + JSON.stringify(active.map((o) => [o.id, o.text, o.x, o.y, o.size, o.style, o.kind, o.color, o.rot, o.bg, o.anim])) + '|' + (selectedId || '') + '|' + plan.band.join(',') + '|' + plan.look + '|' + plan.font;
     if (key !== this.lastKey) {
       const ctx = this.top.getContext('2d');
@@ -235,6 +235,7 @@ class OverlayPainter {
         else if (o.type === 'chapter') this.drawChapter(ctx, o, t, geo);
         else if (o.type === 'city') this.drawCity(ctx, o, t, geo);
         else if (o.type === 'flight') this.drawFlight(ctx, o, t, geo);
+        else if (o.type === 'routemap') this.drawRouteMap(ctx, o, t, geo);
         else if (o.type === 'knockout') this.drawKnockout(ctx, o, t, geo);
         else if (o.type === 'leader') this.drawLeader(ctx, o, t, geo);
         else if (o.type === 'rewind') this.drawRewind(ctx, o, t, geo);
@@ -848,6 +849,95 @@ class OverlayPainter {
     ctx.font = this.font('title', size);
     drawTracked(ctx, final.text, g.cx, g.cy, 0.06, size, 'center');
     this.drawLabel(ctx, o.sub, g.cx, g.cy + size * 0.72, g.base * 0.023, 'center', a * cl01((t - bt) / 0.4), 0.4);
+  }
+
+  /**
+   * Karten-Moment im Roadtrip: kleine Karte oben rechts, die ganze Route fein gepunktet,
+   * die gefahrene Strecke in der Kartenfarbe, die neue Etappe zeichnet sich auf dem Beat bis zum neuen Ort.
+   */
+  drawRouteMap(ctx, o, t, g) {
+    const pts = o.stops, k = o.idx;
+    const fade = smooth(cl01((t - o.start) / 0.4)) * smooth(cl01((o.end - t) / 0.4));
+    if (fade <= 0 || !pts || !pts[k] || !pts[k - 1]) return;
+    const th = MAP_THEMES[o.theme] || MAP_THEMES.nacht;
+    const ink = o.ink || th.ink;
+    const W = g.W, H = g.H;
+    const cw = Math.round(Math.min(W, H) * (g.vertical ? 0.3 : 0.22)), ch = Math.round(cw * 0.78);
+    const x0 = W - g.margin - cw;
+    const y0 = g.vertical && g.by < H * 0.05 ? H * 0.13 : Math.max(g.by + g.margin * 0.7, H * 0.13);
+    const rad = Math.PI / 180;
+    let la0 = 90, la1 = -90, lo0 = 180, lo1 = -180;
+    for (const p of pts) if (p) { la0 = Math.min(la0, p[0]); la1 = Math.max(la1, p[0]); lo0 = Math.min(lo0, p[1]); lo1 = Math.max(lo1, p[1]); }
+    const cf = Math.cos(((la0 + la1) / 2) * rad);
+    const pad = 0.16, lab = o.label ? ch * 0.2 : 0;
+    const sc = Math.min((cw * (1 - 2 * pad)) / Math.max(0.05, (lo1 - lo0) * cf), ((ch - lab) * (1 - 2 * pad)) / Math.max(0.05, la1 - la0));
+    const mx = (lo0 + lo1) / 2, my = (la0 + la1) / 2;
+    const pr = (la, lo) => [x0 + cw / 2 + (lo - mx) * cf * sc, y0 + (ch - lab) / 2 - (la - my) * sc];
+    // Hintergrund mit Landpunkten einmal je Größe und Thema zeichnen
+    const bk = [cw, ch, o.theme].join('|');
+    if (!o._bg || o._bg.k !== bk) {
+      const c = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(cw, ch) : Object.assign(document.createElement('canvas'), { width: cw, height: ch });
+      const b = c.getContext('2d');
+      b.fillStyle = th.bg1; b.globalAlpha = th.dark ? 0.8 : 0.9;
+      roundRect(b, 0, 0, cw, ch, cw * 0.06); b.fill();
+      b.globalAlpha = 1;
+      b.save(); roundRect(b, 0, 0, cw, ch, cw * 0.06); b.clip();
+      const step = Math.max(LAND_RES, 3.2 / sc), r = Math.max(0.7, cw * 0.0045);
+      b.fillStyle = th.land;
+      for (let la = my - ch / 2 / sc; la <= my + ch / 2 / sc; la += step) {
+        for (let lo = mx - cw / 2 / (sc * cf); lo <= mx + cw / 2 / (sc * cf); lo += step / cf) {
+          if (!isLand(la, lo)) continue;
+          const q = pr(la, lo);
+          b.fillRect(q[0] - x0 - r, q[1] - y0 - r, r * 2, r * 2);
+        }
+      }
+      b.restore();
+      b.strokeStyle = th.limb; b.lineWidth = 1;
+      roundRect(b, 0.5, 0.5, cw - 1, ch - 1, cw * 0.06); b.stroke();
+      o._bg = { k: bk, c };
+    }
+    ctx.globalAlpha = fade;
+    ctx.drawImage(o._bg.c, x0, y0);
+    const lw = Math.max(1.2, cw * 0.012);
+    const P = pts.map((p) => (p ? pr(p[0], p[1]) : null));
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    // ganze Route fein gepunktet
+    ctx.setLineDash([lw * 0.2, lw * 2.4]);
+    ctx.strokeStyle = th.text; ctx.globalAlpha = fade * 0.45; ctx.lineWidth = lw;
+    ctx.beginPath(); let on = false;
+    for (const q of P) { if (!q) continue; if (on) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); on = true; }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // gefahrene Strecke und neue Etappe
+    const draw = easeInOut3(cl01((t - o.start - 0.25) / Math.max(0.8, o.draw || 1.6)));
+    ctx.globalAlpha = fade; ctx.strokeStyle = ink; ctx.lineWidth = lw * 1.3;
+    ctx.beginPath(); on = false;
+    for (let i = 0; i < k; i++) { const q = P[i]; if (!q) continue; if (on) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); on = true; }
+    const a = P[k - 1], b = P[k];
+    const hx = a[0] + (b[0] - a[0]) * draw, hy = a[1] + (b[1] - a[1]) * draw;
+    if (on) ctx.lineTo(hx, hy);
+    ctx.stroke();
+    ctx.fillStyle = th.text; ctx.globalAlpha = fade * 0.7;
+    for (let i = 0; i < k; i++) if (P[i]) { ctx.beginPath(); ctx.arc(P[i][0], P[i][1], lw * 0.9, 0, Math.PI * 2); ctx.fill(); }
+    ctx.globalAlpha = fade; ctx.fillStyle = ink;
+    ctx.beginPath(); ctx.arc(hx, hy, lw * 1.7, 0, Math.PI * 2); ctx.fill();
+    if (draw >= 1) {
+      const pulse = cl01((t - o.start - 0.25 - (o.draw || 1.6)) / 0.7);
+      if (pulse < 1) { ctx.globalAlpha = fade * (1 - pulse) * 0.8; ctx.strokeStyle = ink; ctx.lineWidth = lw * 0.8; ctx.beginPath(); ctx.arc(hx, hy, lw * (1.7 + pulse * 4), 0, Math.PI * 2); ctx.stroke(); }
+    }
+    if (lab) {
+      const fs = lab * 0.46;
+      ctx.globalAlpha = fade * 0.85 * cl01((t - o.start - 0.4) / 0.5);
+      ctx.fillStyle = th.text; ctx.font = `500 ${fs}px ${OV_FONTS.sans}`; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+      const yl = y0 + ch - lab / 2 - fs * 0.15;
+      const km = o.km || '';
+      ctx.textAlign = 'right'; ctx.fillText(km, x0 + cw - fs, yl);
+      const room = cw - fs * 3 - (km ? ctx.measureText(km).width : 0);
+      let txt = o.label;
+      while (txt.length > 4 && ctx.measureText(txt).width > room) txt = txt.slice(0, -2) + '…';
+      ctx.textAlign = 'left'; ctx.fillText(txt, x0 + fs, yl);
+    }
+    ctx.globalAlpha = 1;
   }
 
   drawChapter(ctx, o, t, g) {

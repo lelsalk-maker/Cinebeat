@@ -944,6 +944,10 @@ function planOnce(opts) {
       prevDir = mo.dir;
       c.motion = mo.m;
       c.dir = mo.dir;
+      // Tempo-Rampe im Foto: in einen Drop/Refrain hinein beschleunigen, auf dem Einsatz schwungvoll auslaufen
+      const nx = clips[c.i + 1];
+      if (nx && nx.sectionChange && !isCalmLabel(nx.label) && isCalmLabel(c.label)) { c.ease = 'in'; mo.m.to.s += 0.035; }
+      else if (c.sectionChange && !isCalmLabel(c.label)) c.ease = 'out';
       if (framed) {
         // schwebt knapp innerhalb des Rahmens und wächst langsam: nichts vom Bild geht verloren
         c.contain = true;
@@ -1206,6 +1210,13 @@ function planOnce(opts) {
   const introOvEnd0 = introOvEnd;
   let chapterCount = 0;
   for (const c of clips) if (c.chapter) chapterCount++;
+  // Karten-Moment: bei Etappen ab 20 km zeigt eine kleine Karte, wie weit es zum neuen Ort ging
+  const routeMap = (chIdx, st, en) => {
+    const sp = trip && trip.stops;
+    if (s.chapMap === 'off' || !sp || chIdx < 1 || !sp[chIdx].pos || !sp[chIdx - 1].pos || !((sp[chIdx].legKm || 0) > 20) || en - st < 2) return;
+    const bt = beatsRel.filter((b) => b > st + 0.2 && b < en);
+    overlays.push({ type: 'routemap', stops: sp.map((x) => x.pos || null), idx: chIdx, label: `ab ${sp[chIdx - 1].name}`, km: `${Math.round(sp[chIdx].legKm).toLocaleString('de-DE')} km`, theme: s.mapTheme, ink: s.mapInk || '', start: st, end: en, draw: bt.length > 2 ? Math.max(0.8, Math.min(2, bt[2] - st - 0.25)) : 1.6 });
+  };
   for (let ci = 0; ci < clips.length; ci++) {
     const c = clips[ci];
     if (!c.chapter) continue;
@@ -1224,11 +1235,14 @@ function planOnce(opts) {
       const zs = beatsRel.find((b) => b >= c.start + hold - 0.05);
       const ze = zs != null ? beatsRel.find((b) => b >= zs + Math.max(0.35, beatDur * 0.9)) : null;
       if (zs != null && ze != null && ze <= c.end - 0.3) {
+        routeMap(chIdx, ze + 0.1, Math.min(chEnd - 0.2, ze + Math.max(3.2, barDur * 1.6)));
         overlays.push({ type: 'knockout', text: c.chapter, sub: `${String(c.chapterNo).padStart(2, '0')} / ${String(chapterCount).padStart(2, '0')}`, geo: chIdx >= 0 ? geoFor(chIdx) : null, start: c.start, end: ze, zoomStart: zs, chapter: true });
         continue;
       }
     }
-    overlays.push({ type: 'chapter', text: c.chapter, no: c.chapterNo, total: chapterCount, geo: chIdx >= 0 ? geoFor(chIdx) : null, start: st, end: Math.min(chEnd - 0.2, st + Math.min(chDur, 5)) });
+    const chEndOv = Math.min(chEnd - 0.2, st + Math.min(chDur, 5));
+    routeMap(chIdx, st, chEndOv);
+    overlays.push({ type: 'chapter', text: c.chapter, no: c.chapterNo, total: chapterCount, geo: chIdx >= 0 ? geoFor(chIdx) : null, start: st, end: chEndOv });
   }
 
   // Ende

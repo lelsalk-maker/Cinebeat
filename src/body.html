@@ -271,6 +271,7 @@
               <button type="button" aria-pressed="false" data-fx="drift">Drift-Übergang</button>
               <button type="button" aria-pressed="false" data-fx="parallax">Tiefe (Parallax)</button>
               <button type="button" aria-pressed="false" data-fx="chapKnock" id="fxChapKnock">Durch den Namen je Kapitel</button>
+              <button type="button" aria-pressed="false" data-fx="chapMap" id="fxChapMap">Karten-Moment je Etappe</button>
             </div>
             <p class="hint small" id="fxHint"></p>
           </div>
@@ -389,6 +390,7 @@
         </div>
 
         <div class="tabpanel" id="tab-text" role="tabpanel" aria-labelledby="tabbtn-text" hidden>
+          <div class="chips title-chips" role="radiogroup" aria-label="Titel-Varianten" id="titleChips" hidden></div>
           <div class="row wrap">
             <button class="btn small" id="addText" type="button">+ Text</button>
             <button class="btn small" id="addPin" type="button">+ Ort</button>

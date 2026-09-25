@@ -64,6 +64,7 @@ function normalizeSettings(st, defaults) {
     stack: pick1(s.stack, ['auto', 'on', 'off'], 'auto'),
     mini: pick1(s.mini, ['auto', 'on', 'off'], 'auto'),
     chapKnock: pick1(s.chapKnock, ['auto', 'on', 'off'], 'auto'),
+    chapMap: pick1(s.chapMap, ['on', 'off'], 'on'),
     showTitle: s.showTitle !== false,
     showChapters: s.showChapters !== false,
     showStats: s.showStats !== false,
@@ -71,7 +72,7 @@ function normalizeSettings(st, defaults) {
 }
 
 /* ---------- Stil-Vorlage: ein Stil für alle Filme der Reise ---------- */
-const STYLE_KEYS = ['look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'allMedia', 'color', 'accent', 'parallax', 'drift', 'echo', 'stack', 'mini', 'chapKnock', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
+const STYLE_KEYS = ['look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'allMedia', 'color', 'accent', 'parallax', 'drift', 'echo', 'stack', 'mini', 'chapKnock', 'chapMap', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
 const styleOf = (st) => Object.fromEntries(STYLE_KEYS.map((k) => [k, st[k]]));
 /** Einstellungen für neue Filme: Standard, darüber die Vorlage der Reise */
 function baseSettings(defaults) {
@@ -1880,6 +1881,7 @@ const FX_KEYS = {
   stamp: { on: 'on', off: 'off', is: (st, r) => st.stamp === 'on' || (st.stamp !== 'off' && ((r && r.look) || st.look) === 'digicam') },
   midGrid: { on: 'on', off: 'off', is: (st) => st.midGrid === 'on' },
   midCount: { on: 'drop', off: 'off', is: (st) => st.midCount === 'drop' },
+  chapMap: { on: 'on', off: 'off', is: (st) => st.chapMap !== 'off' },
 };
 // Stil-Mittel mit „Auto“: angezeigt wird, was die Regie gewählt hat; Antippen legt es fest (an/aus)
 for (const k of ['echo', 'stack', 'mini', 'drift', 'parallax', 'chapKnock']) FX_KEYS[k] = { on: 'on', off: 'off', is: (st, r) => st[k] === 'on' || (st[k] === 'auto' && !!r && r[k] === 'on') };
@@ -1898,8 +1900,11 @@ function renderFx(st, r) {
   if (on('drift')) parts.push('Drift: in ruhigen Teilen gleitet die Kamera ins nächste Bild');
   if (on('parallax')) parts.push('Tiefe: Vorder- und Hintergrund bewegen sich leicht versetzt');
   if (on('chapKnock') && S.ctx && S.ctx.kind === 'bestof') parts.push('Kapitel: Zoom durch den Namen jedes Ortes');
+  if (on('chapMap') && S.ctx && S.ctx.kind === 'bestof') parts.push('Karten-Moment: bei jeder Etappe zeichnet eine kleine Karte die Strecke zum neuen Ort');
   const chk = $('fxChapKnock');
-  if (chk) chk.hidden = !(S.ctx && S.ctx.kind === 'bestof');
+  const best = !!(S.ctx && S.ctx.kind === 'bestof');
+  if (chk) chk.hidden = !best;
+  $('fxChapMap').hidden = !best;
   $('fxHint').textContent = parts.length ? parts.join(' · ') + '.' : 'Tippe an, was im Film vorkommen soll. Die Regie setzt jedes Element an die Stelle im Song, wo es am besten wirkt.';
 }
 
@@ -2027,9 +2032,34 @@ function allUserOverlays() {
   return [...(o.texts || []).map((x) => ({ ...x, _k: 'text' })), ...(o.stickers || []).map((x) => ({ ...x, _k: 'sticker' }))];
 }
 
+/** Drei Titel-Varianten aus Ort und Zeitraum: sachlich, knapp, erzählend. */
+function titleVariants(rec, media) {
+  const name = (rec.name || '').trim();
+  if (!name || name === 'Neuer Ort') return [];
+  const ts = media.map((m) => m.time).filter((t) => t && t > 946684800000).sort((a, b) => a - b);
+  const from = rec.from || ts[0], to = rec.to || ts[ts.length - 1];
+  const range = dateRangeLabel(from, to) || monthLabel(ts);
+  if (!from) return [[name, range], [name, ''], ['Tage in ' + name, '']];
+  const a = new Date(from), days = Math.max(1, Math.round((new Date(to).setHours(0, 0, 0, 0) - new Date(from).setHours(0, 0, 0, 0)) / 864e5) + 1);
+  const season = ['Winter', 'Winter', 'Frühling', 'Frühling', 'Frühling', 'Sommer', 'Sommer', 'Sommer', 'Herbst', 'Herbst', 'Herbst', 'Winter'][a.getMonth()];
+  const yy = String(a.getFullYear()).slice(2);
+  const story = days === 1 ? 'Ein Tag in ' : days <= 3 && [5, 6, 0].includes(a.getDay()) ? 'Wochenende in ' : 'Tage in ';
+  return [[name, range], [`${name} ’${yy}`, `${season} · ${days} ${days === 1 ? 'Tag' : 'Tage'}`], [story + name, monthLabel(ts)]];
+}
+
+function renderTitleChips() {
+  const box = $('titleChips');
+  const rec = S.ctx && S.ctx.rec;
+  const vs = rec && S.ctx.kind === 'place' && !isFlight(rec) ? titleVariants(rec, S.ctx.media) : [];
+  box.hidden = !vs.length;
+  box.innerHTML = vs.map(([t, sub], i) => `<button type="button" role="radio" aria-checked="${rec.name === t && (rec.sub || '') === sub}" data-i="${i}"><b>${esc(t)}</b>${sub ? `<span>${esc(sub)}</span>` : ''}</button>`).join('');
+  box._vs = vs;
+}
+
 function renderText() {
   const list = $('ovList');
   if (!S.ctx) return;
+  renderTitleChips();
   const items = allUserOverlays();
   if (!items.length) { list.innerHTML = '<p class="hint small">Noch keine eigenen Texte oder Sticker.</p>'; return; }
   list.innerHTML = items.map((o) => `<button class="ov-item${o.id === S.selOverlay ? ' sel' : ''}" type="button" data-ov="${esc(o.id)}">
@@ -2602,6 +2632,13 @@ async function init() {
   $('addText').addEventListener('click', () => addOverlay('text'));
   $('addPin').addEventListener('click', () => addOverlay('pin'));
   $('addDate').addEventListener('click', () => addOverlay('date'));
+  $('titleChips').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-i]'); const v = b && $('titleChips')._vs[+b.dataset.i];
+    if (!v || S.ctx.kind !== 'place') return;
+    [S.ctx.rec.name, S.ctx.rec.sub] = v;
+    $('placeName').value = v[0]; $('placeSub').value = v[1];
+    savePlaceSoon(); renderTitleChips(); commit(); scheduleRebuild(0);
+  });
   $('ovList').addEventListener('click', (e) => { const b = e.target.closest('[data-ov]'); if (b) { const o = findOverlay(b.dataset.ov); if (o) { engine.t = Math.min(o.end - 0.2, Math.max(o.start + 0.5, engine.t)); } openOverlaySheet(b.dataset.ov); } });
   $('safeBtn').addEventListener('click', (e) => { const on = e.currentTarget.getAttribute('aria-pressed') !== 'true'; e.currentTarget.setAttribute('aria-pressed', String(on)); $('safeZones').hidden = !on; });
   $('playBtn').addEventListener('click', togglePlay);

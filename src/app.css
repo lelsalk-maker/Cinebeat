@@ -334,6 +334,9 @@ details.more[open] { display: grid; gap: 16px; }
 .places-head .row { gap: 8px; }
 
 .sub-chips { margin-top: 8px; }
+.title-chips { margin-bottom: 10px; }
+.title-chips button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; }
+.title-chips button span { font-size: 11px; opacity: 0.65; }
 .field-label.sub-label { display: block; margin-top: 14px; }
 .map-sw { display: inline-block; width: 14px; height: 14px; border-radius: 50%; margin-right: 7px; vertical-align: -2px; }
 #mapInkChips { margin-top: 10px; }

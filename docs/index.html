@@ -356,6 +356,9 @@ details.more[open] { display: grid; gap: 16px; }
 .places-head .row { gap: 8px; }
 
 .sub-chips { margin-top: 8px; }
+.title-chips { margin-bottom: 10px; }
+.title-chips button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; }
+.title-chips button span { font-size: 11px; opacity: 0.65; }
 .field-label.sub-label { display: block; margin-top: 14px; }
 .map-sw { display: inline-block; width: 14px; height: 14px; border-radius: 50%; margin-right: 7px; vertical-align: -2px; }
 #mapInkChips { margin-top: 10px; }
@@ -647,6 +650,7 @@ details.more[open] { display: grid; gap: 16px; }
               <button type="button" aria-pressed="false" data-fx="drift">Drift-Übergang</button>
               <button type="button" aria-pressed="false" data-fx="parallax">Tiefe (Parallax)</button>
               <button type="button" aria-pressed="false" data-fx="chapKnock" id="fxChapKnock">Durch den Namen je Kapitel</button>
+              <button type="button" aria-pressed="false" data-fx="chapMap" id="fxChapMap">Karten-Moment je Etappe</button>
             </div>
             <p class="hint small" id="fxHint"></p>
           </div>
@@ -765,6 +769,7 @@ details.more[open] { display: grid; gap: 16px; }
         </div>
 
         <div class="tabpanel" id="tab-text" role="tabpanel" aria-labelledby="tabbtn-text" hidden>
+          <div class="chips title-chips" role="radiogroup" aria-label="Titel-Varianten" id="titleChips" hidden></div>
           <div class="row wrap">
             <button class="btn small" id="addText" type="button">+ Text</button>
             <button class="btn small" id="addPin" type="button">+ Ort</button>
@@ -4442,6 +4447,10 @@ function planOnce(opts) {
       prevDir = mo.dir;
       c.motion = mo.m;
       c.dir = mo.dir;
+      // Tempo-Rampe im Foto: in einen Drop/Refrain hinein beschleunigen, auf dem Einsatz schwungvoll auslaufen
+      const nx = clips[c.i + 1];
+      if (nx && nx.sectionChange && !isCalmLabel(nx.label) && isCalmLabel(c.label)) { c.ease = 'in'; mo.m.to.s += 0.035; }
+      else if (c.sectionChange && !isCalmLabel(c.label)) c.ease = 'out';
       if (framed) {
         // schwebt knapp innerhalb des Rahmens und wächst langsam: nichts vom Bild geht verloren
         c.contain = true;
@@ -4704,6 +4713,13 @@ function planOnce(opts) {
   const introOvEnd0 = introOvEnd;
   let chapterCount = 0;
   for (const c of clips) if (c.chapter) chapterCount++;
+  // Karten-Moment: bei Etappen ab 20 km zeigt eine kleine Karte, wie weit es zum neuen Ort ging
+  const routeMap = (chIdx, st, en) => {
+    const sp = trip && trip.stops;
+    if (s.chapMap === 'off' || !sp || chIdx < 1 || !sp[chIdx].pos || !sp[chIdx - 1].pos || !((sp[chIdx].legKm || 0) > 20) || en - st < 2) return;
+    const bt = beatsRel.filter((b) => b > st + 0.2 && b < en);
+    overlays.push({ type: 'routemap', stops: sp.map((x) => x.pos || null), idx: chIdx, label: `ab ${sp[chIdx - 1].name}`, km: `${Math.round(sp[chIdx].legKm).toLocaleString('de-DE')} km`, theme: s.mapTheme, ink: s.mapInk || '', start: st, end: en, draw: bt.length > 2 ? Math.max(0.8, Math.min(2, bt[2] - st - 0.25)) : 1.6 });
+  };
   for (let ci = 0; ci < clips.length; ci++) {
     const c = clips[ci];
     if (!c.chapter) continue;
@@ -4722,11 +4738,14 @@ function planOnce(opts) {
       const zs = beatsRel.find((b) => b >= c.start + hold - 0.05);
       const ze = zs != null ? beatsRel.find((b) => b >= zs + Math.max(0.35, beatDur * 0.9)) : null;
       if (zs != null && ze != null && ze <= c.end - 0.3) {
+        routeMap(chIdx, ze + 0.1, Math.min(chEnd - 0.2, ze + Math.max(3.2, barDur * 1.6)));
         overlays.push({ type: 'knockout', text: c.chapter, sub: `${String(c.chapterNo).padStart(2, '0')} / ${String(chapterCount).padStart(2, '0')}`, geo: chIdx >= 0 ? geoFor(chIdx) : null, start: c.start, end: ze, zoomStart: zs, chapter: true });
         continue;
       }
     }
-    overlays.push({ type: 'chapter', text: c.chapter, no: c.chapterNo, total: chapterCount, geo: chIdx >= 0 ? geoFor(chIdx) : null, start: st, end: Math.min(chEnd - 0.2, st + Math.min(chDur, 5)) });
+    const chEndOv = Math.min(chEnd - 0.2, st + Math.min(chDur, 5));
+    routeMap(chIdx, st, chEndOv);
+    overlays.push({ type: 'chapter', text: c.chapter, no: c.chapterNo, total: chapterCount, geo: chIdx >= 0 ? geoFor(chIdx) : null, start: st, end: chEndOv });
   }
 
   // Ende
@@ -5903,7 +5922,7 @@ class OverlayPainter {
     const active = plan.overlays.filter((o) => t >= o.start - 0.001 && t < o.end);
     if (!active.length) { this.lastKey = ''; return res; }
     // Titel und Kapitel stehen nach dem Einblenden still bis zum Ausstieg: dann nicht in jedem Bild neu zeichnen
-    const anim = active.some((o) => (o.type === 'lower' || o.type === 'chapter' ? !this.quiet(o, t) : o.type !== 'usertext' && o.type !== 'sticker') || ((o.type === 'usertext' || o.type === 'sticker') && (t - o.start < (o.anim === 'type' || o.anim === 'words' ? 6 : 1) || o.end - t < 0.4)));
+    const anim = active.some((o) => (o.type === 'lower' || o.type === 'chapter' ? !this.quiet(o, t) : o.type === 'routemap' ? t - o.start < 2.6 || o.end - t < 0.5 : o.type !== 'usertext' && o.type !== 'sticker') || ((o.type === 'usertext' || o.type === 'sticker') && (t - o.start < (o.anim === 'type' || o.anim === 'words' ? 6 : 1) || o.end - t < 0.4)));
     const key = anim ? 't' + t.toFixed(4) : 's' + JSON.stringify(active.map((o) => [o.id, o.text, o.x, o.y, o.size, o.style, o.kind, o.color, o.rot, o.bg, o.anim])) + '|' + (selectedId || '') + '|' + plan.band.join(',') + '|' + plan.look + '|' + plan.font;
     if (key !== this.lastKey) {
       const ctx = this.top.getContext('2d');
@@ -5918,6 +5937,7 @@ class OverlayPainter {
         else if (o.type === 'chapter') this.drawChapter(ctx, o, t, geo);
         else if (o.type === 'city') this.drawCity(ctx, o, t, geo);
         else if (o.type === 'flight') this.drawFlight(ctx, o, t, geo);
+        else if (o.type === 'routemap') this.drawRouteMap(ctx, o, t, geo);
         else if (o.type === 'knockout') this.drawKnockout(ctx, o, t, geo);
         else if (o.type === 'leader') this.drawLeader(ctx, o, t, geo);
         else if (o.type === 'rewind') this.drawRewind(ctx, o, t, geo);
@@ -6531,6 +6551,95 @@ class OverlayPainter {
     ctx.font = this.font('title', size);
     drawTracked(ctx, final.text, g.cx, g.cy, 0.06, size, 'center');
     this.drawLabel(ctx, o.sub, g.cx, g.cy + size * 0.72, g.base * 0.023, 'center', a * cl01((t - bt) / 0.4), 0.4);
+  }
+
+  /**
+   * Karten-Moment im Roadtrip: kleine Karte oben rechts, die ganze Route fein gepunktet,
+   * die gefahrene Strecke in der Kartenfarbe, die neue Etappe zeichnet sich auf dem Beat bis zum neuen Ort.
+   */
+  drawRouteMap(ctx, o, t, g) {
+    const pts = o.stops, k = o.idx;
+    const fade = smooth(cl01((t - o.start) / 0.4)) * smooth(cl01((o.end - t) / 0.4));
+    if (fade <= 0 || !pts || !pts[k] || !pts[k - 1]) return;
+    const th = MAP_THEMES[o.theme] || MAP_THEMES.nacht;
+    const ink = o.ink || th.ink;
+    const W = g.W, H = g.H;
+    const cw = Math.round(Math.min(W, H) * (g.vertical ? 0.3 : 0.22)), ch = Math.round(cw * 0.78);
+    const x0 = W - g.margin - cw;
+    const y0 = g.vertical && g.by < H * 0.05 ? H * 0.13 : Math.max(g.by + g.margin * 0.7, H * 0.13);
+    const rad = Math.PI / 180;
+    let la0 = 90, la1 = -90, lo0 = 180, lo1 = -180;
+    for (const p of pts) if (p) { la0 = Math.min(la0, p[0]); la1 = Math.max(la1, p[0]); lo0 = Math.min(lo0, p[1]); lo1 = Math.max(lo1, p[1]); }
+    const cf = Math.cos(((la0 + la1) / 2) * rad);
+    const pad = 0.16, lab = o.label ? ch * 0.2 : 0;
+    const sc = Math.min((cw * (1 - 2 * pad)) / Math.max(0.05, (lo1 - lo0) * cf), ((ch - lab) * (1 - 2 * pad)) / Math.max(0.05, la1 - la0));
+    const mx = (lo0 + lo1) / 2, my = (la0 + la1) / 2;
+    const pr = (la, lo) => [x0 + cw / 2 + (lo - mx) * cf * sc, y0 + (ch - lab) / 2 - (la - my) * sc];
+    // Hintergrund mit Landpunkten einmal je Größe und Thema zeichnen
+    const bk = [cw, ch, o.theme].join('|');
+    if (!o._bg || o._bg.k !== bk) {
+      const c = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(cw, ch) : Object.assign(document.createElement('canvas'), { width: cw, height: ch });
+      const b = c.getContext('2d');
+      b.fillStyle = th.bg1; b.globalAlpha = th.dark ? 0.8 : 0.9;
+      roundRect(b, 0, 0, cw, ch, cw * 0.06); b.fill();
+      b.globalAlpha = 1;
+      b.save(); roundRect(b, 0, 0, cw, ch, cw * 0.06); b.clip();
+      const step = Math.max(LAND_RES, 3.2 / sc), r = Math.max(0.7, cw * 0.0045);
+      b.fillStyle = th.land;
+      for (let la = my - ch / 2 / sc; la <= my + ch / 2 / sc; la += step) {
+        for (let lo = mx - cw / 2 / (sc * cf); lo <= mx + cw / 2 / (sc * cf); lo += step / cf) {
+          if (!isLand(la, lo)) continue;
+          const q = pr(la, lo);
+          b.fillRect(q[0] - x0 - r, q[1] - y0 - r, r * 2, r * 2);
+        }
+      }
+      b.restore();
+      b.strokeStyle = th.limb; b.lineWidth = 1;
+      roundRect(b, 0.5, 0.5, cw - 1, ch - 1, cw * 0.06); b.stroke();
+      o._bg = { k: bk, c };
+    }
+    ctx.globalAlpha = fade;
+    ctx.drawImage(o._bg.c, x0, y0);
+    const lw = Math.max(1.2, cw * 0.012);
+    const P = pts.map((p) => (p ? pr(p[0], p[1]) : null));
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    // ganze Route fein gepunktet
+    ctx.setLineDash([lw * 0.2, lw * 2.4]);
+    ctx.strokeStyle = th.text; ctx.globalAlpha = fade * 0.45; ctx.lineWidth = lw;
+    ctx.beginPath(); let on = false;
+    for (const q of P) { if (!q) continue; if (on) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); on = true; }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // gefahrene Strecke und neue Etappe
+    const draw = easeInOut3(cl01((t - o.start - 0.25) / Math.max(0.8, o.draw || 1.6)));
+    ctx.globalAlpha = fade; ctx.strokeStyle = ink; ctx.lineWidth = lw * 1.3;
+    ctx.beginPath(); on = false;
+    for (let i = 0; i < k; i++) { const q = P[i]; if (!q) continue; if (on) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); on = true; }
+    const a = P[k - 1], b = P[k];
+    const hx = a[0] + (b[0] - a[0]) * draw, hy = a[1] + (b[1] - a[1]) * draw;
+    if (on) ctx.lineTo(hx, hy);
+    ctx.stroke();
+    ctx.fillStyle = th.text; ctx.globalAlpha = fade * 0.7;
+    for (let i = 0; i < k; i++) if (P[i]) { ctx.beginPath(); ctx.arc(P[i][0], P[i][1], lw * 0.9, 0, Math.PI * 2); ctx.fill(); }
+    ctx.globalAlpha = fade; ctx.fillStyle = ink;
+    ctx.beginPath(); ctx.arc(hx, hy, lw * 1.7, 0, Math.PI * 2); ctx.fill();
+    if (draw >= 1) {
+      const pulse = cl01((t - o.start - 0.25 - (o.draw || 1.6)) / 0.7);
+      if (pulse < 1) { ctx.globalAlpha = fade * (1 - pulse) * 0.8; ctx.strokeStyle = ink; ctx.lineWidth = lw * 0.8; ctx.beginPath(); ctx.arc(hx, hy, lw * (1.7 + pulse * 4), 0, Math.PI * 2); ctx.stroke(); }
+    }
+    if (lab) {
+      const fs = lab * 0.46;
+      ctx.globalAlpha = fade * 0.85 * cl01((t - o.start - 0.4) / 0.5);
+      ctx.fillStyle = th.text; ctx.font = `500 ${fs}px ${OV_FONTS.sans}`; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+      const yl = y0 + ch - lab / 2 - fs * 0.15;
+      const km = o.km || '';
+      ctx.textAlign = 'right'; ctx.fillText(km, x0 + cw - fs, yl);
+      const room = cw - fs * 3 - (km ? ctx.measureText(km).width : 0);
+      let txt = o.label;
+      while (txt.length > 4 && ctx.measureText(txt).width > room) txt = txt.slice(0, -2) + '…';
+      ctx.textAlign = 'left'; ctx.fillText(txt, x0 + fs, yl);
+    }
+    ctx.globalAlpha = 1;
   }
 
   drawChapter(ctx, o, t, g) {
@@ -8007,7 +8116,8 @@ class Engine {
     const srcA = sw / sh;
     const tt = c.freezeAt != null ? Math.min(t, c.freezeAt) : t;
     const u = clamp01((tt - c.visStart) / Math.max(0.001, c.visEnd - c.visStart));
-    const e = easeMotion(u);
+    // weiche Tempo-Rampe: vor dem Drop beschleunigt die Fahrt, auf dem Einsatz setzt sie schwungvoll ein und läuft aus
+    const e = c.ease === 'in' ? 0.45 * u + 0.55 * u * u * u : c.ease === 'out' ? 1 - Math.pow(1 - u, 2.6) : easeMotion(u);
     const mo = c.motion || { from: { s: 1, x: 0, y: 0 }, to: { s: 1, x: 0, y: 0 } };
     const s = lerp(mo.from.s, mo.to.s, e) * extra.zoom * fx.zoom;
     const x = lerp(mo.from.x, mo.to.x, e), y = lerp(mo.from.y, mo.to.y, e);
@@ -9161,6 +9271,7 @@ function normalizeSettings(st, defaults) {
     stack: pick1(s.stack, ['auto', 'on', 'off'], 'auto'),
     mini: pick1(s.mini, ['auto', 'on', 'off'], 'auto'),
     chapKnock: pick1(s.chapKnock, ['auto', 'on', 'off'], 'auto'),
+    chapMap: pick1(s.chapMap, ['on', 'off'], 'on'),
     showTitle: s.showTitle !== false,
     showChapters: s.showChapters !== false,
     showStats: s.showStats !== false,
@@ -9168,7 +9279,7 @@ function normalizeSettings(st, defaults) {
 }
 
 /* ---------- Stil-Vorlage: ein Stil für alle Filme der Reise ---------- */
-const STYLE_KEYS = ['look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'allMedia', 'color', 'accent', 'parallax', 'drift', 'echo', 'stack', 'mini', 'chapKnock', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
+const STYLE_KEYS = ['look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'allMedia', 'color', 'accent', 'parallax', 'drift', 'echo', 'stack', 'mini', 'chapKnock', 'chapMap', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
 const styleOf = (st) => Object.fromEntries(STYLE_KEYS.map((k) => [k, st[k]]));
 /** Einstellungen für neue Filme: Standard, darüber die Vorlage der Reise */
 function baseSettings(defaults) {
@@ -10977,6 +11088,7 @@ const FX_KEYS = {
   stamp: { on: 'on', off: 'off', is: (st, r) => st.stamp === 'on' || (st.stamp !== 'off' && ((r && r.look) || st.look) === 'digicam') },
   midGrid: { on: 'on', off: 'off', is: (st) => st.midGrid === 'on' },
   midCount: { on: 'drop', off: 'off', is: (st) => st.midCount === 'drop' },
+  chapMap: { on: 'on', off: 'off', is: (st) => st.chapMap !== 'off' },
 };
 // Stil-Mittel mit „Auto“: angezeigt wird, was die Regie gewählt hat; Antippen legt es fest (an/aus)
 for (const k of ['echo', 'stack', 'mini', 'drift', 'parallax', 'chapKnock']) FX_KEYS[k] = { on: 'on', off: 'off', is: (st, r) => st[k] === 'on' || (st[k] === 'auto' && !!r && r[k] === 'on') };
@@ -10995,8 +11107,11 @@ function renderFx(st, r) {
   if (on('drift')) parts.push('Drift: in ruhigen Teilen gleitet die Kamera ins nächste Bild');
   if (on('parallax')) parts.push('Tiefe: Vorder- und Hintergrund bewegen sich leicht versetzt');
   if (on('chapKnock') && S.ctx && S.ctx.kind === 'bestof') parts.push('Kapitel: Zoom durch den Namen jedes Ortes');
+  if (on('chapMap') && S.ctx && S.ctx.kind === 'bestof') parts.push('Karten-Moment: bei jeder Etappe zeichnet eine kleine Karte die Strecke zum neuen Ort');
   const chk = $('fxChapKnock');
-  if (chk) chk.hidden = !(S.ctx && S.ctx.kind === 'bestof');
+  const best = !!(S.ctx && S.ctx.kind === 'bestof');
+  if (chk) chk.hidden = !best;
+  $('fxChapMap').hidden = !best;
   $('fxHint').textContent = parts.length ? parts.join(' · ') + '.' : 'Tippe an, was im Film vorkommen soll. Die Regie setzt jedes Element an die Stelle im Song, wo es am besten wirkt.';
 }
 
@@ -11124,9 +11239,34 @@ function allUserOverlays() {
   return [...(o.texts || []).map((x) => ({ ...x, _k: 'text' })), ...(o.stickers || []).map((x) => ({ ...x, _k: 'sticker' }))];
 }
 
+/** Drei Titel-Varianten aus Ort und Zeitraum: sachlich, knapp, erzählend. */
+function titleVariants(rec, media) {
+  const name = (rec.name || '').trim();
+  if (!name || name === 'Neuer Ort') return [];
+  const ts = media.map((m) => m.time).filter((t) => t && t > 946684800000).sort((a, b) => a - b);
+  const from = rec.from || ts[0], to = rec.to || ts[ts.length - 1];
+  const range = dateRangeLabel(from, to) || monthLabel(ts);
+  if (!from) return [[name, range], [name, ''], ['Tage in ' + name, '']];
+  const a = new Date(from), days = Math.max(1, Math.round((new Date(to).setHours(0, 0, 0, 0) - new Date(from).setHours(0, 0, 0, 0)) / 864e5) + 1);
+  const season = ['Winter', 'Winter', 'Frühling', 'Frühling', 'Frühling', 'Sommer', 'Sommer', 'Sommer', 'Herbst', 'Herbst', 'Herbst', 'Winter'][a.getMonth()];
+  const yy = String(a.getFullYear()).slice(2);
+  const story = days === 1 ? 'Ein Tag in ' : days <= 3 && [5, 6, 0].includes(a.getDay()) ? 'Wochenende in ' : 'Tage in ';
+  return [[name, range], [`${name} ’${yy}`, `${season} · ${days} ${days === 1 ? 'Tag' : 'Tage'}`], [story + name, monthLabel(ts)]];
+}
+
+function renderTitleChips() {
+  const box = $('titleChips');
+  const rec = S.ctx && S.ctx.rec;
+  const vs = rec && S.ctx.kind === 'place' && !isFlight(rec) ? titleVariants(rec, S.ctx.media) : [];
+  box.hidden = !vs.length;
+  box.innerHTML = vs.map(([t, sub], i) => `<button type="button" role="radio" aria-checked="${rec.name === t && (rec.sub || '') === sub}" data-i="${i}"><b>${esc(t)}</b>${sub ? `<span>${esc(sub)}</span>` : ''}</button>`).join('');
+  box._vs = vs;
+}
+
 function renderText() {
   const list = $('ovList');
   if (!S.ctx) return;
+  renderTitleChips();
   const items = allUserOverlays();
   if (!items.length) { list.innerHTML = '<p class="hint small">Noch keine eigenen Texte oder Sticker.</p>'; return; }
   list.innerHTML = items.map((o) => `<button class="ov-item${o.id === S.selOverlay ? ' sel' : ''}" type="button" data-ov="${esc(o.id)}">
@@ -11699,6 +11839,13 @@ async function init() {
   $('addText').addEventListener('click', () => addOverlay('text'));
   $('addPin').addEventListener('click', () => addOverlay('pin'));
   $('addDate').addEventListener('click', () => addOverlay('date'));
+  $('titleChips').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-i]'); const v = b && $('titleChips')._vs[+b.dataset.i];
+    if (!v || S.ctx.kind !== 'place') return;
+    [S.ctx.rec.name, S.ctx.rec.sub] = v;
+    $('placeName').value = v[0]; $('placeSub').value = v[1];
+    savePlaceSoon(); renderTitleChips(); commit(); scheduleRebuild(0);
+  });
   $('ovList').addEventListener('click', (e) => { const b = e.target.closest('[data-ov]'); if (b) { const o = findOverlay(b.dataset.ov); if (o) { engine.t = Math.min(o.end - 0.2, Math.max(o.start + 0.5, engine.t)); } openOverlaySheet(b.dataset.ov); } });
   $('safeBtn').addEventListener('click', (e) => { const on = e.currentTarget.getAttribute('aria-pressed') !== 'true'; e.currentTarget.setAttribute('aria-pressed', String(on)); $('safeZones').hidden = !on; });
   $('playBtn').addEventListener('click', togglePlay);
