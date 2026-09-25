@@ -119,7 +119,23 @@ async function loadVideoSrc(v, url) {
     try { v.load(); } catch (e) { /* ignore */ }
   }
   if (v.readyState >= 2) return true;
-  return waitEvent(v, ['loadeddata'], ['error'], 8000);
+  if (await waitEvent(v, ['loadeddata', 'canplay'], ['error'], 3000) || v.readyState >= 2) return true;
+  if (v.error) return false;
+  // iPhone: lädt Videodaten oft erst nach einem play() – stumm kurz anspielen statt aufzugeben
+  return primeVideo(v);
+}
+
+/** Stumm kurz anspielen, bis ein Bild dekodiert ist (iOS lädt ohne Wiedergabe keine Bilddaten). */
+async function primeVideo(v) {
+  if (v.readyState >= 2) return true;
+  const wasPaused = v.paused;
+  try {
+    const p = v.play();
+    if (p && p.then) await Promise.race([p.catch(() => {}), new Promise((r) => setTimeout(r, 2500))]);
+  } catch (e) { /* ignore */ }
+  const ok = v.readyState >= 2 || await waitEvent(v, ['loadeddata', 'canplay', 'timeupdate'], ['error'], 4000);
+  if (wasPaused) { try { v.pause(); } catch (e) { /* ignore */ } }
+  return ok || v.readyState >= 2;
 }
 
 async function seekVideo(v, time) {
@@ -127,8 +143,13 @@ async function seekVideo(v, time) {
   const tt = Math.max(0, Math.min(time, Math.max(0, dur - 0.06)));
   if (Math.abs(v.currentTime - tt) < 0.015 && v.readyState >= 2) return true;
   v.currentTime = tt;
-  const ok = await waitEvent(v, ['seeked'], ['error'], 4000);
+  let ok = await waitEvent(v, ['seeked'], ['error'], 4000);
   if (v.readyState < 2) await waitEvent(v, ['loadeddata', 'canplay'], ['error'], 1500);
+  if (v.readyState < 2 && !v.error && await primeVideo(v)) {
+    // nach dem Anspielen noch einmal genau an die Stelle
+    v.currentTime = tt;
+    ok = await waitEvent(v, ['seeked'], ['error'], 4000);
+  }
   return ok;
 }
 

@@ -440,8 +440,6 @@ async function analyzeAudio(buffer, onProgress) {
     beatPeriod: pSec,
     hasRhythm,
     beats: Float64Array.from(beats),
-    // häufigste Taktphase (nur noch für ältere Aufrufer; maßgeblich ist downIdx)
-    downPhase: (() => { const c = [0, 0, 0, 0]; for (const i of structure.downIdx) c[i % 4]++; return c.indexOf(Math.max(...c)); })(),
     energy,
     kicks: drums.kicks,
     snares: drums.snares,

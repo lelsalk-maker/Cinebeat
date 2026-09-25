@@ -266,12 +266,13 @@ function direct(an, media, s, chapters, flight) {
     else if (chapters && chapters.length) rs.intro = 'cinema';
     else if (fr.kind === 'film') rs.intro = D >= 25 ? 'cinema' : 'type';
     else if (D <= 18) rs.intro = hasTitle ? 'city' : 'hook';
-    else rs.intro = pick([hasTitle ? 'city' : 'hook', 'hook', 'type', ...(rs.split !== 'off' ? ['split'] : [])]);
+    else rs.intro = pick([hasTitle ? 'city' : 'hook', 'hook', 'type', ...(rs.split !== 'off' ? ['split'] : []), ...(list.length >= 12 && rs.pace !== 'ruhig' ? ['rush'] : [])]);
   }
   if (flight) rs.intro = 'flight';
   if (rs.intro === 'grid' && list.length < 4) rs.intro = hasTitle ? 'city' : 'hook';
   if (rs.intro === 'knockout' && !hasTitle) rs.intro = 'hook';
   if (rs.intro === 'split' && splitPool < 3) rs.intro = 'hook';
+  if (rs.intro === 'rush' && list.filter((m) => m.kind === 'image').length < 6) rs.intro = 'hook';
   if (s.outro === 'auto') {
     if (fr.kind === 'film' || (chapters && chapters.length)) rs.outro = 'credits';
     else if (D <= 25) rs.outro = 'loop';
@@ -280,7 +281,7 @@ function direct(an, media, s, chapters, flight) {
   if (flight && s.outro === 'auto') rs.outro = 'freeze';
   if (rs.outro === 'split' && splitPool < 3) rs.outro = 'credits';
 
-  const INTRO_DE = { reveal: 'ein kurzer, ruhiger Aufbau aus Details deiner Bilder, auf dem Höhepunkt öffnet sich das stärkste Bild', countdown: 'Countdown wie im alten Kino, darunter blitzen deine Bilder in Schwarzweiß auf, auf dem Einsatz geht es in Farbe los', knockout: 'der Ortsname ist ein Fenster ins Bild, dann zoomt der Film durch die Buchstaben', flight: 'Abflug-Video, dann zeichnet sich deine Flugroute über dem Globus, danach die Landung', grid: 'neun Bilder in Schwarzweiß werden im Takt farbig, dann zoomt der Film ins mittlere Bild', city: 'dein stärkstes Bild mit dem Ortsnamen groß im Bild', cinema: fr.kind === 'film' ? 'Titelkarte auf Schwarz, dann blendet das erste Bild auf' : 'Titelkarte über dem abgedunkelten ersten Bild', hook: 'dein stärkstes Bild eröffnet, der Titel steht dezent unten', type: 'der Titel läuft Wort für Wort im Takt', split: 'drei Bilder öffnen den Film nacheinander im Split-Screen' };
+  const INTRO_DE = { rush: 'eine Bilderflut: viele Bilder in einem Takt, immer schneller, dann steht das stärkste Bild, danach wird es ruhiger und im Drop wieder schneller', reveal: 'ein kurzer, ruhiger Aufbau aus Details deiner Bilder, auf dem Höhepunkt öffnet sich das stärkste Bild', countdown: 'Countdown wie im alten Kino, darunter blitzen deine Bilder in Schwarzweiß auf, auf dem Einsatz geht es in Farbe los', knockout: 'der Ortsname ist ein Fenster ins Bild, dann zoomt der Film durch die Buchstaben', flight: 'Abflug-Video, dann zeichnet sich deine Flugroute über dem Globus, danach die Landung', grid: 'neun Bilder in Schwarzweiß werden im Takt farbig, dann zoomt der Film ins mittlere Bild', city: 'dein stärkstes Bild mit dem Ortsnamen groß im Bild', cinema: fr.kind === 'film' ? 'Titelkarte auf Schwarz, dann blendet das erste Bild auf' : 'Titelkarte über dem abgedunkelten ersten Bild', hook: 'dein stärkstes Bild eröffnet, der Titel steht dezent unten', type: 'der Titel läuft Wort für Wort im Takt', split: 'drei Bilder öffnen den Film nacheinander im Split-Screen' };
   const OUTRO_DE = { strip: 'Filmstreifen, der rückwärts durch deinen Film läuft', credits: 'Abblende und Schlusstitel', loop: 'nahtloser Übergang zurück zum Anfang (Endlos-Loop)', freeze: 'Standbild, das in Schwarzweiß ausläuft', split: 'Split-Screen und harter Schnitt auf Schwarz' };
   if (s.intro === 'auto' || s.outro === 'auto') notes.push(`Einstieg: ${INTRO_DE[rs.intro]}. Ende: ${OUTRO_DE[rs.outro]}.`);
 

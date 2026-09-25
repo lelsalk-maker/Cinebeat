@@ -71,6 +71,21 @@ const res = await p.evaluate(async (b64) => {
   out.chapters = kn.map((o) => `${o.text}@${o.start.toFixed(1)} zoom ${o.zoomStart.toFixed(1)}-${o.end.toFixed(1)}`);
   if (kn.length !== 2) fails.push('Kapitel-Knockout ' + kn.length);
   for (const o of kn) { const c = pc.clips.find((x) => Math.abs(x.start - o.start) < 0.01); if (!c || c.end < o.end + 0.25 || o.zoomStart - o.start < 1.7) fails.push('Kapitel-Einstellung zu kurz'); }
+  // 5b. Bilderflut: viele Bilder in einem Takt, immer schneller, dann Ruhe, im Drop wieder schneller
+  const pr = plan({ intro: 'rush', color: 'off', echo: 'off', stack: 'off', mini: 'off', length: 'auto', songStart: 'auto', target: 'story' });
+  const rc = pr.clips.filter((c) => c.rush);
+  const hk = pr.clips[rc.length];
+  const bursts = pr.clips.filter((c) => c.burst);
+  const lens = rc.map((c) => c.end - c.start);
+  out.rush = { n: rc.length, lens: lens.map((x) => x.toFixed(2)).join(' '), hook: hk && `${hk.role} ${(hk.end - hk.start).toFixed(1)} s`, burstAt: bursts.length ? bursts[0].start.toFixed(1) : null, repeats: pr.capacity.repeats };
+  if (rc.length < 10) fails.push('Bilderflut zu kurz');
+  if (lens[lens.length - 1] > lens[0] - 0.01) fails.push('Bilderflut wird nicht schneller');
+  if (!hk || hk.role !== 'hook' || hk.end - hk.start < pr.beatDur * 3.5) fails.push('nach der Flut keine Ruhe');
+  if (rc.some((c) => media[c.mediaIndex].kind !== 'image')) fails.push('Video in der Bilderflut');
+  if (!pr.beats.some((b) => Math.abs(b - hk.start) < 0.02)) fails.push('stärkstes Bild nicht auf dem Beat');
+  if (pr.capacity.repeats) fails.push('Bilderflut zählt als Doppelung');
+  for (const pl of [pa, pc, pr, auto]) if (!pl.clips.every((c, i) => c.i === i)) fails.push('Clip-Nummern');
+
   // 6. Standbilder der Momente (Engine)
   const shots = {};
   const eng = new Engine(document.getElementById('c'));
@@ -91,6 +106,7 @@ const res = await p.evaluate(async (b64) => {
   }
   const plBw = plan({ color: 'drop', echo: 'off', stack: 'off', mini: 'off' });
   await still(plBw, media, plBw.colorFx[0].hit - 0.4, 'color_bw');
+  if (rc[9]) await still(pr, media, (rc[9].start + rc[9].end) / 2, 'rush');
   const k0 = kn[0];
   if (k0) { await still(pc, media, k0.start + 1.2, 'chapter_knock'); await still(pc, media, (k0.zoomStart + k0.end) / 2, 'chapter_zoom'); }
   return { out, fails, shots };

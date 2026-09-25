@@ -31,7 +31,7 @@ function normalizeSettings(st, defaults) {
     format: FORMATS[s.format] ? s.format : '9:16',
     look: s.look === 'auto' || LOOKS[s.look] ? s.look : 'auto',
     pace: pick1(s.pace, ['auto', 'ruhig', 'mittel', 'schnell'], 'auto'),
-    intro: pick1(s.intro, ['auto', 'reveal', 'countdown', 'grid', 'knockout', 'cinema', 'city', 'hook', 'type', 'split'], 'auto'),
+    intro: pick1(s.intro, ['auto', 'rush', 'reveal', 'countdown', 'grid', 'knockout', 'cinema', 'city', 'hook', 'type', 'split'], 'auto'),
     outro: pick1(s.outro, ['auto', 'credits', 'loop', 'freeze', 'split', 'strip'], 'auto'),
     pre: pick1(s.pre, ['off', 'countdown', 'rewind'], 'off'),
     target: pick1(s.target, ['story', 'reel'], 'story'),

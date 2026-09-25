@@ -16,7 +16,6 @@ class ByteWriter {
   u16(v) { this.ensure(2); this.buf[this.pos++] = (v >>> 8) & 0xff; this.buf[this.pos++] = v & 0xff; }
   u24(v) { this.u8(v >>> 16); this.u16(v & 0xffff); }
   u32(v) { this.ensure(4); v >>>= 0; this.buf[this.pos++] = v >>> 24; this.buf[this.pos++] = (v >>> 16) & 0xff; this.buf[this.pos++] = (v >>> 8) & 0xff; this.buf[this.pos++] = v & 0xff; }
-  i32(v) { this.u32(v < 0 ? v + 0x100000000 : v); }
   bytes(a) { this.ensure(a.length); this.buf.set(a, this.pos); this.pos += a.length; }
   str(s) { for (let i = 0; i < s.length; i++) this.u8(s.charCodeAt(i)); }
   zeros(n) { this.ensure(n); this.buf.fill(0, this.pos, this.pos + n); this.pos += n; }

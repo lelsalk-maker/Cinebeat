@@ -3,6 +3,8 @@
  * Split-Screens, exakter Offline-Export (WebCodecs), Echtzeit-Rückfall
  * ============================================================ */
 
+const COLOR_MODE = { drop: 1, steps: 1, bloom: 2, sweep: 3, pop: 4 };
+
 function srcTimeOf(c, t) {
   const tt = c.freezeAt != null ? Math.min(t, c.freezeAt) : t;
   if (c.rp) return (c.srcOffset || 0) + rampIntegral(c.rp, Math.max(c.visStart, tt)) - rampIntegral(c.rp, c.visStart);
@@ -222,7 +224,8 @@ class Engine {
     s.tex = this.r.createTexture();
     if (m.poster) this.r.upload(s.tex, m.poster);
     s.srcW = m.w; s.srcH = m.h;
-    if (!ok) { s.ready = true; s.failed = true; return; }
+    // nicht aufgeben: ohne Daten zeigt der Platz kurz das Vorschaubild, beim Abspielen lädt das Video nach
+    if (!ok) { s.ready = true; if (v.error) s.failed = true; return; }
     await seekVideo(v, srcTimeOf(clip, Math.max(t, clip.visStart)));
     if (s.dead) return;
     s.srcW = v.videoWidth || m.w; s.srcH = v.videoHeight || m.h;
@@ -732,7 +735,9 @@ class Engine {
       while (n < b.length && !downs[n]) n++;
       const t0 = b[i] != null ? b[i] : 0, t1 = b[n] != null ? b[n] : t0 + plan.beatDur * 4;
       const u = clamp01((t - t0) / Math.max(0.1, t1 - t0));
-      const side = (b.slice(0, i + 1).filter((_, j) => downs[j]).length % 2) ? 1 : -1;
+      // Anzahl der Einsen bis hier (einmal je Plan vorberechnet statt in jedem Bild zu zählen)
+      if (!plan._downCount) { let n = 0; plan._downCount = downs.map((d) => (d ? ++n : n)); }
+      const side = (plan._downCount[i] || 0) % 2 ? 1 : -1;
       const e = 1 - Math.pow(1 - clamp01(u / 0.35), 3);
       const ang = 0.021 * k * energy * side * (2 * e - 1);
       return { zoom: 1 + 0.06 * k, dx: 0, dy: 0, rot: ang };
@@ -778,7 +783,6 @@ class Engine {
     for (const f of this.plan.colorFx || []) {
       if (t < f.start || t >= f.end) continue;
       const fade = clamp01((t - f.start) / 0.35);
-      const MODE = { drop: 1, steps: 1, bloom: 2, sweep: 3, pop: 4 };
       let p;
       if (t < f.hit) {
         p = 0;
@@ -787,7 +791,7 @@ class Engine {
       p = 1 - fade * (1 - p);
       if (p >= 0.999) return null;
       const fo = f.mode === 'bloom' ? foc || [0.5, 0.45] : [0.5, 0.5];
-      return [MODE[f.mode] || 1, p, fo[0], fo[1]];
+      return [COLOR_MODE[f.mode] || 1, p, fo[0], fo[1]];
     }
     return null;
   }
@@ -927,10 +931,10 @@ class Engine {
       // Mini-Rewind: die Bilder rauschen mit Bewegungsunschärfe gegen die Laufrichtung zurück
       for (const [ex, c] of [[ea, L.a], [eb, L.b]]) if (c && c.miniRew && !ex.blur) ex.blur = [1, 0.05 * (c.i % 2 ? 1 : -1), 0];
       for (const [ex, c] of [[ea, L.a], [eb, L.b]]) if (c && (c.grid || c.split || c.strip || c.stack || c.flightAnim)) ex.flat = true;
-      const sa = this.slots.get(plan.clips.indexOf(L.a));
+      const sa = this.slots.get(L.a.i);
       if (sa) A = this.layerParams(sa, t, fx, ea);
       if (L.b) {
-        const sb = this.slots.get(plan.clips.indexOf(L.b));
+        const sb = this.slots.get(L.b.i);
         if (sb) B = this.layerParams(sb, t, fx, eb);
         if (!B) { mix = 0; trans = 0; }
         if (!A && B) { A = B; B = null; mix = 0; trans = 0; }

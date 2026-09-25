@@ -34,7 +34,6 @@ class Store {
     }
   }
 
-  get persistent() { return !!this.db; }
 
   _tx(store, mode, fn) {
     if (!this.db) {

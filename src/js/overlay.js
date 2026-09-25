@@ -195,6 +195,21 @@ class OverlayPainter {
   caseTitle(text) { return this.fontSet.upper ? String(text || '').toLocaleUpperCase('de-DE') : String(text || ''); }
   titleTrack(def) { return this.fontSet.track != null ? this.fontSet.track : def; }
 
+  /** Steht die Bauchbinde/das Kapitel gerade still (alle Wörter, Unterzeile und Koordinaten fertig, Ausstieg noch nicht)? */
+  quiet(o, t) {
+    const k = this.fontKey + '|' + (this.beats.length ? this.beats[0] : 0);
+    if (!o._q || o._q.k !== k) {
+      const words = Math.max(1, this.caseTitle(o.text).split(/\s+/).filter(Boolean).length);
+      const times = this.beatTimes(o, words + 1);
+      let qa = times[words] + 0.6;
+      const geo = o.geo;
+      if (geo && geo.lat != null) qa = Math.max(qa, o.start + 1.2);
+      if (geo && geo.km != null) qa = Math.max(qa, o.start + Math.max(1.3, (o.end - o.start) * 0.45) + 1.0);
+      o._q = { k, a: qa, b: this.beatExit(o) - 0.01 };
+    }
+    return t >= o._q.a && t < o._q.b;
+  }
+
   /** Zeichnet alle aktiven Einblendungen. Liefert {top, topDirty}. */
   paint(plan, t, selectedId) {
     const res = { top: false, topDirty: false };
@@ -204,7 +219,8 @@ class OverlayPainter {
     this.ink = this.pal.ink;
     const active = plan.overlays.filter((o) => t >= o.start - 0.001 && t < o.end);
     if (!active.length) { this.lastKey = ''; return res; }
-    const anim = active.some((o) => (o.type !== 'usertext' && o.type !== 'sticker') || t - o.start < (o.anim === 'type' || o.anim === 'words' ? 6 : 1) || o.end - t < 0.4);
+    // Titel und Kapitel stehen nach dem Einblenden still bis zum Ausstieg: dann nicht in jedem Bild neu zeichnen
+    const anim = active.some((o) => (o.type === 'lower' || o.type === 'chapter' ? !this.quiet(o, t) : o.type !== 'usertext' && o.type !== 'sticker') || ((o.type === 'usertext' || o.type === 'sticker') && (t - o.start < (o.anim === 'type' || o.anim === 'words' ? 6 : 1) || o.end - t < 0.4)));
     const key = anim ? 't' + t.toFixed(4) : 's' + JSON.stringify(active.map((o) => [o.id, o.text, o.x, o.y, o.size, o.style, o.kind, o.color, o.rot, o.bg, o.anim])) + '|' + (selectedId || '') + '|' + plan.band.join(',') + '|' + plan.look + '|' + plan.font;
     if (key !== this.lastKey) {
       const ctx = this.top.getContext('2d');
