@@ -1244,9 +1244,8 @@ function updatePlanInfo() {
   $('durLabel').textContent = fmtClock(plan.duration);
   const drop = plan.sections.find((x) => x.label === 'drop' || x.label === 'chorus');
   const n = plan.visibleClips;
-  const r = plan.resolved;
-  const parts = [`${FORMATS[r.format].short}`, `${LOOKS[r.look] ? LOOKS[r.look].label : ''}`, `${n} Einstellungen`];
-  if (drop) parts.push(`${SECTION_DE[drop.label]} ab ${fmtClock(drop.start)}`);
+  const parts = [`${n} Einstellungen`];
+  if (drop) parts.push(`${SECTION_DE[drop.label]} ${fmtClock(drop.start)}`);
   parts.push(`${Math.round(ctx.song.an.bpm)} BPM`);
   $('cutInfo').textContent = ctx.media.filter((m) => !m.bad && !m.loading).length ? parts.join(' · ') : 'Noch kein Material. Füge Fotos oder Videos hinzu.';
   $('sampleChip').hidden = !(ctx.kind === 'place' && ctx.rec.demo);
@@ -1388,6 +1387,8 @@ function togglePlay() {
 }
 function setPlayingUI(on) {
   $('monitor').classList.toggle('playing', on);
+  // nach dem ersten Abspielen verdeckt kein Knopf mehr das Bild (Tippen aufs Bild startet und stoppt weiter)
+  if (on) $('monitor').classList.add('played');
   $('playBtn').classList.toggle('playing', on);
   $('playBtn').setAttribute('aria-label', on ? 'Pause' : 'Abspielen');
   if (!on) $('beatDot').classList.remove('on');
@@ -1420,6 +1421,9 @@ async function renderTrip() {
   if (km > 1) parts.push(`ca. ${Math.round(km).toLocaleString('de-DE')} km`);
   if (stops.length) { const days = Math.max(1, Math.round((stops[stops.length - 1].to - stops[0].from) / 86400000) + 1); parts.push(`${days} ${days === 1 ? 'Tag' : 'Tage'}`); }
   $('tripStats').textContent = parts.join(' · ');
+  // Beispielort mit echtem Titelbild statt Anfangsbuchstabe (die Beispielbilder werden einmal gemalt)
+  const demoP = places.find((p) => p.demo);
+  if (demoP && !placeCover(demoP) && !renderTrip._demoCover) { renderTrip._demoCover = true; setTimeout(() => ensureDemoMedia(demoP).then(() => { if (!$('viewTrip').hidden) renderTrip(); }), 30); }
   if (!places.length) {
     list.innerHTML = '<div class="empty">Noch keine Orte. Wähle oben die Fotos deiner Reise, die App erkennt die Orte selbst.</div>';
   } else {
@@ -1434,7 +1438,7 @@ async function renderTrip() {
       const fd = fl ? flightData(p) : null;
       const fkm = fl && cityPos((p.flight || {}).fromName) && cityPos((p.flight || {}).toName) ? Math.round(haversineKm(cityPos(p.flight.fromName), cityPos(p.flight.toName))) : fd ? fd.km : 0;
       const meta = fl ? ['Flug', fd && fd.dep && fd.arr ? `${fd.dep}–${fd.arr}` : '', fkm ? `${fkm.toLocaleString('de-DE')} km` : '', n ? `${n} Aufnahmen` : 'noch keine Videos', p.sub || ''].filter(Boolean).join(' · ')
-        : `${p.demo ? 'Beispiel' : `${n} Aufnahmen`}${p.sub ? ' · ' + esc(p.sub) : ''}${leg > 5 ? ` · +${Math.round(leg).toLocaleString('de-DE')} km` : ''}`;
+        : `${p.demo ? `${(p.fps || []).length} Beispielbilder` : `${n} Aufnahmen`}${p.sub ? ' · ' + esc(p.sub) : ''}${leg > 5 ? ` · +${Math.round(leg).toLocaleString('de-DE')} km` : ''}`;
       return `<div class="place${fl ? ' is-flight' : ''}" role="button" tabindex="0" data-id="${esc(p.id)}">
         <span class="place-cover">${cover ? `<img src="${cover}" alt="">` : fl ? PLANE_SVG : `<span class="mono">${esc((p.name || '?').slice(0, 1).toUpperCase())}</span>`}</span>
         <span class="place-text">
@@ -1455,7 +1459,7 @@ async function renderTrip() {
     : 'Sobald deine Reise zwei Orte hat, entsteht hier der Film der ganzen Reise.';
   const covers = withMedia.map(placeCover).filter(Boolean).slice(0, 3);
   const arts = covers.length ? [0, 1, 2].map((i) => covers[i % covers.length]) : [];
-  $('bestofArt').innerHTML = arts.map((c, i) => `<img src="${c}" alt="" style="top:${i * 33.3}%;height:32%">`).join('');
+  $('bestofArt').innerHTML = arts.length ? arts.map((c, i) => `<img src="${c}" alt="" style="top:${i * 33.3}%;height:32%">`).join('') : '<svg class="bestof-ph" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M3 9h18M3 15h18M7 5v4M12 5v4M17 5v4M7 15v4M12 15v4M17 15v4" stroke="currentColor" stroke-width="1.3"/></svg>';
   $('storageHint').innerHTML = `Nur auf diesem Gerät: Orte, Einstellungen und ein Zwischenspeicher deiner gewählten Aufnahmen, damit angefangene Projekte erhalten bleiben. Nichts wird hochgeladen. Aufnahmen werden ${KEEP_DAYS} Tage nach der letzten Bearbeitung automatisch gelöscht.<span id="usage"></span> <button class="linklike" id="clearWorkBtn" type="button">Zwischenspeicher leeren</button> · <button class="linklike" id="wipeBtn" type="button">Alles löschen</button>`;
   S.store.usage().then((u) => { const el = $('usage'); if (el && u && u.usage > 1e6) el.textContent = ` Belegt: ${fmtBytes(u.usage)}.`; });
 }
@@ -1644,7 +1648,7 @@ function openMediaSheet(id) {
   const flightRole = roles ? (roles.takeoff === m.id ? 'takeoff' : roles.landing === m.id ? 'landing' : 'extra') : null;
   const quality = m.score != null ? Math.round(m.score * 100) : null;
   const body = openSheet(`
-    <img class="preview-img" src="${m.thumb || ''}" alt="">
+    ${m.kind === 'video' && m.url ? `<video class="preview-img" src="${m.url}" poster="${m.thumb || ''}" muted playsinline loop autoplay></video>` : `<img class="preview-img" src="${m.url || (m.canvas ? m.canvas.toDataURL('image/jpeg', 0.88) : m.thumb || '')}" alt="">`}
     <h3 id="sheetTitle">${m.kind === 'video' ? 'Video' : 'Foto'}${m.duration ? ' · ' + fmtClock(m.duration) : ''}</h3>
     ${quality != null ? `<p class="hint">Bewertung ${quality} von 100${m.dupOf ? ' · ähnelt einer besseren Aufnahme' : ''}${m.sharp != null && m.sharp < 0.35 ? ' · eher unscharf' : ''}</p>` : ''}
     ${m.kind === 'video' && m.duration ? trimHTML(m) : ''}
@@ -1657,6 +1661,9 @@ function openMediaSheet(id) {
       <button class="btn" data-act="excl" type="button">${m.excluded ? 'Wieder im Film verwenden' : 'Nicht im Film verwenden'}</button>
       <button class="btn danger" data-act="del" type="button">Aus diesem Film nehmen</button>
     </div>`);
+  // Originalbild in voller Schärfe; kann der Browser das Format nicht zeigen (z. B. HEIC), bleibt das Vorschaubild
+  const pv = body.querySelector('img.preview-img');
+  if (pv) pv.addEventListener('error', () => { if (m.thumb && pv.src !== m.thumb) pv.src = m.thumb; }, { once: true });
   if (m.kind === 'video' && m.duration) setupTrim(body, m);
   body.addEventListener('click', async (e) => {
     const r = e.target.closest('#sndPick [role="radio"]');
@@ -1818,8 +1825,7 @@ function renderStyle() {
   $('targetChips').hidden = st.format !== '9:16';
   setRadio($('allChips'), st.allMedia);
   setRadio($('variantChips'), st.variant);
-  $('mvBtn').setAttribute('aria-pressed', String(st.mv === 'on'));
-  $('mvHint').hidden = st.mv !== 'on';
+  $('mvBtn').setAttribute('aria-checked', String(st.mv === 'on'));
   $('allChips').hidden = S.ctx.kind === 'bestof' || isFlight(S.ctx.rec);
   $('capHint').textContent = capacityText();
   setRadio($('preChips'), st.pre);

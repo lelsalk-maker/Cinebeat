@@ -108,6 +108,7 @@ textarea.text-in { resize: vertical; min-height: 70px; }
 .bestof { width: 100%; display: flex; align-items: center; gap: 14px; text-align: left; padding: 14px; border-radius: 18px; border: 1px solid rgba(228, 213, 183, 0.28); background: linear-gradient(120deg, rgba(228, 213, 183, 0.08), rgba(28, 47, 77, 0.55) 70%), var(--night); cursor: pointer; }
 .bestof:disabled { opacity: 0.55; cursor: default; }
 .bestof-art { flex: none; width: 78px; height: 78px; border-radius: 12px; background: var(--navy-2); position: relative; overflow: hidden; }
+.bestof-ph { position: absolute; inset: 0; margin: auto; width: 34px; height: 34px; color: rgba(236, 234, 228, 0.28); }
 .bestof-art img { position: absolute; left: 0; width: 100%; height: 34%; object-fit: cover; max-width: none; }
 .bestof-text { display: grid; gap: 3px; flex: 1; min-width: 0; }
 .bestof-text strong { font-family: var(--f-serif); font-weight: 400; font-size: 26px; line-height: 1.05; }
@@ -130,7 +131,7 @@ textarea.text-in { resize: vertical; min-height: 70px; }
 .storage { margin-top: 20px; }
 
 /* ---------- Editor ---------- */
-.edit-top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; display: flex; align-items: center; gap: 10px; padding-block: 8px; background: linear-gradient(var(--black) 75%, rgba(5, 6, 8, 0)); }
+.edit-top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; display: flex; align-items: center; gap: 10px; padding-block: 8px; margin-inline: -16px; padding-inline: 16px; background: rgba(5, 6, 8, 0.9); -webkit-backdrop-filter: blur(14px) saturate(1.2); backdrop-filter: blur(14px) saturate(1.2); border-bottom: 1px solid rgba(236, 234, 228, 0.06); }
 .edit-title { flex: 1; min-width: 0; display: grid; }
 .edit-title input { background: transparent; border: 0; padding: 0; width: 100%; }
 #placeName { font-family: var(--f-serif); font-weight: 400; font-size: 24px; line-height: 1.15; }
@@ -171,9 +172,10 @@ textarea.text-in { resize: vertical; min-height: 70px; }
 .sec i.on { opacity: 1; transition: none; }
 .sec i.down { background: var(--beige); }
 .sample-chip { position: absolute; left: 8px; bottom: 8px; font: 600 10.5px/1 var(--f-sans); letter-spacing: 0.12em; text-transform: uppercase; padding: 6px 8px; border-radius: 6px; background: rgba(228, 213, 183, 0.92); color: var(--beige-ink); pointer-events: none; z-index: 2; }
-.bigplay { position: absolute; left: 50%; top: 50%; width: 68px; height: 68px; margin: -34px 0 0 -34px; border-radius: 50%; border: 1px solid rgba(236, 234, 228, 0.6); background: rgba(5, 6, 8, 0.55); color: var(--text); display: grid; place-items: center; cursor: pointer; z-index: 3; }
-.bigplay svg { width: 26px; height: 26px; margin-left: 4px; }
-.monitor.playing .bigplay, .monitor.text-mode .bigplay, .monitor.empty .bigplay { opacity: 0; pointer-events: none; }
+.bigplay { position: absolute; left: 50%; top: 50%; width: 58px; height: 58px; margin: -29px 0 0 -29px; border-radius: 50%; border: 1px solid rgba(236, 234, 228, 0.32); background: rgba(5, 6, 8, 0.32); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); color: var(--text); display: grid; place-items: center; cursor: pointer; z-index: 3; transition: opacity 0.25s ease, transform 0.25s ease; }
+.bigplay svg { width: 22px; height: 22px; margin-left: 3px; }
+.bigplay:active { transform: scale(0.94); }
+.monitor.playing .bigplay, .monitor.played .bigplay, .monitor.text-mode .bigplay, .monitor.empty .bigplay { opacity: 0; pointer-events: none; }
 .empty-stage { position: absolute; inset: 0; z-index: 4; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 20px; text-align: center; background: radial-gradient(90% 60% at 50% 38%, #16243c, #050608 75%); }
 .es-title { margin: 0; font-family: var(--f-serif); font-size: clamp(20px, 5.5vw, 26px); line-height: 1.15; text-wrap: balance; }
 .es-hint { margin: 0; font-size: 12.5px; color: var(--muted); max-width: 30ch; }
@@ -196,6 +198,17 @@ textarea.text-in { resize: vertical; min-height: 70px; }
 .dur { flex: none; font: 500 12px/1 var(--f-mono); color: var(--muted); font-variant-numeric: tabular-nums; min-width: 36px; text-align: right; }
 .stage-tools { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
 .cut-info { margin: 0; color: var(--muted); font: 11.5px/1.4 var(--f-mono); letter-spacing: 0.02em; font-variant-numeric: tabular-nums; min-width: 0; }
+.icon-toggle { display: inline-flex; align-items: center; gap: 5px; padding: 0 10px 0 8px; }
+.icon-toggle svg { width: 15px; height: 15px; }
+.switch-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; width: 100%; margin-top: 10px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line-2); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.switch-row .sw-text { display: grid; gap: 3px; min-width: 0; }
+.switch-row .sw-text b { font-size: 14px; font-weight: 600; }
+.switch-row .sw-text span { font-size: 12px; color: var(--muted); line-height: 1.35; }
+.switch-row .sw { flex: none; position: relative; width: 44px; height: 26px; border-radius: 13px; background: rgba(236, 234, 228, 0.12); transition: background 0.2s ease; }
+.switch-row .sw i { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--text); transition: transform 0.22s cubic-bezier(0.3, 0.7, 0.2, 1); }
+.switch-row[aria-checked="true"] { border-color: rgba(228, 213, 183, 0.5); background: rgba(228, 213, 183, 0.05); }
+.switch-row[aria-checked="true"] .sw { background: var(--beige); }
+.switch-row[aria-checked="true"] .sw i { transform: translateX(18px); background: var(--beige-ink); }
 .chip-toggle { flex: none; min-height: 30px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--line-2); background: transparent; font-size: 12px; cursor: pointer; color: var(--muted); }
 .chip-toggle[aria-pressed="true"] { border-color: rgba(226, 122, 110, 0.7); color: #ffcfc8; background: rgba(226, 122, 110, 0.1); }
 
@@ -504,7 +517,7 @@ details.more[open] { display: grid; gap: 16px; }
         </div>
         <div class="stage-tools">
           <p class="cut-info" id="cutInfo"></p>
-          <button class="chip-toggle" id="safeBtn" type="button" aria-pressed="false">Schutzzonen</button>
+          <button class="chip-toggle icon-toggle" id="safeBtn" type="button" aria-pressed="false" aria-label="Instagram-Schutzzonen zeigen" title="Instagram-Schutzzonen"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2.5" width="14" height="19" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 7h14M5 16.5h14" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2 2"/></svg><span>Zonen</span></button>
         </div>
       </div>
 
@@ -521,7 +534,7 @@ details.more[open] { display: grid; gap: 16px; }
         </section>
 
         <nav class="tabs" role="tablist" aria-label="Bereiche">
-          <button role="tab" id="tabbtn-style" aria-controls="tab-style" aria-selected="true" data-tab="style" type="button">Format &amp; Look</button>
+          <button role="tab" id="tabbtn-style" aria-controls="tab-style" aria-selected="true" data-tab="style" type="button">Look</button>
           <button role="tab" id="tabbtn-material" aria-controls="tab-material" aria-selected="false" data-tab="material" type="button">Material</button>
           <button role="tab" id="tabbtn-music" aria-controls="tab-music" aria-selected="false" data-tab="music" type="button">Musik</button>
           <button role="tab" id="tabbtn-cut" aria-controls="tab-cut" aria-selected="false" data-tab="cut" type="button">Schnitt</button>
@@ -536,12 +549,14 @@ details.more[open] { display: grid; gap: 16px; }
           <div class="field">
             <span class="field-label" id="varLabel">Variante</span>
             <div class="formats variants" role="radiogroup" aria-labelledby="varLabel" id="variantChips">
-              <button type="button" role="radio" data-v="ruhig"><b>Ruhig</b><span>lange Bilder, weich</span></button>
+              <button type="button" role="radio" data-v="ruhig"><b>Ruhig</b><span>lange Bilder</span></button>
               <button type="button" role="radio" data-v="ausgewogen"><b>Ausgewogen</b><span>wie der Song</span></button>
-              <button type="button" role="radio" data-v="energisch"><b>Energisch</b><span>schnell, Effekte</span></button>
+              <button type="button" role="radio" data-v="energisch"><b>Energisch</b><span>schnell</span></button>
             </div>
-            <div class="chips sub-chips"><button type="button" id="mvBtn" aria-pressed="false">Musikvideo</button></div>
-            <p class="hint small" id="mvHint" hidden>Musikvideo: Mehrfachbelichtungen im Takt, Schwarzweiß mit Farbe auf jeder Bassdrum, Echo, ein Spiegelmoment und feiner Farbversatz auf den Kicks. Lässt sich mit jeder Variante kombinieren.</p>
+            <button type="button" class="switch-row" id="mvBtn" role="switch" aria-checked="false">
+              <span class="sw-text"><b>Musikvideo</b><span>Mehrfachbelichtungen im Takt, Farbe auf der Bassdrum, Spiegelmoment</span></span>
+              <span class="sw" aria-hidden="true"><i></i></span>
+            </button>
           </div>
           <div class="field">
             <span class="field-label" id="fmtLabel">Wofür?</span>
@@ -5679,12 +5694,23 @@ vec3 layer(sampler2D tex, vec4 xf, vec3 box, vec3 blur, vec4 geo, vec2 off, vec2
   uv -= off;
   if (blur.x < 0.5) return sampleSrc(tex, xf, box, geo, uv, par, foc, hor);
   vec2 dir = blur.x < 1.5 ? blur.yz : (uv - 0.5) * blur.y;
+  // Bewegungsunschärfe ohne sichtbare Stufen: je Pixel leicht versetzte Abtastung, vorgefilterte Mipmap-Stufe,
+  // Dreiecksgewichtung (Mitte schärfer, Ränder weich) – wirkt wie echte Verschlusszeit statt wie Kopien
+  float j = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) - 0.5;
+  vec4 g2 = geo;
+  g2.y += 1.6 * clamp(length(dir) * 18.0, 0.0, 1.0);
   vec3 acc = vec3(0.0);
+  float ws = 0.0;
   for (int i = 0; i < 8; i++) {
-    float k = float(i) / 7.0 - 0.5;
-    acc += sampleSrc(tex, xf, box, geo, uv + dir * k, par, foc, hor);
+    float k = (float(i) + 0.5 + j) / 8.0 - 0.5;
+    float w = 1.0 - abs(k) * 1.3;
+    // am Bildrand gespiegelt statt die Randspalte zu verschmieren (sonst heller Streifen an der Kante)
+    vec2 q = uv + dir * k;
+    q = 1.0 - abs(1.0 - abs(q));
+    acc += sampleSrc(tex, xf, box, g2, q, par, foc, hor) * w;
+    ws += w;
   }
-  return acc / 8.0;
+  return acc / ws;
 }
 
 vec3 layerA(vec2 uv) { return layer(uTexA, uXfA, uBoxA, uBlurA, uGeoA, uOffA, uv, uParA, uFocA, uHor.x) * uCorrA; }
@@ -5707,8 +5733,11 @@ vec3 composite(vec2 uv) {
   if (uTrans == 9 && uHasB > 0.5) {
     float e = p * p * (3.0 - 2.0 * p);
     float ax = uv.x + e * uDir;
-    if (uDir > 0.0 ? ax < 1.0 : ax >= 0.0) return layerA(vec2(ax, uv.y));
-    return layerB(vec2(ax - uDir, uv.y));
+    // weicher Schatten an der Kante: die Bilder schieben sich wie Blätter übereinander, keine harte Naht
+    float xb = uDir > 0.0 ? 1.0 - e : e;
+    float sh = 1.0 - 0.3 * exp(-abs(uv.x - xb) * uRes.x / max(uRes.y * uBand.y, 1.0) * 40.0) * sin(3.14159265 * e);
+    if (uDir > 0.0 ? ax < 1.0 : ax >= 0.0) return layerA(vec2(ax, uv.y)) * sh;
+    return layerB(vec2(ax - uDir, uv.y)) * sh;
   }
   vec3 a = uHasA > 0.5 ? layerA(uv) : vec3(0.0);
   if (uChroma > 0.0005 && uHasA > 0.5) { a.r = layerA(uv + vec2(uChroma, 0.0)).r; a.b = layerA(uv - vec2(uChroma, 0.0)).b; }
@@ -6854,6 +6883,8 @@ class OverlayPainter {
     ctx.textBaseline = 'middle';
     this.shadow(ctx, g.base * 0.05);
     const bt = beats[Math.min(idx, beats.length - 1)];
+    // jedes Wort setzt auf dem Schlag ein, aber mit 60 ms Anschlag statt eines harten Einzelbilds
+    ctx.globalAlpha = a * (0.35 + 0.65 * smooth(cl01((t - bt) / 0.06)));
     const sc = 1.03 - 0.03 * easeOutCubic(cl01((t - bt) / 0.35));
     if (!cur.final) {
       const full = words.length === 1 ? words[0] : cur.text;
@@ -8550,7 +8581,8 @@ class Engine {
     };
     const k = a.amt || 1;
     const dk = last(a.kicks);
-    const out = { zoom: 1 + 0.022 * k * Math.exp(-dk / 0.085), dx: 0, dy: 0, rot: 0 };
+    // Anschlag über 40 ms statt in einem Bild: der Impuls wirkt wie eine Kamera, die mitgeht, nicht wie ein Sprung
+    const out = { zoom: 1 + 0.022 * k * smooth(clamp01(dk / 0.04)) * Math.exp(-Math.max(0, dk - 0.04) / 0.1), dx: 0, dy: 0, rot: 0 };
     if (a.snare) {
       const ds = last(a.snares);
       if (ds < 0.2) {
@@ -8764,9 +8796,11 @@ class Engine {
         const c0 = L.a, u = clamp01((t - c0.start) / Math.max(0.1, c0.end - c0.start));
         const g = this.layerParams(src, t, fx, { zoom: (ly.mode === 'luma' ? 1.06 : 1.12) + 0.05 * u, shiftX: 0.035 * (0.5 - u) * (ly.dir || 1), flat: true });
         if (g) {
-          const edge = Math.min(1, (t - c0.start - (c0.echo ? c0.echo.dur : 0)) / 0.14, (c0.end - t) / 0.14);
+          // nach dem Schnitt blüht die Überlagerung weich auf, vor dem nächsten Schnitt tritt sie zurück
+          const edge = Math.min(1, (t - c0.start - (c0.echo ? c0.echo.dur : 0)) / 0.4, (c0.end - t) / 0.25);
           let a = ly.amp * smooth(clamp01(edge));
-          if (ly.pulse) a *= 0.5 + 0.5 * this.beatPulse(t).env;
+          // Puls im Takt mit weichem Anschlag (60 ms) und langem Ausklingen: atmet mit, flackert nicht
+          if (ly.pulse) { const bp = this.beatPulse(t), b0 = this.plan.beats[bp.index] || 0, d = t - b0; a *= 0.68 + 0.32 * smooth(clamp01(d / 0.06)) * Math.exp(-Math.max(0, d - 0.06) / 0.28); }
           B = g; trans = ly.mode === 'luma' ? 22 : 21; mix = a;
         }
       }
@@ -8777,7 +8811,7 @@ class Engine {
     if (ch && ch.zones.some((z) => t >= z[0] && t < z[1])) {
       let lo = 0, hi = ch.kicks.length - 1, r = -1;
       while (lo <= hi) { const mid = (lo + hi) >> 1; if (ch.kicks[mid] <= t) { r = mid; lo = mid + 1; } else hi = mid - 1; }
-      if (r >= 0) chroma = 0.0045 * Math.exp(-(t - ch.kicks[r]) / 0.07);
+      if (r >= 0) { const d = t - ch.kicks[r]; chroma = 0.0045 * smooth(clamp01(d / 0.03)) * Math.exp(-Math.max(0, d - 0.03) / 0.07); }
     }
     const col = this.colorState(t, A && A.foc);
     const pop = this.colorPop(t);
@@ -10887,9 +10921,8 @@ function updatePlanInfo() {
   $('durLabel').textContent = fmtClock(plan.duration);
   const drop = plan.sections.find((x) => x.label === 'drop' || x.label === 'chorus');
   const n = plan.visibleClips;
-  const r = plan.resolved;
-  const parts = [`${FORMATS[r.format].short}`, `${LOOKS[r.look] ? LOOKS[r.look].label : ''}`, `${n} Einstellungen`];
-  if (drop) parts.push(`${SECTION_DE[drop.label]} ab ${fmtClock(drop.start)}`);
+  const parts = [`${n} Einstellungen`];
+  if (drop) parts.push(`${SECTION_DE[drop.label]} ${fmtClock(drop.start)}`);
   parts.push(`${Math.round(ctx.song.an.bpm)} BPM`);
   $('cutInfo').textContent = ctx.media.filter((m) => !m.bad && !m.loading).length ? parts.join(' · ') : 'Noch kein Material. Füge Fotos oder Videos hinzu.';
   $('sampleChip').hidden = !(ctx.kind === 'place' && ctx.rec.demo);
@@ -11031,6 +11064,8 @@ function togglePlay() {
 }
 function setPlayingUI(on) {
   $('monitor').classList.toggle('playing', on);
+  // nach dem ersten Abspielen verdeckt kein Knopf mehr das Bild (Tippen aufs Bild startet und stoppt weiter)
+  if (on) $('monitor').classList.add('played');
   $('playBtn').classList.toggle('playing', on);
   $('playBtn').setAttribute('aria-label', on ? 'Pause' : 'Abspielen');
   if (!on) $('beatDot').classList.remove('on');
@@ -11063,6 +11098,9 @@ async function renderTrip() {
   if (km > 1) parts.push(`ca. ${Math.round(km).toLocaleString('de-DE')} km`);
   if (stops.length) { const days = Math.max(1, Math.round((stops[stops.length - 1].to - stops[0].from) / 86400000) + 1); parts.push(`${days} ${days === 1 ? 'Tag' : 'Tage'}`); }
   $('tripStats').textContent = parts.join(' · ');
+  // Beispielort mit echtem Titelbild statt Anfangsbuchstabe (die Beispielbilder werden einmal gemalt)
+  const demoP = places.find((p) => p.demo);
+  if (demoP && !placeCover(demoP) && !renderTrip._demoCover) { renderTrip._demoCover = true; setTimeout(() => ensureDemoMedia(demoP).then(() => { if (!$('viewTrip').hidden) renderTrip(); }), 30); }
   if (!places.length) {
     list.innerHTML = '<div class="empty">Noch keine Orte. Wähle oben die Fotos deiner Reise, die App erkennt die Orte selbst.</div>';
   } else {
@@ -11077,7 +11115,7 @@ async function renderTrip() {
       const fd = fl ? flightData(p) : null;
       const fkm = fl && cityPos((p.flight || {}).fromName) && cityPos((p.flight || {}).toName) ? Math.round(haversineKm(cityPos(p.flight.fromName), cityPos(p.flight.toName))) : fd ? fd.km : 0;
       const meta = fl ? ['Flug', fd && fd.dep && fd.arr ? `${fd.dep}–${fd.arr}` : '', fkm ? `${fkm.toLocaleString('de-DE')} km` : '', n ? `${n} Aufnahmen` : 'noch keine Videos', p.sub || ''].filter(Boolean).join(' · ')
-        : `${p.demo ? 'Beispiel' : `${n} Aufnahmen`}${p.sub ? ' · ' + esc(p.sub) : ''}${leg > 5 ? ` · +${Math.round(leg).toLocaleString('de-DE')} km` : ''}`;
+        : `${p.demo ? `${(p.fps || []).length} Beispielbilder` : `${n} Aufnahmen`}${p.sub ? ' · ' + esc(p.sub) : ''}${leg > 5 ? ` · +${Math.round(leg).toLocaleString('de-DE')} km` : ''}`;
       return `<div class="place${fl ? ' is-flight' : ''}" role="button" tabindex="0" data-id="${esc(p.id)}">
         <span class="place-cover">${cover ? `<img src="${cover}" alt="">` : fl ? PLANE_SVG : `<span class="mono">${esc((p.name || '?').slice(0, 1).toUpperCase())}</span>`}</span>
         <span class="place-text">
@@ -11098,7 +11136,7 @@ async function renderTrip() {
     : 'Sobald deine Reise zwei Orte hat, entsteht hier der Film der ganzen Reise.';
   const covers = withMedia.map(placeCover).filter(Boolean).slice(0, 3);
   const arts = covers.length ? [0, 1, 2].map((i) => covers[i % covers.length]) : [];
-  $('bestofArt').innerHTML = arts.map((c, i) => `<img src="${c}" alt="" style="top:${i * 33.3}%;height:32%">`).join('');
+  $('bestofArt').innerHTML = arts.length ? arts.map((c, i) => `<img src="${c}" alt="" style="top:${i * 33.3}%;height:32%">`).join('') : '<svg class="bestof-ph" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M3 9h18M3 15h18M7 5v4M12 5v4M17 5v4M7 15v4M12 15v4M17 15v4" stroke="currentColor" stroke-width="1.3"/></svg>';
   $('storageHint').innerHTML = `Nur auf diesem Gerät: Orte, Einstellungen und ein Zwischenspeicher deiner gewählten Aufnahmen, damit angefangene Projekte erhalten bleiben. Nichts wird hochgeladen. Aufnahmen werden ${KEEP_DAYS} Tage nach der letzten Bearbeitung automatisch gelöscht.<span id="usage"></span> <button class="linklike" id="clearWorkBtn" type="button">Zwischenspeicher leeren</button> · <button class="linklike" id="wipeBtn" type="button">Alles löschen</button>`;
   S.store.usage().then((u) => { const el = $('usage'); if (el && u && u.usage > 1e6) el.textContent = ` Belegt: ${fmtBytes(u.usage)}.`; });
 }
@@ -11287,7 +11325,7 @@ function openMediaSheet(id) {
   const flightRole = roles ? (roles.takeoff === m.id ? 'takeoff' : roles.landing === m.id ? 'landing' : 'extra') : null;
   const quality = m.score != null ? Math.round(m.score * 100) : null;
   const body = openSheet(`
-    <img class="preview-img" src="${m.thumb || ''}" alt="">
+    ${m.kind === 'video' && m.url ? `<video class="preview-img" src="${m.url}" poster="${m.thumb || ''}" muted playsinline loop autoplay></video>` : `<img class="preview-img" src="${m.url || (m.canvas ? m.canvas.toDataURL('image/jpeg', 0.88) : m.thumb || '')}" alt="">`}
     <h3 id="sheetTitle">${m.kind === 'video' ? 'Video' : 'Foto'}${m.duration ? ' · ' + fmtClock(m.duration) : ''}</h3>
     ${quality != null ? `<p class="hint">Bewertung ${quality} von 100${m.dupOf ? ' · ähnelt einer besseren Aufnahme' : ''}${m.sharp != null && m.sharp < 0.35 ? ' · eher unscharf' : ''}</p>` : ''}
     ${m.kind === 'video' && m.duration ? trimHTML(m) : ''}
@@ -11300,6 +11338,9 @@ function openMediaSheet(id) {
       <button class="btn" data-act="excl" type="button">${m.excluded ? 'Wieder im Film verwenden' : 'Nicht im Film verwenden'}</button>
       <button class="btn danger" data-act="del" type="button">Aus diesem Film nehmen</button>
     </div>`);
+  // Originalbild in voller Schärfe; kann der Browser das Format nicht zeigen (z. B. HEIC), bleibt das Vorschaubild
+  const pv = body.querySelector('img.preview-img');
+  if (pv) pv.addEventListener('error', () => { if (m.thumb && pv.src !== m.thumb) pv.src = m.thumb; }, { once: true });
   if (m.kind === 'video' && m.duration) setupTrim(body, m);
   body.addEventListener('click', async (e) => {
     const r = e.target.closest('#sndPick [role="radio"]');
@@ -11461,8 +11502,7 @@ function renderStyle() {
   $('targetChips').hidden = st.format !== '9:16';
   setRadio($('allChips'), st.allMedia);
   setRadio($('variantChips'), st.variant);
-  $('mvBtn').setAttribute('aria-pressed', String(st.mv === 'on'));
-  $('mvHint').hidden = st.mv !== 'on';
+  $('mvBtn').setAttribute('aria-checked', String(st.mv === 'on'));
   $('allChips').hidden = S.ctx.kind === 'bestof' || isFlight(S.ctx.rec);
   $('capHint').textContent = capacityText();
   setRadio($('preChips'), st.pre);

@@ -771,7 +771,8 @@ class Engine {
     };
     const k = a.amt || 1;
     const dk = last(a.kicks);
-    const out = { zoom: 1 + 0.022 * k * Math.exp(-dk / 0.085), dx: 0, dy: 0, rot: 0 };
+    // Anschlag über 40 ms statt in einem Bild: der Impuls wirkt wie eine Kamera, die mitgeht, nicht wie ein Sprung
+    const out = { zoom: 1 + 0.022 * k * smooth(clamp01(dk / 0.04)) * Math.exp(-Math.max(0, dk - 0.04) / 0.1), dx: 0, dy: 0, rot: 0 };
     if (a.snare) {
       const ds = last(a.snares);
       if (ds < 0.2) {
@@ -985,9 +986,11 @@ class Engine {
         const c0 = L.a, u = clamp01((t - c0.start) / Math.max(0.1, c0.end - c0.start));
         const g = this.layerParams(src, t, fx, { zoom: (ly.mode === 'luma' ? 1.06 : 1.12) + 0.05 * u, shiftX: 0.035 * (0.5 - u) * (ly.dir || 1), flat: true });
         if (g) {
-          const edge = Math.min(1, (t - c0.start - (c0.echo ? c0.echo.dur : 0)) / 0.14, (c0.end - t) / 0.14);
+          // nach dem Schnitt blüht die Überlagerung weich auf, vor dem nächsten Schnitt tritt sie zurück
+          const edge = Math.min(1, (t - c0.start - (c0.echo ? c0.echo.dur : 0)) / 0.4, (c0.end - t) / 0.25);
           let a = ly.amp * smooth(clamp01(edge));
-          if (ly.pulse) a *= 0.5 + 0.5 * this.beatPulse(t).env;
+          // Puls im Takt mit weichem Anschlag (60 ms) und langem Ausklingen: atmet mit, flackert nicht
+          if (ly.pulse) { const bp = this.beatPulse(t), b0 = this.plan.beats[bp.index] || 0, d = t - b0; a *= 0.68 + 0.32 * smooth(clamp01(d / 0.06)) * Math.exp(-Math.max(0, d - 0.06) / 0.28); }
           B = g; trans = ly.mode === 'luma' ? 22 : 21; mix = a;
         }
       }
@@ -998,7 +1001,7 @@ class Engine {
     if (ch && ch.zones.some((z) => t >= z[0] && t < z[1])) {
       let lo = 0, hi = ch.kicks.length - 1, r = -1;
       while (lo <= hi) { const mid = (lo + hi) >> 1; if (ch.kicks[mid] <= t) { r = mid; lo = mid + 1; } else hi = mid - 1; }
-      if (r >= 0) chroma = 0.0045 * Math.exp(-(t - ch.kicks[r]) / 0.07);
+      if (r >= 0) { const d = t - ch.kicks[r]; chroma = 0.0045 * smooth(clamp01(d / 0.03)) * Math.exp(-Math.max(0, d - 0.03) / 0.07); }
     }
     const col = this.colorState(t, A && A.foc);
     const pop = this.colorPop(t);

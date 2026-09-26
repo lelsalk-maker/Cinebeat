@@ -136,12 +136,23 @@ vec3 layer(sampler2D tex, vec4 xf, vec3 box, vec3 blur, vec4 geo, vec2 off, vec2
   uv -= off;
   if (blur.x < 0.5) return sampleSrc(tex, xf, box, geo, uv, par, foc, hor);
   vec2 dir = blur.x < 1.5 ? blur.yz : (uv - 0.5) * blur.y;
+  // Bewegungsunschärfe ohne sichtbare Stufen: je Pixel leicht versetzte Abtastung, vorgefilterte Mipmap-Stufe,
+  // Dreiecksgewichtung (Mitte schärfer, Ränder weich) – wirkt wie echte Verschlusszeit statt wie Kopien
+  float j = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) - 0.5;
+  vec4 g2 = geo;
+  g2.y += 1.6 * clamp(length(dir) * 18.0, 0.0, 1.0);
   vec3 acc = vec3(0.0);
+  float ws = 0.0;
   for (int i = 0; i < 8; i++) {
-    float k = float(i) / 7.0 - 0.5;
-    acc += sampleSrc(tex, xf, box, geo, uv + dir * k, par, foc, hor);
+    float k = (float(i) + 0.5 + j) / 8.0 - 0.5;
+    float w = 1.0 - abs(k) * 1.3;
+    // am Bildrand gespiegelt statt die Randspalte zu verschmieren (sonst heller Streifen an der Kante)
+    vec2 q = uv + dir * k;
+    q = 1.0 - abs(1.0 - abs(q));
+    acc += sampleSrc(tex, xf, box, g2, q, par, foc, hor) * w;
+    ws += w;
   }
-  return acc / 8.0;
+  return acc / ws;
 }
 
 vec3 layerA(vec2 uv) { return layer(uTexA, uXfA, uBoxA, uBlurA, uGeoA, uOffA, uv, uParA, uFocA, uHor.x) * uCorrA; }
@@ -164,8 +175,11 @@ vec3 composite(vec2 uv) {
   if (uTrans == 9 && uHasB > 0.5) {
     float e = p * p * (3.0 - 2.0 * p);
     float ax = uv.x + e * uDir;
-    if (uDir > 0.0 ? ax < 1.0 : ax >= 0.0) return layerA(vec2(ax, uv.y));
-    return layerB(vec2(ax - uDir, uv.y));
+    // weicher Schatten an der Kante: die Bilder schieben sich wie Blätter übereinander, keine harte Naht
+    float xb = uDir > 0.0 ? 1.0 - e : e;
+    float sh = 1.0 - 0.3 * exp(-abs(uv.x - xb) * uRes.x / max(uRes.y * uBand.y, 1.0) * 40.0) * sin(3.14159265 * e);
+    if (uDir > 0.0 ? ax < 1.0 : ax >= 0.0) return layerA(vec2(ax, uv.y)) * sh;
+    return layerB(vec2(ax - uDir, uv.y)) * sh;
   }
   vec3 a = uHasA > 0.5 ? layerA(uv) : vec3(0.0);
   if (uChroma > 0.0005 && uHasA > 0.5) { a.r = layerA(uv + vec2(uChroma, 0.0)).r; a.b = layerA(uv - vec2(uChroma, 0.0)).b; }

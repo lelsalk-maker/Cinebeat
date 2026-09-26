@@ -106,7 +106,7 @@
         </div>
         <div class="stage-tools">
           <p class="cut-info" id="cutInfo"></p>
-          <button class="chip-toggle" id="safeBtn" type="button" aria-pressed="false">Schutzzonen</button>
+          <button class="chip-toggle icon-toggle" id="safeBtn" type="button" aria-pressed="false" aria-label="Instagram-Schutzzonen zeigen" title="Instagram-Schutzzonen"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2.5" width="14" height="19" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 7h14M5 16.5h14" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2 2"/></svg><span>Zonen</span></button>
         </div>
       </div>
 
@@ -123,7 +123,7 @@
         </section>
 
         <nav class="tabs" role="tablist" aria-label="Bereiche">
-          <button role="tab" id="tabbtn-style" aria-controls="tab-style" aria-selected="true" data-tab="style" type="button">Format &amp; Look</button>
+          <button role="tab" id="tabbtn-style" aria-controls="tab-style" aria-selected="true" data-tab="style" type="button">Look</button>
           <button role="tab" id="tabbtn-material" aria-controls="tab-material" aria-selected="false" data-tab="material" type="button">Material</button>
           <button role="tab" id="tabbtn-music" aria-controls="tab-music" aria-selected="false" data-tab="music" type="button">Musik</button>
           <button role="tab" id="tabbtn-cut" aria-controls="tab-cut" aria-selected="false" data-tab="cut" type="button">Schnitt</button>
@@ -138,12 +138,14 @@
           <div class="field">
             <span class="field-label" id="varLabel">Variante</span>
             <div class="formats variants" role="radiogroup" aria-labelledby="varLabel" id="variantChips">
-              <button type="button" role="radio" data-v="ruhig"><b>Ruhig</b><span>lange Bilder, weich</span></button>
+              <button type="button" role="radio" data-v="ruhig"><b>Ruhig</b><span>lange Bilder</span></button>
               <button type="button" role="radio" data-v="ausgewogen"><b>Ausgewogen</b><span>wie der Song</span></button>
-              <button type="button" role="radio" data-v="energisch"><b>Energisch</b><span>schnell, Effekte</span></button>
+              <button type="button" role="radio" data-v="energisch"><b>Energisch</b><span>schnell</span></button>
             </div>
-            <div class="chips sub-chips"><button type="button" id="mvBtn" aria-pressed="false">Musikvideo</button></div>
-            <p class="hint small" id="mvHint" hidden>Musikvideo: Mehrfachbelichtungen im Takt, Schwarzweiß mit Farbe auf jeder Bassdrum, Echo, ein Spiegelmoment und feiner Farbversatz auf den Kicks. Lässt sich mit jeder Variante kombinieren.</p>
+            <button type="button" class="switch-row" id="mvBtn" role="switch" aria-checked="false">
+              <span class="sw-text"><b>Musikvideo</b><span>Mehrfachbelichtungen im Takt, Farbe auf der Bassdrum, Spiegelmoment</span></span>
+              <span class="sw" aria-hidden="true"><i></i></span>
+            </button>
           </div>
           <div class="field">
             <span class="field-label" id="fmtLabel">Wofür?</span>

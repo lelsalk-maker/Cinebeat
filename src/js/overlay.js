@@ -836,6 +836,8 @@ class OverlayPainter {
     ctx.textBaseline = 'middle';
     this.shadow(ctx, g.base * 0.05);
     const bt = beats[Math.min(idx, beats.length - 1)];
+    // jedes Wort setzt auf dem Schlag ein, aber mit 60 ms Anschlag statt eines harten Einzelbilds
+    ctx.globalAlpha = a * (0.35 + 0.65 * smooth(cl01((t - bt) / 0.06)));
     const sc = 1.03 - 0.03 * easeOutCubic(cl01((t - bt) / 0.35));
     if (!cur.final) {
       const full = words.length === 1 ? words[0] : cur.text;

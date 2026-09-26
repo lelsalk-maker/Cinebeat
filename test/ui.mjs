@@ -56,7 +56,7 @@ console.log('Variante:', await page.evaluate(() => ({ v: CineBeat.S.ctx.rec.sett
 await shot('8_variant', true);
 await page.click('#variantChips [data-v="ausgewogen"]'); await page.waitForTimeout(800);
 await page.click('#mvBtn'); await page.waitForTimeout(1500);
-const mvs = await page.evaluate(() => ({ mv: CineBeat.S.ctx.rec.settings.mv, pressed: document.getElementById('mvBtn').getAttribute('aria-pressed'), layers: CineBeat.S.plan.resolved.layers, color: CineBeat.S.plan.resolved.color }));
+const mvs = await page.evaluate(() => ({ mv: CineBeat.S.ctx.rec.settings.mv, pressed: document.getElementById('mvBtn').getAttribute('aria-checked'), layers: CineBeat.S.plan.resolved.layers, color: CineBeat.S.plan.resolved.color }));
 console.log('Musikvideo:', mvs);
 if (mvs.mv !== 'on' || mvs.pressed !== 'true' || mvs.layers !== 'on') errs.push('Musikvideo-Schalter wirkt nicht');
 await shot('9_mv');
