@@ -3,7 +3,7 @@
  * Split-Screens, exakter Offline-Export (WebCodecs), Echtzeit-Rückfall
  * ============================================================ */
 
-const COLOR_MODE = { drop: 1, steps: 1, bloom: 2, sweep: 3, pop: 4 };
+const COLOR_MODE = { drop: 1, steps: 1, strobe: 1, pulse: 1, bloom: 2, sweep: 3, pop: 4 };
 
 function srcTimeOf(c, t) {
   const tt = c.freezeAt != null ? Math.min(t, c.freezeAt) : t;
@@ -626,6 +626,8 @@ class Engine {
     for (const k of Array.from(needed)) {
       const c = clips[k];
       if (c.echo && t < c.start + c.echo.dur && c.start <= t + lookahead) needed.add(clips.findIndex((x) => x.i === c.echo.from));
+      // Mehrfachbelichtung: das darübergelegte (nächste) Bild muss schon geladen sein
+      if (c.layer) needed.add(clips.findIndex((x) => x.i === c.layer.from));
     }
     needed.delete(-1);
     for (const k of Array.from(this.slots.keys())) if (!needed.has(k)) this.releaseSlot(k);
@@ -649,6 +651,7 @@ class Engine {
       else if (f.type === 'black') st.black = Math.max(st.black, a);
       else if (f.type === 'dim') st.dim = Math.max(st.dim, a);
       else if (f.type === 'desat') st.desat = Math.max(st.desat, a);
+      else if (f.type === 'mirror') st.mirror = Math.max(st.mirror || 0, a * smooth(clamp01((t - f.start) / 0.06)) * smooth(clamp01((f.end - t) / 0.06)));
     }
     return st;
   }
@@ -790,6 +793,18 @@ class Engine {
       if (t < f.hit) {
         p = 0;
         if (f.mode === 'steps') { const n = (f.steps || []).filter((x) => x <= t + 1e-3).length; p = n / ((f.steps || []).length + 1); }
+        else if (f.mode === 'strobe') {
+          // Stroboskop: Farbe und Schwarzweiß wechseln auf den Schlägen, immer schneller; 30 ms weiche Kante statt Flackern
+          const fl = f.steps || [];
+          let n = 0; while (n < fl.length && fl[n] <= t + 1e-4) n++;
+          const on = n % 2 === 1 ? 1 : 0, d = n ? t - fl[n - 1] : 1;
+          p = n ? (1 - on) + (2 * on - 1) * clamp01(d / 0.03) : 0;
+        } else if (f.mode === 'pulse') {
+          // Farbe auf dem Schlag: jede Bassdrum bringt die Farbe zurück, sie verblasst bis zum nächsten Schlag
+          const hs = f.steps || [];
+          let n = -1; for (let k = 0; k < hs.length && hs[k] <= t + 1e-4; k++) n = k;
+          if (n >= 0) { const d = t - hs[n], att = clamp01(d / 0.025); p = 0.9 * att * Math.exp(-Math.max(0, d - 0.025) / (f.decay || 0.18)); }
+        }
       } else p = f.mode === 'bloom' || f.mode === 'sweep' ? smooth(clamp01((t - f.hit) / Math.max(0.1, f.dur))) : 1;
       p = 1 - fade * (1 - p);
       if (p >= 0.999) return null;
@@ -797,6 +812,17 @@ class Engine {
       return [COLOR_MODE[f.mode] || 1, p, fo[0], fo[1]];
     }
     return null;
+  }
+
+  /** Farbschub nach der Rückkehr der Farbe: kräftiger auf dem Schlag, klingt über gut einen Beat aus. */
+  colorPop(t) {
+    for (const f of this.plan.colorFx || []) {
+      const st = f.hit + (f.dur || 0) * 0.5, pd = f.popDur || 0.6;
+      if (t < f.hit || t > st + pd) continue;
+      const ramp = clamp01((t - f.hit) / Math.max(0.02, (f.dur || 0) * 0.5));
+      return (f.popAmp != null ? f.popAmp : 0.35) * Math.pow(1 - clamp01((t - st) / pd), 2) * ramp;
+    }
+    return 0;
   }
 
   beatPulse(t) {
@@ -951,12 +977,36 @@ class Engine {
         if (ghost) { B = ghost; trans = 20; mix = 0.55 * Math.pow(1 - u, 2); }
       }
     }
+    // Mehrfachbelichtung: das nächste Bild liegt über dem aktuellen, im Refrain hell und pulsierend im Takt
+    const ly = L && L.a && L.a.layer;
+    if (A && !B && ly) {
+      const src = this.slots.get(ly.from);
+      if (src && src.ready && src.clip) {
+        const c0 = L.a, u = clamp01((t - c0.start) / Math.max(0.1, c0.end - c0.start));
+        const g = this.layerParams(src, t, fx, { zoom: (ly.mode === 'luma' ? 1.06 : 1.12) + 0.05 * u, shiftX: 0.035 * (0.5 - u) * (ly.dir || 1), flat: true });
+        if (g) {
+          const edge = Math.min(1, (t - c0.start - (c0.echo ? c0.echo.dur : 0)) / 0.14, (c0.end - t) / 0.14);
+          let a = ly.amp * smooth(clamp01(edge));
+          if (ly.pulse) a *= 0.5 + 0.5 * this.beatPulse(t).env;
+          B = g; trans = ly.mode === 'luma' ? 22 : 21; mix = a;
+        }
+      }
+    }
+    // Farbversatz auf den Kicks (Musikvideo): ein Hauch, der sofort wieder verschwindet
+    let chroma = 0;
+    const ch = plan.chroma;
+    if (ch && ch.zones.some((z) => t >= z[0] && t < z[1])) {
+      let lo = 0, hi = ch.kicks.length - 1, r = -1;
+      while (lo <= hi) { const mid = (lo + hi) >> 1; if (ch.kicks[mid] <= t) { r = mid; lo = mid + 1; } else hi = mid - 1; }
+      if (r >= 0) chroma = 0.0045 * Math.exp(-(t - ch.kicks[r]) / 0.07);
+    }
     const col = this.colorState(t, A && A.foc);
+    const pop = this.colorPop(t);
     const ov = this.painter.paint(plan, t, this.selectedOverlay);
     if (ov.topDirty) this.r.uploadOverlay('top', this.painter.top);
     this.r.draw({
       A, B, mix, trans, dir, grade: look.grade, time: t, band: plan.band,
-      flash: fx.flash, black: fx.black, dim: fx.dim, desat: fx.desat, bars: 0, ovTop: ov.top, col,
+      flash: fx.flash, black: fx.black, dim: fx.dim, desat: fx.desat, bars: 0, ovTop: ov.top, col, pop, chroma, mirror: fx.mirror || 0,
     });
   }
 

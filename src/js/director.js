@@ -196,9 +196,22 @@ function withVariant(s) {
   return o;
 }
 
+/**
+ * Musikvideo: Mehrfachbelichtungen im Takt, Schwarzweiß mit Farbe auf dem Schlag, Echo und Bassdrum-Impulse,
+ * ein Spiegelmoment und feiner Farbversatz auf den Kicks. Füllt nur, was auf Auto steht.
+ */
+function withMusicVideo(s) {
+  if (s.mv !== 'on') return s;
+  const o = { ...s, layers: 'on' };
+  if (o.color == null || o.color === 'auto') o.color = 'pulse';
+  if (o.echo == null || o.echo === 'auto') o.echo = 'on';
+  if (o.parallax == null || o.parallax === 'auto') o.parallax = 'on';
+  return o;
+}
+
 function direct(an, media, s, chapters, flight) {
   const notes = [];
-  s = withVariant(s);
+  s = withMusicVideo(withVariant(s));
   const rs = { ...s };
   const list = goodMedia(media, s.allMedia !== 'off' && !(chapters && chapters.length) && !flight);
   const all = media.filter((m) => !m.bad && !m.loading);
@@ -351,7 +364,7 @@ function direct(an, media, s, chapters, flight) {
   if (s.color === 'auto') {
     const colHits = (an.sections || []).filter((x, k, arr) => isPeak(x) && x.start > win.start + barDur * 0.9 && x.start < win.end - barDur && !isPeak(arr[k - 1]));
     const ok = !flight && !bwLook && s.midGrid !== 'on' && used < budget && (colHits.length || rs.intro === 'reveal' || D >= 20);
-    rs.color = ok ? pick(colHits.length ? ['drop', 'bloom', 'steps', 'drop', 'sweep'] : ['bloom', 'sweep']) : 'off';
+    rs.color = ok ? pick(colHits.length ? ['drop', 'bloom', 'steps', 'drop', 'sweep', ...(kicksIn >= 16 ? ['pulse'] : []), ...(rs.pace === 'schnell' ? ['strobe'] : [])] : ['bloom', 'sweep']) : 'off';
     rs.colorAuto = true;
     if (ok) used++;
   }

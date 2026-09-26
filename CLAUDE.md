@@ -25,8 +25,8 @@ beat-synchrone Filme macht. Läuft komplett auf dem Gerät (iPhone ist Hauptziel
 | `plan/chrono.js` | `layoutChrono`: Aufnahmen streng chronologisch auf die Schnitte (Split, Serie, Stapel, Videoplätze) |
 | `plan/plan.js` | `planOnce`: Einstiege, Stil-Mittel, Zuteilung, Übergänge, Bewegung, Effekte, Overlays, Kapazität |
 | `plan/timeline.js` | `layersAt`, `clipIndexAt` |
-| `director.js` | Auto-Regie: Varianten (`VARIANTS`), Aussortieren (`autoOut`), Länge, Songausschnitt, Tempo, Look, Einstieg/Ende, Stil-Budget (`rs.*`) |
-| `renderer.js` | WebGL-Shader (zwei Ebenen A/B, Grading, Übergänge, Farbmomente) |
+| `director.js` | Auto-Regie: Varianten (`VARIANTS`), Musikvideo (`withMusicVideo`), Aussortieren (`autoOut`), Länge, Songausschnitt, Tempo, Look, Einstieg/Ende, Stil-Budget (`rs.*`) |
+| `renderer.js` | WebGL-Shader (zwei Ebenen A/B, Grading, Übergänge, Film-Schwarzweiß `filmBW`, Farbmomente, Mehrfachbelichtung 21/22, Spiegel, Farbversatz) |
 | `overlay.js` | Titel, Kapitel, Flug- und Etappenkarte (`drawRouteMap`), Countdown usw. (Canvas 2D, ungegradet) |
 | `engine.js` | Vorschau (Audio-Uhr), Slots/Texturen, Kompositionen (Raster, Split, Stapel, Streifen), Export (WebCodecs + `mp4mux.js`/`demux.js`) |
 | `store.js`, `demo.js`, `ui.js` | IndexedDB, Beispielmaterial, gesamte Oberfläche; `src/body.html`, `src/app.css` |

@@ -37,6 +37,7 @@ function normalizeSettings(st, defaults) {
     target: pick1(s.target, ['story', 'reel'], 'story'),
     allMedia: pick1(s.allMedia, ['on', 'off'], 'on'),
     variant: pick1(s.variant, ['ausgewogen', 'ruhig', 'energisch'], 'ausgewogen'),
+    mv: pick1(s.mv, ['off', 'on'], 'off'),
     match: pick1(s.match, ['auto', 'off'], 'auto'),
     morph: pick1(s.morph, ['off', 'on'], 'off'),
     ramp: pick1(s.ramp, ['off', 'drop'], 'off'),
@@ -57,7 +58,7 @@ function normalizeSettings(st, defaults) {
     motion: pick1(s.motion, ['ken', 'snap', 'pulse', 'sway', 'float', 'tilt', 'handheld'], 'ken'),
     motionAmt: pick1(s.motionAmt, ['soft', 'medium', 'strong'], 'medium'),
     burst: pick1(s.burst, ['off', 'drop'], 'off'),
-    color: pick1(s.color, ['auto', 'off', 'drop', 'steps', 'bloom', 'sweep', 'pop'], 'auto'),
+    color: pick1(s.color, ['auto', 'off', 'drop', 'steps', 'strobe', 'pulse', 'bloom', 'sweep', 'pop'], 'auto'),
     accent: pick1(s.accent, ['auto', 'off', 'kick', 'kicksnare'], 'auto'),
     parallax: pick1(s.parallax, ['auto', 'on', 'off'], 'auto'),
     drift: pick1(s.drift, ['auto', 'on', 'off'], 'auto'),
@@ -73,7 +74,7 @@ function normalizeSettings(st, defaults) {
 }
 
 /* ---------- Stil-Vorlage: ein Stil für alle Filme der Reise ---------- */
-const STYLE_KEYS = ['variant', 'look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'allMedia', 'color', 'accent', 'parallax', 'drift', 'echo', 'stack', 'mini', 'chapKnock', 'chapMap', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
+const STYLE_KEYS = ['variant', 'mv', 'look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'allMedia', 'color', 'accent', 'parallax', 'drift', 'echo', 'stack', 'mini', 'chapKnock', 'chapMap', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
 const styleOf = (st) => Object.fromEntries(STYLE_KEYS.map((k) => [k, st[k]]));
 /** Einstellungen für neue Filme: Standard, darüber die Vorlage der Reise */
 function baseSettings(defaults) {
@@ -1811,12 +1812,14 @@ function renderStyle() {
   $('drumHint').textContent = st.accent === 'auto' ? (accR === 'off' ? 'Auto: bei diesem Song ohne Schlagzeug-Akzente.' : 'Auto: ein feiner Zoom-Impuls nur auf der Bassdrum, im Drop und Refrain.') : st.accent === 'kick' ? 'Der Zoom-Impuls folgt nur der Bassdrum, nicht jedem Beat.' : st.accent === 'kicksnare' ? 'Bassdrum-Zoom, dazu ein kurzes, feines Rütteln auf der Snare.' : 'Keine Schlagzeug-Akzente.';
   setRadio($('colorChips'), st.color);
   const colR = st.color === 'auto' && r ? r.color : st.color;
-  const COLOR_DE = { drop: 'Vor dem Drop schwarzweiß, auf dem ersten Schlag ist die Farbe schlagartig zurück.', steps: 'Im Takt vor dem Einsatz kommt die Farbe Beat für Beat zurück.', bloom: 'Die Farbe breitet sich auf dem Einsatz vom Motiv aus über das Bild aus.', sweep: 'Die Farbe läuft auf dem Einsatz als weiche Welle durchs Bild.', pop: 'Vor dem Einsatz bleiben nur kräftige Farben stehen, auf dem Schlag kommt alles zurück.', off: 'Kein Schwarzweiß-Moment.' };
+  const COLOR_DE = { drop: 'Vor dem Drop schwarzweiß, auf dem ersten Schlag ist die Farbe schlagartig zurück.', steps: 'Im Takt vor dem Einsatz kommt die Farbe Beat für Beat zurück.', strobe: 'Zwei Takte vor dem Einsatz wechseln Farbe und Schwarzweiß auf den Schlägen, immer schneller; auf dem Einsatz bleibt die Farbe und leuchtet kurz auf.', pulse: 'Vor dem Einsatz schwarzweiß, jede Bassdrum lässt die Farbe kurz aufleuchten; auf dem Einsatz bleibt sie.', bloom: 'Die Farbe breitet sich auf dem Einsatz vom Motiv aus über das Bild aus.', sweep: 'Die Farbe läuft auf dem Einsatz als weiche Welle durchs Bild.', pop: 'Vor dem Einsatz bleiben nur kräftige Farben stehen, auf dem Schlag kommt alles zurück.', off: 'Kein Schwarzweiß-Moment.' };
   $('colorHint').textContent = (st.color === 'auto' ? 'Auto: ' : '') + (COLOR_DE[colR] || COLOR_DE.off);
   setRadio($('targetChips'), st.target);
   $('targetChips').hidden = st.format !== '9:16';
   setRadio($('allChips'), st.allMedia);
   setRadio($('variantChips'), st.variant);
+  $('mvBtn').setAttribute('aria-pressed', String(st.mv === 'on'));
+  $('mvHint').hidden = st.mv !== 'on';
   $('allChips').hidden = S.ctx.kind === 'bestof' || isFlight(S.ctx.rec);
   $('capHint').textContent = capacityText();
   setRadio($('preChips'), st.pre);
@@ -2712,6 +2715,7 @@ async function init() {
   bindSetting('drumChips', 'accent');
   bindSetting('allChips', 'allMedia');
   bindSetting('variantChips', 'variant');
+  $('mvBtn').addEventListener('click', () => { const st = S.ctx.rec.settings; st.mv = st.mv === 'on' ? 'off' : 'on'; commit(); savePlaceSoon(); engine && (engine.t = 0); scheduleRebuild(0); });
   bindSetting('colorChips', 'color');
   bindSetting('preChips', 'pre');
   bindSetting('targetChips', 'target');

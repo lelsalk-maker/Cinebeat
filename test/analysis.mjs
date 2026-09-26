@@ -81,6 +81,15 @@ const res = await p.evaluate(async (b64) => {
   out.flowSizes = fo;
   let sameS = 0; for (let i = 1; i < fo.length; i++) if (fo[i] === fo[i - 1]) sameS++;
   if (sameS > 1) fails.push('Größen wechseln nicht: ' + fo);
+  // Musikvideo: Mehrfachbelichtungen, Spiegelmoment, Farbversatz, Farbe auf dem Schlag; Stroboskop endet schwarzweiß
+  const mvp = buildPlan({ an, media, settings: { ...set0, mv: 'on' }, overrides: { texts: [], stickers: [] } });
+  out.mv = { layers: mvp.clips.filter((c) => c.layer).length, modes: [...new Set(mvp.clips.filter((c) => c.layer).map((c) => c.layer.mode))], mirror: mvp.fx.some((f) => f.type === 'mirror'), chroma: !!mvp.chroma, color: mvp.colorFx.map((f) => f.mode + ':' + f.steps.length), doubles: mvp.clips.filter((c) => c.tin && c.tin.type === TR.DOUBLE).length };
+  if (!out.mv.layers || !out.mv.mirror || !mvp.colorFx.length || mvp.colorFx[0].mode !== 'pulse' || mvp.colorFx[0].steps.length < 4) fails.push('Musikvideo unvollständig');
+  if (mvp.clips.some((c) => c.layer && mvp.clips.findIndex((x) => x.i === c.layer.from) !== c.i + 1)) fails.push('Mehrfachbelichtung zeigt nicht das nächste Bild');
+  const stp = buildPlan({ an, media, settings: { ...set0, color: 'strobe' }, overrides: { texts: [], stickers: [] } });
+  const sf = stp.colorFx[0];
+  out.strobe = sf ? sf.steps.map((x) => +(sf.hit - x).toFixed(2)) : null;
+  if (!sf || sf.steps.length < 6 || sf.steps.length % 2 || sf.steps.some((x) => x >= sf.hit)) fails.push('Stroboskop falsch');
   return { out, fails };
 }, wav);
 console.log(JSON.stringify(res.out, null, 1));

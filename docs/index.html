@@ -540,6 +540,8 @@ details.more[open] { display: grid; gap: 16px; }
               <button type="button" role="radio" data-v="ausgewogen"><b>Ausgewogen</b><span>wie der Song</span></button>
               <button type="button" role="radio" data-v="energisch"><b>Energisch</b><span>schnell, Effekte</span></button>
             </div>
+            <div class="chips sub-chips"><button type="button" id="mvBtn" aria-pressed="false">Musikvideo</button></div>
+            <p class="hint small" id="mvHint" hidden>Musikvideo: Mehrfachbelichtungen im Takt, Schwarzweiß mit Farbe auf jeder Bassdrum, Echo, ein Spiegelmoment und feiner Farbversatz auf den Kicks. Lässt sich mit jeder Variante kombinieren.</p>
           </div>
           <div class="field">
             <span class="field-label" id="fmtLabel">Wofür?</span>
@@ -657,6 +659,8 @@ details.more[open] { display: grid; gap: 16px; }
                   <button type="button" role="radio" data-v="auto">Auto</button>
                   <button type="button" role="radio" data-v="drop">Auf dem Drop</button>
                   <button type="button" role="radio" data-v="steps">Beat für Beat</button>
+                  <button type="button" role="radio" data-v="strobe">Stroboskop</button>
+                  <button type="button" role="radio" data-v="pulse">Farbe auf dem Schlag</button>
                   <button type="button" role="radio" data-v="bloom">Vom Motiv aus</button>
                   <button type="button" role="radio" data-v="sweep">Farbwelle</button>
                   <button type="button" role="radio" data-v="pop">Farbtupfer</button>
@@ -4357,7 +4361,7 @@ function planOnce(opts) {
   }
 
   // Übergänge: aus dem Songaufbau und aus dem, was das vorige Bild zeigt
-  let matches = 0, morphs = 0, lastTr = -1;
+  let matches = 0, morphs = 0, lastTr = -1, mvSoft = 0;
   for (let i = 1; i < clips.length; i++) {
     const A = clips[i - 1], B = clips[i];
     const stopEnd = (an.stops || []).some((x) => Math.abs(x.end - (win.start + B.start)) < 0.06);
@@ -4385,6 +4389,11 @@ function planOnce(opts) {
       if (soft && dur >= 0.35 && rng() < 0.6) tr = { type: TR.DRIFT, dur, punch: false };
     }
 
+    // Musikvideo: in ruhigen Teilen geht jede zweite weiche Blende als Doppelbelichtung ineinander über
+    if (s.mv === 'on' && !fixedCut && isCalmLabel(B.label) && (tr.type === TR.DISSOLVE || tr.type === TR.LUMA || tr.type === TR.DRIFT) && (mvSoft++ % 2 === 0)) {
+      const d = Math.min(beatDur * 1.5, 0.45 * (A.end - A.start), 0.45 * (B.end - B.start));
+      if (d >= 0.35) tr = { type: TR.DOUBLE, dur: d, punch: false };
+    }
     if (tr.type !== TR.CUT) lastTr = tr.type;
     if (tr.match) { B.matchCut = true; matches++; }
     if (tr.type === TR.MORPH || tr.type === TR.INK || tr.type === TR.DOUBLE) morphs++;
@@ -4743,24 +4752,46 @@ function planOnce(opts) {
       const b = (an.barStart || []).map((x) => x - win.start).find((x) => x > fixedEndAll + barDur * 2 && x < D - barDur * 2);
       if (b != null) hs = [b];
     }
+    // Stroboskop: in den zwei Takten vor dem Einsatz wechseln Farbe und Schwarzweiß, erst alle zwei Beats, dann jeden Beat,
+    // zuletzt auf halben Beats; direkt vor dem Einsatz ist das Bild schwarzweiß
+    const strobeFlips = (h) => {
+      const b2 = h - barDur * 2, b1 = h - barDur, b0 = h - beatDur * 2 - 0.02;
+      const out = [];
+      beatsRel.forEach((b, k) => {
+        if (b < b2 - 0.02 || b >= h - 0.02) return;
+        if (b < b1 - 0.02) { if (k % 2 === 0) out.push(b); } else out.push(b);
+        if (b >= b0) out.push(b + beatDur / 2);
+      });
+      const fl = out.filter((x) => x < h - 0.04).sort((a, b) => a - b);
+      if (fl.length % 2) fl.shift();
+      return fl;
+    };
+    // Farbe auf dem Schlag: Bassdrums (sonst Beats) in den zwei Takten vor dem Einsatz
+    const pulseHits = (h) => {
+      const k = kicksRel.filter((x) => x > h - barDur * 2 + 0.02 && x < h - 0.05);
+      return k.length >= 4 ? k : beatsRel.filter((x) => x > h - barDur * 2 + 0.02 && x < h - 0.05);
+    };
+    const colSteps = (h) => (colorMode === 'steps' ? beatsRel.filter((b) => b > h - barDur + 0.02 && b < h - 0.02) : colorMode === 'strobe' ? strobeFlips(h) : colorMode === 'pulse' ? pulseHits(h) : []);
+    const popOf = { drop: 0.42, steps: 0.4, strobe: 0.42, pulse: 0.42, bloom: 0.25, sweep: 0.25, pop: 0.3 };
     for (const h of hs) {
       if (h === revHit) {
         const r0 = clips.find((c) => c.reveal);
-        colorFx.push({ mode: colorMode, start: r0.start, hit: h, dur: colorMode === 'bloom' ? Math.min(beatDur * 2, 1.1) : colorMode === 'sweep' ? Math.min(beatDur * 1.5, 0.85) : 0, end: h + Math.max(colorMode === 'bloom' ? Math.min(beatDur * 2, 1.1) : colorMode === 'sweep' ? Math.min(beatDur * 1.5, 0.85) : 0, 0.05), steps: colorMode === 'steps' ? beatsRel.filter((b) => b > h - barDur + 0.02 && b < h - 0.02) : [] });
+        const d0 = colorMode === 'bloom' ? Math.min(beatDur * 2, 1.1) : colorMode === 'sweep' ? Math.min(beatDur * 1.5, 0.85) : 0;
+        colorFx.push({ mode: colorMode, start: r0.start, hit: h, dur: d0, end: h + Math.max(d0, 0.05), steps: colSteps(h), decay: beatDur * 0.45, popAmp: popOf[colorMode], popDur: beatDur * 1.5 });
         continue;
       }
       const before = clips.filter((c) => c.start >= Math.max(fixedEndAll, h - barDur * 4) - 0.05 && c.start <= h - barDur * 0.9 + 0.05 && !c.grid);
-      const start = before.length ? before[0].start : Math.max(fixedEndAll, h - barDur * 2);
+      let start = before.length ? before[0].start : Math.max(fixedEndAll, h - barDur * 2);
+      if (colorMode === 'strobe' || colorMode === 'pulse') start = Math.max(fixedEndAll, Math.min(start, h - barDur * 2));
       if (h - start < barDur * 0.85) continue;
       const dur = colorMode === 'bloom' ? Math.min(beatDur * 2, 1.1) : colorMode === 'sweep' ? Math.min(beatDur * 1.5, 0.85) : 0;
-      const steps = colorMode === 'steps' ? beatsRel.filter((b) => b > h - barDur + 0.02 && b < h - 0.02) : [];
-      colorFx.push({ mode: colorMode, start, hit: h, dur, end: h + Math.max(dur, 0.05), steps });
+      colorFx.push({ mode: colorMode, start, hit: h, dur, end: h + Math.max(dur, 0.05), steps: colSteps(h), decay: beatDur * 0.45, popAmp: popOf[colorMode], popDur: beatDur * 1.5 });
       if (colorMode === 'drop' || colorMode === 'steps' || colorMode === 'pop') fx.push({ type: 'flash', start: h, end: h + 0.2, amp: 0.18 });
       fx.push({ type: 'punch', start: h, end: h + 0.45, amp: colorMode === 'drop' ? 0.6 : 0.35 });
     }
     if (!colorFx.length && s.colorAuto) s.color = 'off';
     if (colorFx.length) {
-      const NAMES = { drop: 'kehrt die Farbe schlagartig zurück', steps: 'kehrt die Farbe Beat für Beat zurück', bloom: 'breitet sich die Farbe vom Motiv aus', sweep: 'läuft die Farbe als Welle durchs Bild', pop: 'bleiben nur kräftige Farben, dann kommt alles zurück' };
+      const NAMES = { strobe: 'wechseln Farbe und Schwarzweiß im Takt, immer schneller, bis die Farbe auf dem Einsatz bleibt', pulse: 'blitzt die Farbe auf jeder Bassdrum auf und bleibt auf dem Einsatz', drop: 'kehrt die Farbe schlagartig zurück', steps: 'kehrt die Farbe Beat für Beat zurück', bloom: 'breitet sich die Farbe vom Motiv aus', sweep: 'läuft die Farbe als Welle durchs Bild', pop: 'bleiben nur kräftige Farben, dann kommt alles zurück' };
       dir.notes.push(`Schwarzweiß → Farbe: vor dem Einsatz bei ${colorFx.map((f) => fmtMS(f.hit)).join(' und ')} ist das Bild schwarzweiß, auf dem Schlag ${NAMES[colorMode]}.`);
     }
   }
@@ -4782,6 +4813,45 @@ function planOnce(opts) {
       lastE = c.start; n++;
     }
     if (n) dir.notes.push(`Echo: auf ${n} starken Schlägen blitzt das vorige Bild kurz halbtransparent auf.`);
+  }
+
+  // Mehrfachbelichtung (Musikvideo): im Refrain/Drop liegt das nächste Bild hell darüber und pulsiert mit den Schlägen,
+  // in einem ruhigen Teil erscheint es als klassische Doppelbelichtung in den hellen Flächen (Himmel, Licht)
+  let layerN = 0;
+  if (s.layers === 'on' && !flight) {
+    const plain = (c) => c && !(c.grid || c.split || c.strip || c.stack || c.burst || c.rush || c.miniRew || c.pre || c.leader || c.reveal || c.flightAnim || c.loop || c.vid) && byId.get(c.mediaId) && byId.get(c.mediaId).kind === 'image';
+    const phrase = (a, b, mode, amp) => {
+      let n = 0;
+      for (const c of clips) {
+        if (c.end < a + beatDur || c.start >= b - 0.05) continue;
+        const nx = clips[c.i + 1];
+        if (!plain(c) || !plain(nx) || nx.mediaId === c.mediaId) continue;
+        c.layer = { from: nx.i, mode, amp, pulse: mode === 'screen', dir: c.i % 2 ? 1 : -1 };
+        n++;
+      }
+      return n;
+    };
+    const peaks = secsRel.filter((x) => isPeakSec(x) && x.rel >= fixedEndAll - 0.05 && x.rel < D - barDur);
+    const calms = secsRel.filter((x) => !isPeakSec(x) && x.rel >= fixedEndAll - 0.05 && Math.min(D, x.rel + (x.end - x.start)) - x.rel >= barDur * 3);
+    // im Refrain eine Phrase nach dem ersten Takt (der Einsatz selbst bleibt klar), bei längeren Filmen zwei
+    for (const x of peaks.slice(0, D < 30 ? 1 : 2)) { const a = x.rel + barDur; layerN += phrase(a, Math.min(a + barDur * 3, x.rel + (x.end - x.start), D - barDur * 0.5), 'screen', 0.42); }
+    const cm0 = calms.find((x) => !colorFx.some((f) => f.start < x.rel + (x.end - x.start) && f.hit > x.rel));
+    if (cm0) layerN += phrase(cm0.rel, Math.min(cm0.rel + barDur * 3, cm0.rel + (cm0.end - cm0.start)), 'luma', 0.62);
+    if (layerN) {
+      const nS = clips.filter((c) => c.layer && c.layer.mode === 'screen').length, nL = layerN - nS;
+      dir.notes.push(`Mehrfachbelichtung in ${layerN} Einstellungen: ${[nS ? 'im Refrain liegt das nächste Bild hell darüber und pulsiert im Takt' : '', nL ? 'in einem ruhigen Teil erscheint es wie eine Doppelbelichtung in den hellen Flächen' : ''].filter(Boolean).join(', ')}.`);
+    }
+  }
+  // Musikvideo: ein Spiegelmoment auf der Eins im zweiten Takt des ersten Drops, dazu feiner Farbversatz auf den Kicks
+  let chroma = null;
+  if (s.mv === 'on' && !flight) {
+    const pk = secsRel.find((x) => isPeakSec(x) && x.rel >= fixedEndAll + barDur && x.rel < D - barDur * 3);
+    if (pk) {
+      const m0 = pk.rel + barDur;
+      const cm = clips.find((c) => c.start <= m0 + 0.05 && c.end > m0 + beatDur);
+      if (cm && !(cm.grid || cm.split || cm.stack || cm.strip)) { fx.push({ type: 'mirror', start: m0, end: Math.min(m0 + beatDur * 2, cm.end - 0.02), amp: 1 }); dir.notes.push(`Spiegelmoment bei ${fmtMS(m0)}: zwei Beats lang spiegelt sich das Bild in der Mitte.`); }
+    }
+    if (kicksRel.length >= 8) chroma = { kicks: kicksRel, zones: secsRel.filter(isPeakSec).map((x) => [Math.max(x.rel, fixedEndAll), Math.min(D, x.rel + (x.end - x.start))]).filter((z) => z[1] > z[0]) };
   }
 
   // Mini-Rewind: entsättigt und mit Licht auf dem Einsatz
@@ -5038,7 +5108,7 @@ function planOnce(opts) {
     look: s.look, format: s.format, frame: s.frame, band, pace: s.pace, split: s.split, font: s.font || 'klassisch', motion: s.motion || 'ken', motionAmt: s.motionAmt || 'medium',
     intro, outro, fx, overlays, notes: dir.notes, resolved: s, voice,
     beats: beatsRel, downs, beatEnergy, beatDur,
-    accent, colorFx, parallax: s.parallax === 'on' ? 1 : 0,
+    accent, chroma, colorFx, parallax: s.parallax === 'on' ? 1 : 0,
     sections: (an.sections || []).filter((x) => x.end > win.start && x.start < win.end).map((x) => ({ ...x, start: Math.max(0, x.start - win.start), end: Math.min(D, x.end - win.start) })),
     usedMedia: usedSet.size,
   };
@@ -5274,9 +5344,22 @@ function withVariant(s) {
   return o;
 }
 
+/**
+ * Musikvideo: Mehrfachbelichtungen im Takt, Schwarzweiß mit Farbe auf dem Schlag, Echo und Bassdrum-Impulse,
+ * ein Spiegelmoment und feiner Farbversatz auf den Kicks. Füllt nur, was auf Auto steht.
+ */
+function withMusicVideo(s) {
+  if (s.mv !== 'on') return s;
+  const o = { ...s, layers: 'on' };
+  if (o.color == null || o.color === 'auto') o.color = 'pulse';
+  if (o.echo == null || o.echo === 'auto') o.echo = 'on';
+  if (o.parallax == null || o.parallax === 'auto') o.parallax = 'on';
+  return o;
+}
+
 function direct(an, media, s, chapters, flight) {
   const notes = [];
-  s = withVariant(s);
+  s = withMusicVideo(withVariant(s));
   const rs = { ...s };
   const list = goodMedia(media, s.allMedia !== 'off' && !(chapters && chapters.length) && !flight);
   const all = media.filter((m) => !m.bad && !m.loading);
@@ -5429,7 +5512,7 @@ function direct(an, media, s, chapters, flight) {
   if (s.color === 'auto') {
     const colHits = (an.sections || []).filter((x, k, arr) => isPeak(x) && x.start > win.start + barDur * 0.9 && x.start < win.end - barDur && !isPeak(arr[k - 1]));
     const ok = !flight && !bwLook && s.midGrid !== 'on' && used < budget && (colHits.length || rs.intro === 'reveal' || D >= 20);
-    rs.color = ok ? pick(colHits.length ? ['drop', 'bloom', 'steps', 'drop', 'sweep'] : ['bloom', 'sweep']) : 'off';
+    rs.color = ok ? pick(colHits.length ? ['drop', 'bloom', 'steps', 'drop', 'sweep', ...(kicksIn >= 16 ? ['pulse'] : []), ...(rs.pace === 'schnell' ? ['strobe'] : [])] : ['bloom', 'sweep']) : 'off';
     rs.colorAuto = true;
     if (ok) used++;
   }
@@ -5509,8 +5592,18 @@ uniform vec2 uParA;     // Parallax: Versatz der nahen Bildteile (Ausschnitt-Ein
 uniform vec2 uParB;
 uniform vec2 uHor;      // Horizont je Ebene im Ausgabebild (−1: keiner erkannt)
 uniform vec4 uCol;      // Schwarzweiß → Farbe: Modus, Fortschritt, Motiv (x, y)
+uniform float uChroma;  // Farbversatz auf den Kicks (Anteil der Bildbreite)
+uniform float uMirror;  // Spiegelmoment
+uniform float uPop;     // Farbschub nach der Rückkehr der Farbe (klingt über gut einen Beat aus)
 
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+// Schwarzweiß wie Film: panchromatische Mischung (Haut heller, Himmel dunkler), S-Kurve, dichte Schwarztöne, silbriger Ton
+vec3 filmBW(vec3 c) {
+  float l = clamp(dot(c, vec3(0.34, 0.53, 0.13)), 0.0, 1.0);
+  l = mix(l, l * l * (3.0 - 2.0 * l), 0.55);
+  l = pow(l, 1.1);
+  return vec3(l) * vec3(0.995, 1.0, 1.012);
+}
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 float vnoise(vec2 p) {
   vec2 i = floor(p), f = fract(p);
@@ -5610,6 +5703,7 @@ vec3 lmix(vec3 a, vec3 b, float w) { return sqrt(max(mix(a * a, b * b, w), 0.0))
 
 vec3 composite(vec2 uv) {
   float p = clamp(uMix, 0.0, 1.0);
+  if (uMirror > 0.5) uv.x = 0.5 - abs(uv.x - 0.5);
   if (uTrans == 9 && uHasB > 0.5) {
     float e = p * p * (3.0 - 2.0 * p);
     float ax = uv.x + e * uDir;
@@ -5617,6 +5711,7 @@ vec3 composite(vec2 uv) {
     return layerB(vec2(ax - uDir, uv.y));
   }
   vec3 a = uHasA > 0.5 ? layerA(uv) : vec3(0.0);
+  if (uChroma > 0.0005 && uHasA > 0.5) { a.r = layerA(uv + vec2(uChroma, 0.0)).r; a.b = layerA(uv - vec2(uChroma, 0.0)).b; }
   vec3 c = a;
   if (uHasB > 0.5) {
     vec3 b = layerB(uv);
@@ -5628,6 +5723,15 @@ vec3 composite(vec2 uv) {
       // Echo: das vorige Bild blitzt hell und halbtransparent über dem neuen auf
       vec3 scr = 1.0 - (1.0 - a) * (1.0 - b);
       c = mix(a, mix(scr, b, 0.35), p);
+    }
+    else if (uTrans == 21) {
+      // Mehrfachbelichtung hell: das zweite Bild legt sich wie Licht darüber
+      c = mix(a, 1.0 - (1.0 - a) * (1.0 - b), p);
+    }
+    else if (uTrans == 22) {
+      // Doppelbelichtung: das zweite Bild erscheint in den hellen Flächen des ersten (Himmel, Licht), die dunklen bleiben Silhouette
+      float w = smoothstep(0.28, 0.85, luma(a));
+      c = mix(a, lmix(a, b, 0.85), w * p);
     }
     else if (uTrans == 6) c = lmix(a, b, smoothstep(0.25, 0.75, p)) + leakColor(uv, uTime) * sin(3.14159265 * p) * 0.55;
     else if (uTrans == 7) {
@@ -5686,7 +5790,9 @@ void main() {
     c = clamp(c, 0.0, 1.0);
     vec3 sc = c * c * (3.0 - 2.0 * c);
     c = mix(c, sc, uContrast);
-    c = mix(c, vec3(luma(c)), max(uBW, uDesat));
+    c = mix(c, vec3(luma(c)), uBW);
+    c = mix(c, filmBW(c), uDesat);
+    float bwAmt = uDesat;
     if (uCol.x > 0.5) {
       // Schwarzweiß → Farbe: 1 ganz, 2 vom Motiv aus, 3 Farbwelle, 4 Farbtupfer (kräftige Farben bleiben)
       float col = uCol.y;
@@ -5705,8 +5811,11 @@ void main() {
         float mx2 = max(c.r, max(c.g, c.b)), mn2 = min(c.r, min(c.g, c.b));
         col = max(uCol.y, smoothstep(0.2, 0.42, mx2 - mn2) * 0.95);
       }
-      c = mix(vec3(luma(c)), c, clamp(col, 0.0, 1.0));
+      c = mix(filmBW(c), c, clamp(col, 0.0, 1.0));
+      bwAmt = max(bwAmt, 1.0 - clamp(col, 0.0, 1.0));
     }
+    // Farbschub: die zurückgekehrte Farbe leuchtet kurz kräftiger und beruhigt sich dann
+    if (uPop > 0.0) { float lp = luma(c); c = clamp(mix(vec3(lp), c, 1.0 + uPop), 0.0, 1.0); }
     c = mix(vec3(uLift), vec3(1.0 - uCrush), clamp(c, 0.0, 1.0));
     c *= uTint;
     if (uLeak > 0.0) c += leakColor(uv, uTime * 0.5) * uLeak * (0.6 + 0.4 * sin(uTime * 1.3));
@@ -5719,7 +5828,7 @@ void main() {
     // Filmkorn
     float n = hash(floor(gl_FragCoord.xy) + fract(uTime * 7.31) * 173.0) - 0.5;
     float mid = 1.0 - abs(luma(c) - 0.5) * 1.4;
-    c += n * uGrain * (0.45 + 0.55 * mid);
+    c += n * (uGrain * (1.0 + 1.1 * bwAmt) + 0.03 * bwAmt) * (0.45 + 0.55 * mid);
     c = mix(c, vec3(1.0, 0.985, 0.96), uFlash);
     c *= (1.0 - uDim) * (1.0 - uBlack);
     if (uv.y < uBars || uv.y > 1.0 - uBars) c = vec3(0.0);
@@ -5869,6 +5978,9 @@ class Renderer {
     gl.uniform2fv(u.uParB, L(f.B, 'par', [0, 0]));
     gl.uniform2f(u.uHor, f.A && f.A.hor != null ? f.A.hor : -1, f.B && f.B.hor != null ? f.B.hor : -1);
     gl.uniform4fv(u.uCol, f.col || [0, 1, 0.5, 0.5]);
+    gl.uniform1f(u.uPop, f.pop || 0);
+    gl.uniform1f(u.uChroma, f.chroma || 0);
+    gl.uniform1f(u.uMirror, f.mirror || 0);
     gl.uniform2fv(u.uBand, f.band || [0, 1]);
     gl.uniform1f(u.uHasA, f.A ? 1 : 0);
     gl.uniform1f(u.uHasB, f.B ? 1 : 0);
@@ -7670,7 +7782,7 @@ async function probeVideoFast(file) {
  * Split-Screens, exakter Offline-Export (WebCodecs), Echtzeit-Rückfall
  * ============================================================ */
 
-const COLOR_MODE = { drop: 1, steps: 1, bloom: 2, sweep: 3, pop: 4 };
+const COLOR_MODE = { drop: 1, steps: 1, strobe: 1, pulse: 1, bloom: 2, sweep: 3, pop: 4 };
 
 function srcTimeOf(c, t) {
   const tt = c.freezeAt != null ? Math.min(t, c.freezeAt) : t;
@@ -8293,6 +8405,8 @@ class Engine {
     for (const k of Array.from(needed)) {
       const c = clips[k];
       if (c.echo && t < c.start + c.echo.dur && c.start <= t + lookahead) needed.add(clips.findIndex((x) => x.i === c.echo.from));
+      // Mehrfachbelichtung: das darübergelegte (nächste) Bild muss schon geladen sein
+      if (c.layer) needed.add(clips.findIndex((x) => x.i === c.layer.from));
     }
     needed.delete(-1);
     for (const k of Array.from(this.slots.keys())) if (!needed.has(k)) this.releaseSlot(k);
@@ -8316,6 +8430,7 @@ class Engine {
       else if (f.type === 'black') st.black = Math.max(st.black, a);
       else if (f.type === 'dim') st.dim = Math.max(st.dim, a);
       else if (f.type === 'desat') st.desat = Math.max(st.desat, a);
+      else if (f.type === 'mirror') st.mirror = Math.max(st.mirror || 0, a * smooth(clamp01((t - f.start) / 0.06)) * smooth(clamp01((f.end - t) / 0.06)));
     }
     return st;
   }
@@ -8457,6 +8572,18 @@ class Engine {
       if (t < f.hit) {
         p = 0;
         if (f.mode === 'steps') { const n = (f.steps || []).filter((x) => x <= t + 1e-3).length; p = n / ((f.steps || []).length + 1); }
+        else if (f.mode === 'strobe') {
+          // Stroboskop: Farbe und Schwarzweiß wechseln auf den Schlägen, immer schneller; 30 ms weiche Kante statt Flackern
+          const fl = f.steps || [];
+          let n = 0; while (n < fl.length && fl[n] <= t + 1e-4) n++;
+          const on = n % 2 === 1 ? 1 : 0, d = n ? t - fl[n - 1] : 1;
+          p = n ? (1 - on) + (2 * on - 1) * clamp01(d / 0.03) : 0;
+        } else if (f.mode === 'pulse') {
+          // Farbe auf dem Schlag: jede Bassdrum bringt die Farbe zurück, sie verblasst bis zum nächsten Schlag
+          const hs = f.steps || [];
+          let n = -1; for (let k = 0; k < hs.length && hs[k] <= t + 1e-4; k++) n = k;
+          if (n >= 0) { const d = t - hs[n], att = clamp01(d / 0.025); p = 0.9 * att * Math.exp(-Math.max(0, d - 0.025) / (f.decay || 0.18)); }
+        }
       } else p = f.mode === 'bloom' || f.mode === 'sweep' ? smooth(clamp01((t - f.hit) / Math.max(0.1, f.dur))) : 1;
       p = 1 - fade * (1 - p);
       if (p >= 0.999) return null;
@@ -8464,6 +8591,17 @@ class Engine {
       return [COLOR_MODE[f.mode] || 1, p, fo[0], fo[1]];
     }
     return null;
+  }
+
+  /** Farbschub nach der Rückkehr der Farbe: kräftiger auf dem Schlag, klingt über gut einen Beat aus. */
+  colorPop(t) {
+    for (const f of this.plan.colorFx || []) {
+      const st = f.hit + (f.dur || 0) * 0.5, pd = f.popDur || 0.6;
+      if (t < f.hit || t > st + pd) continue;
+      const ramp = clamp01((t - f.hit) / Math.max(0.02, (f.dur || 0) * 0.5));
+      return (f.popAmp != null ? f.popAmp : 0.35) * Math.pow(1 - clamp01((t - st) / pd), 2) * ramp;
+    }
+    return 0;
   }
 
   beatPulse(t) {
@@ -8618,12 +8756,36 @@ class Engine {
         if (ghost) { B = ghost; trans = 20; mix = 0.55 * Math.pow(1 - u, 2); }
       }
     }
+    // Mehrfachbelichtung: das nächste Bild liegt über dem aktuellen, im Refrain hell und pulsierend im Takt
+    const ly = L && L.a && L.a.layer;
+    if (A && !B && ly) {
+      const src = this.slots.get(ly.from);
+      if (src && src.ready && src.clip) {
+        const c0 = L.a, u = clamp01((t - c0.start) / Math.max(0.1, c0.end - c0.start));
+        const g = this.layerParams(src, t, fx, { zoom: (ly.mode === 'luma' ? 1.06 : 1.12) + 0.05 * u, shiftX: 0.035 * (0.5 - u) * (ly.dir || 1), flat: true });
+        if (g) {
+          const edge = Math.min(1, (t - c0.start - (c0.echo ? c0.echo.dur : 0)) / 0.14, (c0.end - t) / 0.14);
+          let a = ly.amp * smooth(clamp01(edge));
+          if (ly.pulse) a *= 0.5 + 0.5 * this.beatPulse(t).env;
+          B = g; trans = ly.mode === 'luma' ? 22 : 21; mix = a;
+        }
+      }
+    }
+    // Farbversatz auf den Kicks (Musikvideo): ein Hauch, der sofort wieder verschwindet
+    let chroma = 0;
+    const ch = plan.chroma;
+    if (ch && ch.zones.some((z) => t >= z[0] && t < z[1])) {
+      let lo = 0, hi = ch.kicks.length - 1, r = -1;
+      while (lo <= hi) { const mid = (lo + hi) >> 1; if (ch.kicks[mid] <= t) { r = mid; lo = mid + 1; } else hi = mid - 1; }
+      if (r >= 0) chroma = 0.0045 * Math.exp(-(t - ch.kicks[r]) / 0.07);
+    }
     const col = this.colorState(t, A && A.foc);
+    const pop = this.colorPop(t);
     const ov = this.painter.paint(plan, t, this.selectedOverlay);
     if (ov.topDirty) this.r.uploadOverlay('top', this.painter.top);
     this.r.draw({
       A, B, mix, trans, dir, grade: look.grade, time: t, band: plan.band,
-      flash: fx.flash, black: fx.black, dim: fx.dim, desat: fx.desat, bars: 0, ovTop: ov.top, col,
+      flash: fx.flash, black: fx.black, dim: fx.dim, desat: fx.desat, bars: 0, ovTop: ov.top, col, pop, chroma, mirror: fx.mirror || 0,
     });
   }
 
@@ -9518,6 +9680,7 @@ function normalizeSettings(st, defaults) {
     target: pick1(s.target, ['story', 'reel'], 'story'),
     allMedia: pick1(s.allMedia, ['on', 'off'], 'on'),
     variant: pick1(s.variant, ['ausgewogen', 'ruhig', 'energisch'], 'ausgewogen'),
+    mv: pick1(s.mv, ['off', 'on'], 'off'),
     match: pick1(s.match, ['auto', 'off'], 'auto'),
     morph: pick1(s.morph, ['off', 'on'], 'off'),
     ramp: pick1(s.ramp, ['off', 'drop'], 'off'),
@@ -9538,7 +9701,7 @@ function normalizeSettings(st, defaults) {
     motion: pick1(s.motion, ['ken', 'snap', 'pulse', 'sway', 'float', 'tilt', 'handheld'], 'ken'),
     motionAmt: pick1(s.motionAmt, ['soft', 'medium', 'strong'], 'medium'),
     burst: pick1(s.burst, ['off', 'drop'], 'off'),
-    color: pick1(s.color, ['auto', 'off', 'drop', 'steps', 'bloom', 'sweep', 'pop'], 'auto'),
+    color: pick1(s.color, ['auto', 'off', 'drop', 'steps', 'strobe', 'pulse', 'bloom', 'sweep', 'pop'], 'auto'),
     accent: pick1(s.accent, ['auto', 'off', 'kick', 'kicksnare'], 'auto'),
     parallax: pick1(s.parallax, ['auto', 'on', 'off'], 'auto'),
     drift: pick1(s.drift, ['auto', 'on', 'off'], 'auto'),
@@ -9554,7 +9717,7 @@ function normalizeSettings(st, defaults) {
 }
 
 /* ---------- Stil-Vorlage: ein Stil für alle Filme der Reise ---------- */
-const STYLE_KEYS = ['variant', 'look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'allMedia', 'color', 'accent', 'parallax', 'drift', 'echo', 'stack', 'mini', 'chapKnock', 'chapMap', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
+const STYLE_KEYS = ['variant', 'mv', 'look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'allMedia', 'color', 'accent', 'parallax', 'drift', 'echo', 'stack', 'mini', 'chapKnock', 'chapMap', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
 const styleOf = (st) => Object.fromEntries(STYLE_KEYS.map((k) => [k, st[k]]));
 /** Einstellungen für neue Filme: Standard, darüber die Vorlage der Reise */
 function baseSettings(defaults) {
@@ -11292,12 +11455,14 @@ function renderStyle() {
   $('drumHint').textContent = st.accent === 'auto' ? (accR === 'off' ? 'Auto: bei diesem Song ohne Schlagzeug-Akzente.' : 'Auto: ein feiner Zoom-Impuls nur auf der Bassdrum, im Drop und Refrain.') : st.accent === 'kick' ? 'Der Zoom-Impuls folgt nur der Bassdrum, nicht jedem Beat.' : st.accent === 'kicksnare' ? 'Bassdrum-Zoom, dazu ein kurzes, feines Rütteln auf der Snare.' : 'Keine Schlagzeug-Akzente.';
   setRadio($('colorChips'), st.color);
   const colR = st.color === 'auto' && r ? r.color : st.color;
-  const COLOR_DE = { drop: 'Vor dem Drop schwarzweiß, auf dem ersten Schlag ist die Farbe schlagartig zurück.', steps: 'Im Takt vor dem Einsatz kommt die Farbe Beat für Beat zurück.', bloom: 'Die Farbe breitet sich auf dem Einsatz vom Motiv aus über das Bild aus.', sweep: 'Die Farbe läuft auf dem Einsatz als weiche Welle durchs Bild.', pop: 'Vor dem Einsatz bleiben nur kräftige Farben stehen, auf dem Schlag kommt alles zurück.', off: 'Kein Schwarzweiß-Moment.' };
+  const COLOR_DE = { drop: 'Vor dem Drop schwarzweiß, auf dem ersten Schlag ist die Farbe schlagartig zurück.', steps: 'Im Takt vor dem Einsatz kommt die Farbe Beat für Beat zurück.', strobe: 'Zwei Takte vor dem Einsatz wechseln Farbe und Schwarzweiß auf den Schlägen, immer schneller; auf dem Einsatz bleibt die Farbe und leuchtet kurz auf.', pulse: 'Vor dem Einsatz schwarzweiß, jede Bassdrum lässt die Farbe kurz aufleuchten; auf dem Einsatz bleibt sie.', bloom: 'Die Farbe breitet sich auf dem Einsatz vom Motiv aus über das Bild aus.', sweep: 'Die Farbe läuft auf dem Einsatz als weiche Welle durchs Bild.', pop: 'Vor dem Einsatz bleiben nur kräftige Farben stehen, auf dem Schlag kommt alles zurück.', off: 'Kein Schwarzweiß-Moment.' };
   $('colorHint').textContent = (st.color === 'auto' ? 'Auto: ' : '') + (COLOR_DE[colR] || COLOR_DE.off);
   setRadio($('targetChips'), st.target);
   $('targetChips').hidden = st.format !== '9:16';
   setRadio($('allChips'), st.allMedia);
   setRadio($('variantChips'), st.variant);
+  $('mvBtn').setAttribute('aria-pressed', String(st.mv === 'on'));
+  $('mvHint').hidden = st.mv !== 'on';
   $('allChips').hidden = S.ctx.kind === 'bestof' || isFlight(S.ctx.rec);
   $('capHint').textContent = capacityText();
   setRadio($('preChips'), st.pre);
@@ -12193,6 +12358,7 @@ async function init() {
   bindSetting('drumChips', 'accent');
   bindSetting('allChips', 'allMedia');
   bindSetting('variantChips', 'variant');
+  $('mvBtn').addEventListener('click', () => { const st = S.ctx.rec.settings; st.mv = st.mv === 'on' ? 'off' : 'on'; commit(); savePlaceSoon(); engine && (engine.t = 0); scheduleRebuild(0); });
   bindSetting('colorChips', 'color');
   bindSetting('preChips', 'pre');
   bindSetting('targetChips', 'target');

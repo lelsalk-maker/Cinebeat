@@ -43,6 +43,24 @@ if (info.stack.length) { const [a, z, times] = info.stack[0]; await shot(times[1
 if (info.echo.length) await shot(info.echo[0] + 0.06, 'echo');
 if (info.mini.length) await shot(info.mini[1] + 0.05, 'mini');
 if (info.drift.length) await shot(info.drift[0][0], 'drift');
+// Musikvideo: die Mehrfachbelichtung wird wirklich gezeichnet (zweites Bild, Mischart 21/22)
+await page.click('#mvBtn'); await settle();
+const mvDraw = await page.evaluate(async () => {
+  const p = CineBeat.S.plan, e = CineBeat.engine;
+  const c = p.clips.find((x) => x.layer);
+  if (!c) return { none: true };
+  const t = (c.start + c.end) / 2;
+  await e.renderStill(t);
+  let seen = null; const orig = e.r.draw.bind(e.r);
+  e.r.draw = (f) => { seen = { trans: f.trans, mix: +(f.mix || 0).toFixed(2), B: !!f.B }; return orig(f); };
+  e.drawAt(t, 'still'); e.r.draw = orig;
+  return { t, seen, mirror: p.fx.filter((f) => f.type === 'mirror').length };
+});
+console.log('Musikvideo-Bild:', JSON.stringify(mvDraw));
+if (mvDraw.none) console.log('keine Mehrfachbelichtung in diesem Songausschnitt');
+else if (!mvDraw.seen || !mvDraw.seen.B || (mvDraw.seen.trans !== 21 && mvDraw.seen.trans !== 22)) fails.push('Mehrfachbelichtung nicht gezeichnet');
+else await shot(mvDraw.t, 'mv_layer');
+await page.click('#mvBtn'); await settle();
 // Standbild ohne Fehler und nicht schwarz
 const lum = await page.evaluate(() => { const c = document.createElement('canvas'); const src = CineBeat.engine.canvas; c.width = 64; c.height = 112; const x = c.getContext('2d'); CineBeat.engine.drawAt(CineBeat.engine.t, 'still'); x.drawImage(src, 0, 0, 64, 112); const d = x.getImageData(0, 0, 64, 112).data; let s = 0; for (let i = 0; i < d.length; i += 4) s += d[i] + d[i + 1] + d[i + 2]; return s / (d.length / 4) / 3; });
 if (lum < 8) fails.push('Bild schwarz');

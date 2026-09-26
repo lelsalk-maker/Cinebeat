@@ -58,7 +58,7 @@ const res = await p.evaluate(async (b64) => {
     out[name] = { D: +pl.duration.toFixed(1), clips: pl.clips.length, maxPanPxS: Math.round(maxPan), maxZoomPerS: +maxZoom.toFixed(3), pans, flipsCalm: flips, calmShort, fxPerMin: perMin, tr, notes: pl.notes.length };
     return out[name];
   };
-  for (const [n, st] of [['story', { format: '9:16' }], ['energisch', { format: '9:16', variant: 'energisch' }], ['ruhig', { format: '9:16', variant: 'ruhig' }], ['film', { format: '16:9' }], ['beitrag', { format: '4:5', allMedia: 'off' }]]) audit(n, st);
+  for (const [n, st] of [['story', { format: '9:16' }], ['energisch', { format: '9:16', variant: 'energisch' }], ['ruhig', { format: '9:16', variant: 'ruhig' }], ['film', { format: '16:9' }], ['beitrag', { format: '4:5', allMedia: 'off' }], ['musikvideo', { format: '9:16', mv: 'on' }]]) audit(n, st);
   for (const [n, o] of Object.entries(out)) {
     if (o.maxPanPxS > 420) fails.push(`${n}: Schwenk zu schnell (${o.maxPanPxS} px/s)`);
     if (o.flipsCalm > 2) fails.push(`${n}: ${o.flipsCalm} Hin-und-Her-Schwenks in ruhigen Teilen`);

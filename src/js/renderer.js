@@ -49,8 +49,18 @@ uniform vec2 uParA;     // Parallax: Versatz der nahen Bildteile (Ausschnitt-Ein
 uniform vec2 uParB;
 uniform vec2 uHor;      // Horizont je Ebene im Ausgabebild (−1: keiner erkannt)
 uniform vec4 uCol;      // Schwarzweiß → Farbe: Modus, Fortschritt, Motiv (x, y)
+uniform float uChroma;  // Farbversatz auf den Kicks (Anteil der Bildbreite)
+uniform float uMirror;  // Spiegelmoment
+uniform float uPop;     // Farbschub nach der Rückkehr der Farbe (klingt über gut einen Beat aus)
 
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+// Schwarzweiß wie Film: panchromatische Mischung (Haut heller, Himmel dunkler), S-Kurve, dichte Schwarztöne, silbriger Ton
+vec3 filmBW(vec3 c) {
+  float l = clamp(dot(c, vec3(0.34, 0.53, 0.13)), 0.0, 1.0);
+  l = mix(l, l * l * (3.0 - 2.0 * l), 0.55);
+  l = pow(l, 1.1);
+  return vec3(l) * vec3(0.995, 1.0, 1.012);
+}
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 float vnoise(vec2 p) {
   vec2 i = floor(p), f = fract(p);
@@ -150,6 +160,7 @@ vec3 lmix(vec3 a, vec3 b, float w) { return sqrt(max(mix(a * a, b * b, w), 0.0))
 
 vec3 composite(vec2 uv) {
   float p = clamp(uMix, 0.0, 1.0);
+  if (uMirror > 0.5) uv.x = 0.5 - abs(uv.x - 0.5);
   if (uTrans == 9 && uHasB > 0.5) {
     float e = p * p * (3.0 - 2.0 * p);
     float ax = uv.x + e * uDir;
@@ -157,6 +168,7 @@ vec3 composite(vec2 uv) {
     return layerB(vec2(ax - uDir, uv.y));
   }
   vec3 a = uHasA > 0.5 ? layerA(uv) : vec3(0.0);
+  if (uChroma > 0.0005 && uHasA > 0.5) { a.r = layerA(uv + vec2(uChroma, 0.0)).r; a.b = layerA(uv - vec2(uChroma, 0.0)).b; }
   vec3 c = a;
   if (uHasB > 0.5) {
     vec3 b = layerB(uv);
@@ -168,6 +180,15 @@ vec3 composite(vec2 uv) {
       // Echo: das vorige Bild blitzt hell und halbtransparent über dem neuen auf
       vec3 scr = 1.0 - (1.0 - a) * (1.0 - b);
       c = mix(a, mix(scr, b, 0.35), p);
+    }
+    else if (uTrans == 21) {
+      // Mehrfachbelichtung hell: das zweite Bild legt sich wie Licht darüber
+      c = mix(a, 1.0 - (1.0 - a) * (1.0 - b), p);
+    }
+    else if (uTrans == 22) {
+      // Doppelbelichtung: das zweite Bild erscheint in den hellen Flächen des ersten (Himmel, Licht), die dunklen bleiben Silhouette
+      float w = smoothstep(0.28, 0.85, luma(a));
+      c = mix(a, lmix(a, b, 0.85), w * p);
     }
     else if (uTrans == 6) c = lmix(a, b, smoothstep(0.25, 0.75, p)) + leakColor(uv, uTime) * sin(3.14159265 * p) * 0.55;
     else if (uTrans == 7) {
@@ -226,7 +247,9 @@ void main() {
     c = clamp(c, 0.0, 1.0);
     vec3 sc = c * c * (3.0 - 2.0 * c);
     c = mix(c, sc, uContrast);
-    c = mix(c, vec3(luma(c)), max(uBW, uDesat));
+    c = mix(c, vec3(luma(c)), uBW);
+    c = mix(c, filmBW(c), uDesat);
+    float bwAmt = uDesat;
     if (uCol.x > 0.5) {
       // Schwarzweiß → Farbe: 1 ganz, 2 vom Motiv aus, 3 Farbwelle, 4 Farbtupfer (kräftige Farben bleiben)
       float col = uCol.y;
@@ -245,8 +268,11 @@ void main() {
         float mx2 = max(c.r, max(c.g, c.b)), mn2 = min(c.r, min(c.g, c.b));
         col = max(uCol.y, smoothstep(0.2, 0.42, mx2 - mn2) * 0.95);
       }
-      c = mix(vec3(luma(c)), c, clamp(col, 0.0, 1.0));
+      c = mix(filmBW(c), c, clamp(col, 0.0, 1.0));
+      bwAmt = max(bwAmt, 1.0 - clamp(col, 0.0, 1.0));
     }
+    // Farbschub: die zurückgekehrte Farbe leuchtet kurz kräftiger und beruhigt sich dann
+    if (uPop > 0.0) { float lp = luma(c); c = clamp(mix(vec3(lp), c, 1.0 + uPop), 0.0, 1.0); }
     c = mix(vec3(uLift), vec3(1.0 - uCrush), clamp(c, 0.0, 1.0));
     c *= uTint;
     if (uLeak > 0.0) c += leakColor(uv, uTime * 0.5) * uLeak * (0.6 + 0.4 * sin(uTime * 1.3));
@@ -259,7 +285,7 @@ void main() {
     // Filmkorn
     float n = hash(floor(gl_FragCoord.xy) + fract(uTime * 7.31) * 173.0) - 0.5;
     float mid = 1.0 - abs(luma(c) - 0.5) * 1.4;
-    c += n * uGrain * (0.45 + 0.55 * mid);
+    c += n * (uGrain * (1.0 + 1.1 * bwAmt) + 0.03 * bwAmt) * (0.45 + 0.55 * mid);
     c = mix(c, vec3(1.0, 0.985, 0.96), uFlash);
     c *= (1.0 - uDim) * (1.0 - uBlack);
     if (uv.y < uBars || uv.y > 1.0 - uBars) c = vec3(0.0);
@@ -409,6 +435,9 @@ class Renderer {
     gl.uniform2fv(u.uParB, L(f.B, 'par', [0, 0]));
     gl.uniform2f(u.uHor, f.A && f.A.hor != null ? f.A.hor : -1, f.B && f.B.hor != null ? f.B.hor : -1);
     gl.uniform4fv(u.uCol, f.col || [0, 1, 0.5, 0.5]);
+    gl.uniform1f(u.uPop, f.pop || 0);
+    gl.uniform1f(u.uChroma, f.chroma || 0);
+    gl.uniform1f(u.uMirror, f.mirror || 0);
     gl.uniform2fv(u.uBand, f.band || [0, 1]);
     gl.uniform1f(u.uHasA, f.A ? 1 : 0);
     gl.uniform1f(u.uHasB, f.B ? 1 : 0);
