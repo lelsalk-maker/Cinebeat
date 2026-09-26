@@ -6,7 +6,7 @@ beat-synchrone Filme macht. Läuft komplett auf dem Gerät (iPhone ist Hauptziel
 ## Befehle
 - `npm run build` – bündelt `src/` nach `docs/index.html` (PWA, GitHub Pages), `docs/CineBeat.html` (offline, CSP) und `dist/cinebeat.html` (Claude-Artefakt).
 - `npm test` – Lint + schnelle Tests (analysis, flow, style, videos, allmedia, ui, e2e, features), eine Zeile je Test.
-  Glätte (Schwenktempo, Richtungswechsel, Effektdichte): `npm test -- smooth`; Export nach App-Wechsel: `npm test -- bgexport`; Etappenkarte/Kapitel: `npm test -- trip`.
+  Glätte (Schwenktempo, Richtungswechsel, Effektdichte): `npm test -- smooth`; Sprünge Bild für Bild: `npm test -- judder` (`JCONF` für eigene Einstellungen); Export nach App-Wechsel: `npm test -- bgexport`; Etappenkarte/Kapitel: `npm test -- trip`.
 - `npm test -- all` – alle Tests (~10 min). `npm test -- flow videos` – einzelne. Tests brauchen Playwright/Chromium (vorinstalliert).
 - Veröffentlichen: `docs/sw.js` Cache-Version erhöhen (`cinebeat-vNN`), bauen, committen, pushen; Artefakt mit `dist/cinebeat.html` an die bestehende URL.
 
@@ -43,7 +43,7 @@ beat-synchrone Filme macht. Läuft komplett auf dem Gerät (iPhone ist Hauptziel
 - „Alle Aufnahmen“ (Standard): nichts weglassen; verdichten zuerst in Drop/Refrain; ruhige Teile ≥ 2 Beats.
 - Videos laufen wirklich (mind. ein Takt), bester Moment auf dem Schlag; nie in Sekundenbruchteil-Einstellungen.
 - Songdynamik: Drop-Einsatz ist ein Schnitt. Design: Schwarz/Dunkelblau/Beige, schlicht, modern.
-- Leistung: Vorschau ≤ 30 fps, begrenzte Auflösung, keine Arbeit pro Bild, die sich cachen lässt.
+- Leistung: Vorschau 30 fps, 60 fps nur im Flüssig-Modus (Bild kostet < 4,5 ms, fällt nichts aus), begrenzte Auflösung, keine Arbeit pro Bild, die sich cachen lässt.
 
 ## Effizient arbeiten (Token sparen)
 - Nicht ganze Dateien lesen: `grep -n` nach Funktions-/Variablennamen, dann gezielt `sed -n 'a,bp'`.

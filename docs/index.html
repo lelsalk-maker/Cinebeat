@@ -7887,6 +7887,7 @@ class Engine {
     this.size = size;
     this.scale = 1;
     this._dts = [];
+    this._cheap = 0;
     this.r.resize(size.w, size.h);
     this.painter.resize(size.w, size.h);
     this.releaseAll();
@@ -9026,6 +9027,8 @@ class Engine {
     const avg = sum / d.length;
     this._dts = [];
     const floor = this.playMax * 0.6;
+    // im Flüssig-Modus zuerst die Bildrate zurücknehmen (und für diese Sitzung dabei bleiben), erst dann die Auflösung
+    if (this._fps60 && avg > base * 1.45) { this._fps60 = false; this._no60 = true; return; }
     if (avg > base * 1.45 && this.scale > floor) { this._setScale(Math.max(floor, +(this.scale * 0.8).toFixed(2))); this._calm = 0; }
     else if (avg < base * 1.12 && this.scale < this.playMax && ++this._calm >= 3) { this._setScale(Math.min(this.playMax, +(this.scale * 1.15).toFixed(2))); this._calm = 0; }
   }
@@ -9034,7 +9037,10 @@ class Engine {
     if (!this.playing) return;
     // Vorschau mit höchstens 30 Bildern pro Sekunde: Videos haben selten mehr, und bei 60/120-Hz-Displays
     // halbiert bzw. viertelt das die Arbeit von Grafikkarte und Prozessor (Wärme, Akku). Der Ton läuft unabhängig.
-    if (!this.exportMode && now && this._lastDraw && now - this._lastDraw < 1000 / 30 - 3) { this._raf = requestAnimationFrame(this._loop); return; }
+    // Flüssig-Modus: kostet ein Bild wenig und fällt nichts aus, läuft die Vorschau mit 60 Bildern pro Sekunde
+    // (Kamerafahrten gleiten sichtbar ruhiger); sobald es eng wird, zurück auf 30 – vor jeder Auflösungsstufe.
+    const cap = this._fps60 ? 1000 / 60 - 2 : 1000 / 30 - 3;
+    if (!this.exportMode && now && this._lastDraw && now - this._lastDraw < cap) { this._raf = requestAnimationFrame(this._loop); return; }
     this._lastDraw = now || performance.now();
     this._adapt();
     const D = this.plan.duration;
@@ -9049,7 +9055,13 @@ class Engine {
     }
     this.t = t;
     this.ensureWindow(t, 2.0);
+    const c0 = performance.now();
     this.drawAt(t, 'play');
+    const cost = performance.now() - c0;
+    this._cost = this._cost == null ? cost : this._cost * 0.9 + cost * 0.1;
+    if (!this._no60 && !this._fps60 && this._cost < 4.5 && this.scale >= this.playMax && ++this._cheap > 45) { this._fps60 = true; this._dts = []; }
+    else if (this._fps60 && this._cost > 8) { this._fps60 = false; this._cheap = 0; this._dts = []; }
+    else if (!this._fps60 && this._cost >= 4.5) this._cheap = 0;
     this.onTime && this.onTime(t);
     this._raf = requestAnimationFrame(this._loop);
   }
