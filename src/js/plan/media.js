@@ -351,6 +351,34 @@ function fitSubject(mo, m, outAspect) {
 }
 
 /**
+ * Bildausschnitt nach Fotografen-Regeln: Mittelpunkt des Ausschnitts (Quellkoordinaten 0–1), in dem das Motiv
+ * auf einer Drittellinie steht und seine ursprüngliche Seite behält (Blickraum dorthin, wo im Foto Platz war),
+ * der Horizont auf einem Drittel liegt (viel Himmel: unteres Drittel) und Köpfe nie angeschnitten werden.
+ * fw/fh: Anteil des Ausschnitts an Breite/Höhe der Quelle.
+ */
+function framePoint(m, fw, fh) {
+  let fx = m.focus ? m.focus[0] : 0.5, fy = m.focus ? m.focus[1] : 0.45;
+  const sub = m.subject;
+  // waagerecht: nur wenn stark beschnitten wird und das Motiv klein genug für ein Drittel ist
+  if (fw < 0.8 && (!sub || sub[2] < fw * 0.55)) {
+    const sp = Math.max(0.36, Math.min(0.64, fx));
+    fx += (0.5 - sp) * fw;
+  }
+  if (fh < 0.9) {
+    if (m.horizon != null && !(m.people > 0.25)) {
+      // Horizont auf ein Drittel: viel Himmel ⇒ Horizont unten, sonst oben; halb zum Motiv hin
+      const sp = (m.sky || 0) > 0.45 ? 2 / 3 : 1 / 3;
+      fy = 0.5 * fy + 0.5 * (m.horizon + (0.5 - sp) * fh);
+    } else if (sub && m.people > 0.25) {
+      // Menschen: Kopf mit etwas Luft nach oben im Bild halten
+      const top = sub[1] - sub[3] / 2;
+      fy = Math.min(fy, top - 0.04 + fh / 2);
+    }
+  }
+  return [Math.max(0, Math.min(1, fx)), Math.max(0, Math.min(1, fy))];
+}
+
+/**
  * Kamerafahrt einer Einstellung. Die Geschwindigkeit ist über alle Einstellungen gleich (tempo = Kameratempo aus dem Song):
  * kurze Bilder fahren ein kurzes Stück, lange ein langes – so läuft die Kamera über jeden Schnitt im selben Fluss.
  */
@@ -358,7 +386,7 @@ function imageMotionRaw(rng, m, outAspect, visDur, role, prevDir, hint, tempo = 
   const srcAspect = m.w && m.h ? m.w / m.h : outAspect;
   const fw = srcAspect > outAspect ? outAspect / srcAspect : 1;
   const fh = srcAspect > outAspect ? 1 : srcAspect / outAspect;
-  const fx = m.focus ? m.focus[0] : 0.5, fy = m.focus ? m.focus[1] : 0.45;
+  const [fx, fy] = framePoint(m, fw, fh);
   const toPos = (f, frac) => (frac >= 0.999 ? 0 : Math.max(-1, Math.min(1, ((f - 0.5) * 2) / (1 - frac))));
   const px = toPos(fx, fw), py = toPos(fy, fh);
   const dur = Math.max(0.25, visDur);

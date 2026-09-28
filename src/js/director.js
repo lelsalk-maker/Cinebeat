@@ -138,19 +138,49 @@ function describeWindow(an, win) {
   return txt + '.';
 }
 
-/** Farb- und Helligkeitsangleichung je Aufnahme (Teil-Weißabgleich + Belichtung). */
+/**
+ * Farb- und Helligkeitsangleichung je Aufnahme, wie ein Colorist: innerhalb einer Szene (zeitlich/örtlich zusammenhängend)
+ * wird jede Aufnahme an die gemeinsame Stimmung der Szene angeglichen – ein warmer Abend bleibt warm, nur Ausreißer
+ * (anderer Weißabgleich, Blitz, Gegenlicht) rücken heran. Zwischen Szenen gleicht nur die Helligkeit sanft an.
+ * Helligkeit über eine Gammakurve (Mitteltöne, Lichter brennen nicht aus), Farbstich über kleine Kanal-Verstärkungen.
+ * Rückgabe je Id: [r, g, b, gamma].
+ */
 function colorMatch(list) {
   const lumas = list.map((m) => m.luma).filter((v) => v > 0).sort((a, b) => a - b);
   const med = lumas.length ? lumas[Math.floor(lumas.length / 2)] : 0.45;
   const target = Math.max(0.36, Math.min(0.52, med));
   const corr = new Map();
-  for (const m of list) {
-    if (!m.avg || !(m.luma > 0)) { corr.set(m.id, [1, 1, 1]); continue; }
-    const e = Math.max(0.8, Math.min(1.28, Math.pow(target / Math.max(0.05, m.luma), 0.55)));
-    const mean = (m.avg[0] + m.avg[1] + m.avg[2]) / 3 || 1;
-    const g = m.avg.map((c) => Math.max(0.93, Math.min(1.07, Math.pow(mean / Math.max(8, c), 0.28))));
-    corr.set(m.id, g.map((v) => +(v * e).toFixed(3)));
+  const cast = (m) => { const [r, g, b] = m.avg; return [r - g, (r + g) / 2 - b]; };
+  const median = (a) => { const s = a.slice().sort((x, y) => x - y); return s.length ? s[s.length >> 1] : 0; };
+  // Szenen in Aufnahme-Reihenfolge
+  const ok = list.filter((m) => m.avg && m.luma > 0);
+  const chrono = ok.slice().sort((a, b) => (a.time || 0) - (b.time || 0));
+  const starts = typeof sceneStarts === 'function' ? sceneStarts(chrono) : new Set();
+  const scenes = [];
+  for (const m of chrono) { if (!scenes.length || starts.has(m.id)) scenes.push([]); scenes[scenes.length - 1].push(m); }
+  for (const sc of scenes) {
+    const cs = sc.map(cast);
+    const rg0 = median(cs.map((c) => c[0])), yb0 = median(cs.map((c) => c[1]));
+    const sl = median(sc.map((m) => m.luma));
+    // Szenenhelligkeit halb zur Filmmitte: Nacht bleibt dunkler als Mittag, aber kein Sprung ins Schwarze
+    const sceneT = Math.max(0.3, Math.min(0.56, sl * 0.5 + target * 0.5));
+    for (let k = 0; k < sc.length; k++) {
+      const m = sc[k], [rg, yb] = cs[k];
+      // Stimmung der Szene, zum Teil in Richtung neutral (starker Gesamtstich einer ganzen Szene, z. B. Kunstlicht, wird gemildert)
+      const trg = rg0 * 0.75, tyb = yb0 * 0.75;
+      const nrg = rg + (trg - rg) * 0.6, nyb = yb + (tyb - yb) * 0.6;
+      const mean = (m.avg[0] + m.avg[1] + m.avg[2]) / 3;
+      const sum = (3 * mean + nyb) / 1.5, tb = sum / 2 - nyb;
+      const want = [(sum + nrg) / 2, (sum - nrg) / 2, tb];
+      const g = m.avg.map((c, i) => Math.max(0.93, Math.min(1.07, Math.pow(Math.max(8, want[i]) / Math.max(8, c), 0.8))));
+      // Helligkeit: Gamma bringt die Mitteltöne zum Ziel (gedämpft), Verstärkung bleibt beim Farbstich
+      const l = Math.max(0.05, Math.min(0.95, m.luma));
+      const gam = Math.max(0.8, Math.min(1.25, Math.pow(Math.log(sceneT) / Math.log(l), 0.6)));
+      const n = (g[0] + g[1] + g[2]) / 3;
+      corr.set(m.id, [...g.map((v) => +(v / n).toFixed(3)), +gam.toFixed(3)]);
+    }
   }
+  for (const m of list) if (!corr.has(m.id)) corr.set(m.id, [1, 1, 1, 1]);
   return { corr, target };
 }
 
@@ -386,7 +416,7 @@ function direct(an, media, s, chapters, flight) {
   if (auto.length) notes.push(`Stil: ${auto.join(', ')}. Bewusst sparsam, damit der Film wie aus einem Guss wirkt.`);
 
   const cm = colorMatch(all);
-  if (list.length >= 2) notes.push('Helligkeit und Farbstich aller Aufnahmen sind aneinander angeglichen, damit der Film wie aus einem Guss wirkt.');
+  if (list.length >= 2) notes.push('Farbe und Licht wie vom Coloristen: jede Szene behält ihre Stimmung, Ausreißer (Weißabgleich, Gegenlicht) sind angeglichen, helle Stellen bleiben erhalten.');
 
   win.fadeIn = win.start - first < 0.15 ? 0.02 : 0.012;
   win.fadeOut = rs.outro === 'loop' ? 0.25 : Math.min(1.8, D * 0.12);

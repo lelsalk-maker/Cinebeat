@@ -3473,6 +3473,34 @@ function fitSubject(mo, m, outAspect) {
 }
 
 /**
+ * Bildausschnitt nach Fotografen-Regeln: Mittelpunkt des Ausschnitts (Quellkoordinaten 0–1), in dem das Motiv
+ * auf einer Drittellinie steht und seine ursprüngliche Seite behält (Blickraum dorthin, wo im Foto Platz war),
+ * der Horizont auf einem Drittel liegt (viel Himmel: unteres Drittel) und Köpfe nie angeschnitten werden.
+ * fw/fh: Anteil des Ausschnitts an Breite/Höhe der Quelle.
+ */
+function framePoint(m, fw, fh) {
+  let fx = m.focus ? m.focus[0] : 0.5, fy = m.focus ? m.focus[1] : 0.45;
+  const sub = m.subject;
+  // waagerecht: nur wenn stark beschnitten wird und das Motiv klein genug für ein Drittel ist
+  if (fw < 0.8 && (!sub || sub[2] < fw * 0.55)) {
+    const sp = Math.max(0.36, Math.min(0.64, fx));
+    fx += (0.5 - sp) * fw;
+  }
+  if (fh < 0.9) {
+    if (m.horizon != null && !(m.people > 0.25)) {
+      // Horizont auf ein Drittel: viel Himmel ⇒ Horizont unten, sonst oben; halb zum Motiv hin
+      const sp = (m.sky || 0) > 0.45 ? 2 / 3 : 1 / 3;
+      fy = 0.5 * fy + 0.5 * (m.horizon + (0.5 - sp) * fh);
+    } else if (sub && m.people > 0.25) {
+      // Menschen: Kopf mit etwas Luft nach oben im Bild halten
+      const top = sub[1] - sub[3] / 2;
+      fy = Math.min(fy, top - 0.04 + fh / 2);
+    }
+  }
+  return [Math.max(0, Math.min(1, fx)), Math.max(0, Math.min(1, fy))];
+}
+
+/**
  * Kamerafahrt einer Einstellung. Die Geschwindigkeit ist über alle Einstellungen gleich (tempo = Kameratempo aus dem Song):
  * kurze Bilder fahren ein kurzes Stück, lange ein langes – so läuft die Kamera über jeden Schnitt im selben Fluss.
  */
@@ -3480,7 +3508,7 @@ function imageMotionRaw(rng, m, outAspect, visDur, role, prevDir, hint, tempo = 
   const srcAspect = m.w && m.h ? m.w / m.h : outAspect;
   const fw = srcAspect > outAspect ? outAspect / srcAspect : 1;
   const fh = srcAspect > outAspect ? 1 : srcAspect / outAspect;
-  const fx = m.focus ? m.focus[0] : 0.5, fy = m.focus ? m.focus[1] : 0.45;
+  const [fx, fy] = framePoint(m, fw, fh);
   const toPos = (f, frac) => (frac >= 0.999 ? 0 : Math.max(-1, Math.min(1, ((f - 0.5) * 2) / (1 - frac))));
   const px = toPos(fx, fw), py = toPos(fy, fh);
   const dur = Math.max(0.25, visDur);
@@ -5741,19 +5769,49 @@ function describeWindow(an, win) {
   return txt + '.';
 }
 
-/** Farb- und Helligkeitsangleichung je Aufnahme (Teil-Weißabgleich + Belichtung). */
+/**
+ * Farb- und Helligkeitsangleichung je Aufnahme, wie ein Colorist: innerhalb einer Szene (zeitlich/örtlich zusammenhängend)
+ * wird jede Aufnahme an die gemeinsame Stimmung der Szene angeglichen – ein warmer Abend bleibt warm, nur Ausreißer
+ * (anderer Weißabgleich, Blitz, Gegenlicht) rücken heran. Zwischen Szenen gleicht nur die Helligkeit sanft an.
+ * Helligkeit über eine Gammakurve (Mitteltöne, Lichter brennen nicht aus), Farbstich über kleine Kanal-Verstärkungen.
+ * Rückgabe je Id: [r, g, b, gamma].
+ */
 function colorMatch(list) {
   const lumas = list.map((m) => m.luma).filter((v) => v > 0).sort((a, b) => a - b);
   const med = lumas.length ? lumas[Math.floor(lumas.length / 2)] : 0.45;
   const target = Math.max(0.36, Math.min(0.52, med));
   const corr = new Map();
-  for (const m of list) {
-    if (!m.avg || !(m.luma > 0)) { corr.set(m.id, [1, 1, 1]); continue; }
-    const e = Math.max(0.8, Math.min(1.28, Math.pow(target / Math.max(0.05, m.luma), 0.55)));
-    const mean = (m.avg[0] + m.avg[1] + m.avg[2]) / 3 || 1;
-    const g = m.avg.map((c) => Math.max(0.93, Math.min(1.07, Math.pow(mean / Math.max(8, c), 0.28))));
-    corr.set(m.id, g.map((v) => +(v * e).toFixed(3)));
+  const cast = (m) => { const [r, g, b] = m.avg; return [r - g, (r + g) / 2 - b]; };
+  const median = (a) => { const s = a.slice().sort((x, y) => x - y); return s.length ? s[s.length >> 1] : 0; };
+  // Szenen in Aufnahme-Reihenfolge
+  const ok = list.filter((m) => m.avg && m.luma > 0);
+  const chrono = ok.slice().sort((a, b) => (a.time || 0) - (b.time || 0));
+  const starts = typeof sceneStarts === 'function' ? sceneStarts(chrono) : new Set();
+  const scenes = [];
+  for (const m of chrono) { if (!scenes.length || starts.has(m.id)) scenes.push([]); scenes[scenes.length - 1].push(m); }
+  for (const sc of scenes) {
+    const cs = sc.map(cast);
+    const rg0 = median(cs.map((c) => c[0])), yb0 = median(cs.map((c) => c[1]));
+    const sl = median(sc.map((m) => m.luma));
+    // Szenenhelligkeit halb zur Filmmitte: Nacht bleibt dunkler als Mittag, aber kein Sprung ins Schwarze
+    const sceneT = Math.max(0.3, Math.min(0.56, sl * 0.5 + target * 0.5));
+    for (let k = 0; k < sc.length; k++) {
+      const m = sc[k], [rg, yb] = cs[k];
+      // Stimmung der Szene, zum Teil in Richtung neutral (starker Gesamtstich einer ganzen Szene, z. B. Kunstlicht, wird gemildert)
+      const trg = rg0 * 0.75, tyb = yb0 * 0.75;
+      const nrg = rg + (trg - rg) * 0.6, nyb = yb + (tyb - yb) * 0.6;
+      const mean = (m.avg[0] + m.avg[1] + m.avg[2]) / 3;
+      const sum = (3 * mean + nyb) / 1.5, tb = sum / 2 - nyb;
+      const want = [(sum + nrg) / 2, (sum - nrg) / 2, tb];
+      const g = m.avg.map((c, i) => Math.max(0.93, Math.min(1.07, Math.pow(Math.max(8, want[i]) / Math.max(8, c), 0.8))));
+      // Helligkeit: Gamma bringt die Mitteltöne zum Ziel (gedämpft), Verstärkung bleibt beim Farbstich
+      const l = Math.max(0.05, Math.min(0.95, m.luma));
+      const gam = Math.max(0.8, Math.min(1.25, Math.pow(Math.log(sceneT) / Math.log(l), 0.6)));
+      const n = (g[0] + g[1] + g[2]) / 3;
+      corr.set(m.id, [...g.map((v) => +(v / n).toFixed(3)), +gam.toFixed(3)]);
+    }
   }
+  for (const m of list) if (!corr.has(m.id)) corr.set(m.id, [1, 1, 1, 1]);
   return { corr, target };
 }
 
@@ -5989,7 +6047,7 @@ function direct(an, media, s, chapters, flight) {
   if (auto.length) notes.push(`Stil: ${auto.join(', ')}. Bewusst sparsam, damit der Film wie aus einem Guss wirkt.`);
 
   const cm = colorMatch(all);
-  if (list.length >= 2) notes.push('Helligkeit und Farbstich aller Aufnahmen sind aneinander angeglichen, damit der Film wie aus einem Guss wirkt.');
+  if (list.length >= 2) notes.push('Farbe und Licht wie vom Coloristen: jede Szene behält ihre Stimmung, Ausreißer (Weißabgleich, Gegenlicht) sind angeglichen, helle Stellen bleiben erhalten.');
 
   win.fadeIn = win.start - first < 0.15 ? 0.02 : 0.012;
   win.fadeOut = rs.outro === 'loop' ? 0.25 : Math.min(1.8, D * 0.12);
@@ -6025,8 +6083,8 @@ uniform vec4 uGeoA;     // Drehung, Weichheit (LOD), Abzug-Modus, Randbreite
 uniform vec4 uGeoB;
 uniform vec2 uOffA;
 uniform vec2 uOffB;
-uniform vec3 uCorrA;    // Farbangleichung je Aufnahme
-uniform vec3 uCorrB;
+uniform vec4 uCorrA;    // Farbangleichung je Aufnahme: Kanal-Verstärkung, Gamma
+uniform vec4 uCorrB;
 uniform vec2 uBand;     // Bildbereich: oben, Höhe (Ausgabe-UV)
 uniform float uHasA;
 uniform float uHasB;
@@ -6153,8 +6211,9 @@ vec3 layer(sampler2D tex, vec4 xf, vec3 box, vec3 blur, vec4 geo, vec2 off, vec2
   return acc / ws;
 }
 
-vec3 layerA(vec2 uv) { return layer(uTexA, uXfA, uBoxA, uBlurA, uGeoA, uOffA, uv, uParA, uFocA, uHor.x) * uCorrA; }
-vec3 layerB(vec2 uv) { return layer(uTexB, uXfB, uBoxB, uBlurB, uGeoB, uOffB, uv, uParB, uFocB, uHor.y) * uCorrB; }
+vec3 corrApply(vec3 c, vec4 k) { return pow(max(c, vec3(0.0)), vec3(k.w)) * k.rgb; }
+vec3 layerA(vec2 uv) { return corrApply(layer(uTexA, uXfA, uBoxA, uBlurA, uGeoA, uOffA, uv, uParA, uFocA, uHor.x), uCorrA); }
+vec3 layerB(vec2 uv) { return corrApply(layer(uTexB, uXfB, uBoxB, uBlurB, uGeoB, uOffB, uv, uParB, uFocB, uHor.y), uCorrB); }
 
 vec3 leakColor(vec2 uv, float t) {
   vec2 c1 = vec2(0.15 + 0.7 * fract(t * 0.07), 0.3 + 0.2 * sin(t * 0.6));
@@ -6439,8 +6498,9 @@ class Renderer {
     gl.uniform4fv(u.uGeoB, L(f.B, 'geo', [0, 0, 0, 0]));
     gl.uniform2fv(u.uOffA, L(f.A, 'off', [0, 0]));
     gl.uniform2fv(u.uOffB, L(f.B, 'off', [0, 0]));
-    gl.uniform3fv(u.uCorrA, L(f.A, 'corr', [1, 1, 1]));
-    gl.uniform3fv(u.uCorrB, L(f.B, 'corr', [1, 1, 1]));
+    const cA = L(f.A, 'corr', [1, 1, 1, 1]), cB = L(f.B, 'corr', [1, 1, 1, 1]);
+    gl.uniform4f(u.uCorrA, cA[0], cA[1], cA[2], cA[3] || 1);
+    gl.uniform4f(u.uCorrB, cB[0], cB[1], cB[2], cB[3] || 1);
     gl.uniform2fv(u.uFocA, L(f.A, 'foc', [0.5, 0.45]));
     gl.uniform2fv(u.uFocB, L(f.B, 'foc', [0.5, 0.45]));
     gl.uniform2fv(u.uParA, L(f.A, 'par', [0, 0]));

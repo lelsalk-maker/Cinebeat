@@ -27,8 +27,8 @@ uniform vec4 uGeoA;     // Drehung, Weichheit (LOD), Abzug-Modus, Randbreite
 uniform vec4 uGeoB;
 uniform vec2 uOffA;
 uniform vec2 uOffB;
-uniform vec3 uCorrA;    // Farbangleichung je Aufnahme
-uniform vec3 uCorrB;
+uniform vec4 uCorrA;    // Farbangleichung je Aufnahme: Kanal-Verstärkung, Gamma
+uniform vec4 uCorrB;
 uniform vec2 uBand;     // Bildbereich: oben, Höhe (Ausgabe-UV)
 uniform float uHasA;
 uniform float uHasB;
@@ -155,8 +155,9 @@ vec3 layer(sampler2D tex, vec4 xf, vec3 box, vec3 blur, vec4 geo, vec2 off, vec2
   return acc / ws;
 }
 
-vec3 layerA(vec2 uv) { return layer(uTexA, uXfA, uBoxA, uBlurA, uGeoA, uOffA, uv, uParA, uFocA, uHor.x) * uCorrA; }
-vec3 layerB(vec2 uv) { return layer(uTexB, uXfB, uBoxB, uBlurB, uGeoB, uOffB, uv, uParB, uFocB, uHor.y) * uCorrB; }
+vec3 corrApply(vec3 c, vec4 k) { return pow(max(c, vec3(0.0)), vec3(k.w)) * k.rgb; }
+vec3 layerA(vec2 uv) { return corrApply(layer(uTexA, uXfA, uBoxA, uBlurA, uGeoA, uOffA, uv, uParA, uFocA, uHor.x), uCorrA); }
+vec3 layerB(vec2 uv) { return corrApply(layer(uTexB, uXfB, uBoxB, uBlurB, uGeoB, uOffB, uv, uParB, uFocB, uHor.y), uCorrB); }
 
 vec3 leakColor(vec2 uv, float t) {
   vec2 c1 = vec2(0.15 + 0.7 * fract(t * 0.07), 0.3 + 0.2 * sin(t * 0.6));
@@ -441,8 +442,9 @@ class Renderer {
     gl.uniform4fv(u.uGeoB, L(f.B, 'geo', [0, 0, 0, 0]));
     gl.uniform2fv(u.uOffA, L(f.A, 'off', [0, 0]));
     gl.uniform2fv(u.uOffB, L(f.B, 'off', [0, 0]));
-    gl.uniform3fv(u.uCorrA, L(f.A, 'corr', [1, 1, 1]));
-    gl.uniform3fv(u.uCorrB, L(f.B, 'corr', [1, 1, 1]));
+    const cA = L(f.A, 'corr', [1, 1, 1, 1]), cB = L(f.B, 'corr', [1, 1, 1, 1]);
+    gl.uniform4f(u.uCorrA, cA[0], cA[1], cA[2], cA[3] || 1);
+    gl.uniform4f(u.uCorrB, cB[0], cB[1], cB[2], cB[3] || 1);
     gl.uniform2fv(u.uFocA, L(f.A, 'foc', [0.5, 0.45]));
     gl.uniform2fv(u.uFocB, L(f.B, 'foc', [0.5, 0.45]));
     gl.uniform2fv(u.uParA, L(f.A, 'par', [0, 0]));
