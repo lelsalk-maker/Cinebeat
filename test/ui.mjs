@@ -5,6 +5,8 @@ const URL_ = process.env.APP || 'http://127.0.0.1:8123/index.html';
 const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
 const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
 const page = await ctx.newPage();
+// alle Regler prüfen: Werkbank-Ebene (in der Regie sind Schnitt-Reiter, Rhythmus und Effekte ausgeblendet)
+await page.addInitScript(() => { try { localStorage.setItem('cinebeat-level', 'bench'); } catch (e) { /* egal */ } });
 const errs = [], requests = [];
 page.on('pageerror', (e) => errs.push('pageerror: ' + e.message));
 page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errs.push(m.type() + ': ' + m.text()); });
@@ -33,6 +35,7 @@ else {
 // Zeitleiste: gedrückt halten und ziehen
 await page.click('[data-tab="cut"]'); await page.waitForTimeout(400);
 const tiles = await page.$$('#clipRow .clip');
+await tiles[3].scrollIntoViewIfNeeded(); await page.waitForTimeout(200);
 const b1 = await tiles[3].boundingBox(), b2 = await tiles[1].boundingBox();
 const id4 = await page.evaluate(() => CineBeat.S.plan.clips[3].mediaId);
 await page.mouse.move(b1.x + b1.width / 2, b1.y + b1.height / 2); await page.mouse.down(); await page.waitForTimeout(450);

@@ -452,3 +452,37 @@ details.more[open] { display: grid; gap: 16px; }
 .tripmap { margin: 0 0 14px; position: relative; border-radius: 18px; overflow: hidden; border: 1px solid var(--line); background: var(--night); }
 .tripmap canvas { display: block; width: 100%; cursor: pointer; }
 .tm-info { position: absolute; left: 12px; bottom: 10px; font: 500 10.5px/1 var(--f-mono); letter-spacing: 0.08em; color: var(--muted); background: rgba(5, 6, 8, 0.72); padding: 6px 9px; border-radius: 999px; pointer-events: none; font-variant-numeric: tabular-nums; }
+/* Zwei Bedienebenen */
+.level { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border-radius: 14px; background: rgb(10, 16, 27); border: 1px solid var(--line); }
+.level button { display: grid; gap: 2px; text-align: left; padding: 9px 12px; border-radius: 10px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.level button b { font-size: 14px; font-weight: 600; color: var(--text); }
+.level button small { font-size: 11.5px; line-height: 1.3; }
+.level button[aria-checked="true"] { background: var(--navy-2); box-shadow: inset 0 0 0 1px var(--line-2); }
+.level button[aria-checked="true"] b { color: var(--beige); }
+.app[data-level="regie"] #tabbtn-cut, .app[data-level="regie"] #grpRhythm, .app[data-level="regie"] #grpFx { display: none; }
+.bench-dock .cliprow-wrap { margin-top: 2px; }
+.bench-dock .cliprow { min-height: 64px; }
+.bench-dock .clip { height: 64px; }
+.clip.now::after { content: ""; position: absolute; inset: auto 0 0 0; height: 3px; background: var(--beige); }
+.clip.now { box-shadow: 0 0 0 1px var(--beige-2); }
+.regie-head { flex-wrap: wrap; }
+.regie-head h2 { margin-right: auto; }
+
+/* Varianten vergleichen */
+.compare { position: fixed; inset: 0; z-index: 60; display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto auto; gap: 10px; padding: calc(env(safe-area-inset-top, 0px) + 10px) 16px calc(env(safe-area-inset-bottom, 0px) + 14px); background: var(--black); }
+.cmp-top { display: flex; align-items: center; justify-content: space-between; }
+.cmp-top h2 { margin: 0; font: 400 22px/1.2 var(--f-serif); }
+.cmp-stage { min-height: 0; display: grid; place-items: center; touch-action: pan-y; }
+.cmp-stage .monitor { width: min(100%, calc(62vh * var(--arw) / var(--arh))); width: min(100%, calc(62svh * var(--arw) / var(--arh))); }
+.cmp-hint { margin: 0; text-align: center; color: var(--muted); font-size: 12.5px; }
+.cmp-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.cmp-cards button { display: grid; gap: 3px; padding: 10px 8px; border-radius: 12px; border: 1px solid var(--line); background: var(--night); color: var(--text); cursor: pointer; text-align: center; }
+.cmp-cards button b { font-size: 14px; font-weight: 600; }
+.cmp-cards button small { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.cmp-cards button[aria-checked="true"] { border-color: var(--beige); background: var(--navy); }
+.cmp-cards button[aria-checked="true"] b { color: var(--beige); }
+.cmp-actions .btn { width: 100%; }
+body.comparing { overflow: hidden; }
+body.comparing .mini, body.comparing .mini-bar { display: none !important; }
+.bench-note { display: none; }
+.app[data-level="bench"] .bench-note { display: block; color: var(--beige-2); }

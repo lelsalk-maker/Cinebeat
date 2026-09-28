@@ -1477,7 +1477,7 @@ async function rebuild(opts = {}) {
   mon.classList.toggle('empty', empty);
   buildStripBase();
   drawStrip();
-  if (S.tab === 'cut') renderCut();
+  if (S.tab === 'cut' || document.querySelector('.app').dataset.level === 'bench') renderCut();
   if (S.tab === 'material') renderMaterial();
   if (S.tab === 'music') renderMusic();
   if (S.tab === 'text') renderText();
@@ -1696,6 +1696,104 @@ function drawStrip(t) {
   c.setAttribute('aria-valuenow', String(Math.round((tt / S.plan.duration) * 100)));
 }
 
+/* ---------- Zwei Bedienebenen: Regie (die App schneidet, du entscheidest) und Werkbank (Zeitleiste unter dem Bild, jeder Regler) ---------- */
+const LEVEL_KEY = 'cinebeat-level';
+function setLevel(lv, save = true) {
+  lv = lv === 'bench' ? 'bench' : 'regie';
+  document.querySelector('.app').dataset.level = lv;
+  for (const b of document.querySelectorAll('#levelChips [data-level]')) b.setAttribute('aria-checked', String(b.dataset.level === lv));
+  const wrap = document.querySelector('.cliprow-wrap'), dock = $('benchDock');
+  if (lv === 'bench' && wrap.parentElement !== dock) { dock.appendChild(wrap); dock.hidden = false; renderCut(); }
+  if (lv === 'regie' && wrap.parentElement === dock) { $('tab-cut').insertBefore(wrap, $('tab-cut').querySelector('.row')); dock.hidden = true; }
+  // in der Regie gibt es keinen Schnitt-Reiter: zurück zum Look
+  if (lv === 'regie' && S.tab === 'cut') { const t = document.querySelector('#tabbtn-style'); t && t.click(); }
+  if (save) { try { localStorage.setItem(LEVEL_KEY, lv); } catch (e) { /* egal */ } }
+}
+// Werkbank: laufende Einstellung in der Zeitleiste markieren und im Blick halten
+let benchNow = -1;
+function benchFollow(t) {
+  if (document.querySelector('.app').dataset.level !== 'bench' || !S.plan) return;
+  const i = clipIndexAt(S.plan.clips, t);
+  if (i === benchNow) return;
+  benchNow = i;
+  const row = $('clipRow');
+  for (const el of row.querySelectorAll('.clip.now')) el.classList.remove('now');
+  const el = row.querySelector(`[data-clip="${S.plan.clips[i] ? S.plan.clips[i].i : -1}"]`);
+  if (!el) return;
+  el.classList.add('now');
+  const wrap = row.parentElement, l = el.offsetLeft, r = l + el.offsetWidth;
+  if (l < wrap.scrollLeft + 24 || r > wrap.scrollLeft + wrap.clientWidth - 24) wrap.scrollTo({ left: Math.max(0, l - wrap.clientWidth * 0.3), behavior: engine.playing ? 'smooth' : 'auto' });
+}
+
+/* ---------- Varianten im Vollbild vergleichen: gleiche Stelle im Song, anders geschnitten ---------- */
+const CMP = { orig: null, home: null, keys: ['ruhig', 'ausgewogen', 'energisch'], stats: {} };
+function variantStats(plan) {
+  const cl = plan.clips.filter((c) => !c.loop);
+  const avg = cl.reduce((a, c) => a + (c.end - c.start), 0) / Math.max(1, cl.length);
+  return { n: cl.length, avg, fx: (plan.fx || []).length };
+}
+function renderCompareCards() {
+  const cur = S.ctx.rec.settings.variant || 'ausgewogen';
+  $('cmpCards').innerHTML = CMP.keys.map((k) => {
+    const st = CMP.stats[k];
+    return `<button type="button" role="radio" aria-checked="${k === cur}" data-var="${k}"><b>${VARIANTS[k].label}</b>${st ? `<small>${st.n} Einstellungen · Ø ${st.avg.toFixed(1).replace('.', ',')} s</small>` : ''}</button>`;
+  }).join('');
+}
+async function openCompare() {
+  const ctx = S.ctx;
+  if (!ctx || !S.plan || flowPending(ctx)) return;
+  const media = ctx.media.filter((m) => !m.loading && !m.bad);
+  CMP.orig = ctx.rec.settings.variant || 'ausgewogen';
+  for (const k of CMP.keys) {
+    try { CMP.stats[k] = variantStats(buildPlan(planOpts({ ...ctx, rec: { ...ctx.rec, settings: { ...ctx.rec.settings, variant: k } } }, media))); } catch (e) { CMP.stats[k] = null; }
+  }
+  const mon = $('monitor');
+  CMP.home = document.createComment('monitor');
+  mon.parentElement.insertBefore(CMP.home, mon);
+  $('cmpStage').appendChild(mon);
+  $('compare').hidden = false;
+  document.body.classList.add('comparing');
+  renderCompareCards();
+  await rebuild();
+  if (!engine.playing) engine.play(engine.t);
+}
+async function pickVariant(k) {
+  if (!CMP.keys.includes(k) || S.ctx.rec.settings.variant === k) return;
+  S.ctx.rec.settings.variant = k;
+  renderCompareCards();
+  await rebuild();
+}
+async function closeCompare(take) {
+  if ($('compare').hidden) return;
+  if (!take) S.ctx.rec.settings.variant = CMP.orig;
+  else if (S.ctx.rec.settings.variant !== CMP.orig) { commit(); savePlaceSoon(); toast(`Variante „${VARIANTS[S.ctx.rec.settings.variant].label}“ übernommen.`); }
+  const mon = $('monitor');
+  CMP.home.parentElement.insertBefore(mon, CMP.home);
+  CMP.home.remove();
+  $('compare').hidden = true;
+  document.body.classList.remove('comparing');
+  await rebuild();
+}
+function setupCompare() {
+  $('compareBtn').addEventListener('click', openCompare);
+  $('cmpClose').addEventListener('click', () => closeCompare(false));
+  $('cmpTake').addEventListener('click', () => closeCompare(true));
+  $('cmpCards').addEventListener('click', (e) => { const b = e.target.closest('[data-var]'); if (b) pickVariant(b.dataset.var); });
+  // Wischen: links = nächste (energischer), rechts = vorige (ruhiger)
+  let x0 = null, y0 = 0;
+  const st = $('cmpStage');
+  st.addEventListener('pointerdown', (e) => { x0 = e.clientX; y0 = e.clientY; });
+  st.addEventListener('pointerup', (e) => {
+    if (x0 == null) return;
+    const dx = e.clientX - x0, dy = e.clientY - y0;
+    x0 = null;
+    if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.3) return;
+    const i = CMP.keys.indexOf(S.ctx.rec.settings.variant || 'ausgewogen');
+    pickVariant(CMP.keys[Math.max(0, Math.min(CMP.keys.length - 1, i + (dx < 0 ? 1 : -1)))]);
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('compare').hidden) closeCompare(false); });
+}
+
 /* ---------- Mini-Vorschau: kleines Livebild + Abspielen in der Kopfzeile, solange das große Bild weggescrollt ist ---------- */
 const mini = { on: false, x: null, ratio: 0 };
 
@@ -1704,7 +1802,7 @@ function setupMini() {
   mini.x = cv.getContext('2d', { alpha: false });
   // nach jedem Vorschaubild (nicht beim Export) ein verkleinertes Abbild – nur solange die Mini-Vorschau zu sehen ist
   const draw0 = engine.drawAt.bind(engine);
-  engine.drawAt = (t, mode) => { const r = draw0(t, mode); if (mini.on && mode !== 'offline') miniCopy(); return r; };
+  engine.drawAt = (t, mode) => { const r = draw0(t, mode); if (mode !== 'offline') { if (mini.on) miniCopy(); benchFollow(t); } return r; };
   const show = (on) => {
     on = on && !!S.plan && !$('viewEdit').hidden && $('flowStage').hidden && !S.exporting && window.innerWidth < 960;
     if (on === mini.on) return;
@@ -2546,6 +2644,8 @@ function renderCut() {
       <span class="ct">${(c.end - c.start).toFixed(1).replace('.', ',')}s</span>${secTag}
     </button>`;
   }).join('');
+  benchNow = -1;
+  if (engine) benchFollow(engine.t);
 }
 
 /**
@@ -3410,6 +3510,11 @@ async function init() {
   $('safeBtn').addEventListener('click', (e) => { const on = e.currentTarget.getAttribute('aria-pressed') !== 'true'; e.currentTarget.setAttribute('aria-pressed', String(on)); $('safeZones').hidden = !on; });
   $('playBtn').addEventListener('click', togglePlay);
   setupMini();
+  setupCompare();
+  $('levelChips').addEventListener('click', (e) => { const b = e.target.closest('[data-level]'); if (b) setLevel(b.dataset.level); });
+  let lv0 = 'regie';
+  try { lv0 = localStorage.getItem(LEVEL_KEY) || 'regie'; } catch (e) { /* egal */ }
+  setLevel(lv0, false);
   $('bigPlay').addEventListener('click', (e) => { e.stopPropagation(); togglePlay(); });
   $('screen').addEventListener('click', () => { if (S.tab !== 'text') togglePlay(); });
   $('exportBtn').addEventListener('click', openExportSheet);
