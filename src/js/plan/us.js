@@ -22,7 +22,7 @@ const isUs = (m) => usScore(m) >= 0.5;
  * sich Rückspulen oder Wiederholungen beziehen, bleiben stehen. Liefert die Zahl der getauschten Plätze.
  */
 function usPolish(clips, { byId, ov = {}, moved = new Set() }) {
-  const special = (c) => c.split || c.grid || c.burst || c.rush || c.stack || c.strip || c.miniRew || c.pre || c.reveal || c.leader || c.flightAnim || c.loop || c.vid || c.gridMid || c.afterGrid || c.replay || c.echo;
+  const special = (c) => c.split || c.grid || c.burst || c.rush || c.stack || c.strip || c.miniRew || c.pre || c.reveal || c.leader || c.flightAnim || c.loop || c.vid || c.gridMid || c.afterGrid || c.replay || c.replaySeg || c.repeatSeg || c.echo;
   const own = (c) => { const o = ov[c.i]; return !!(o && (o.mediaId || o.again)); };
   const img = (c) => { const m = byId.get(c.mediaId); return m && m.kind === 'image' ? m : null; };
   // Bilder, die an anderer Stelle noch einmal gezeigt werden (Rückspulen, Wiederholung, Echo), nicht bewegen

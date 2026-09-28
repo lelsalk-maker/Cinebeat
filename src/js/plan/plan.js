@@ -745,17 +745,27 @@ function planOnce(opts) {
     if (ids.length >= 3) { lastC.strip = { ids }; lastC.mediaId = ids[0]; }
   }
 
-  // Wir-Vorrang: eure Aufnahmen in die ruhigen Passagen, Natur und Dinge in die schnellen (innerhalb jeder Szene)
+  // Anordnung: nach Tageszeit (Standard) ordnet die Regie innerhalb jedes Tagesblocks frei wie ein Cutter,
+  // streng chronologisch nur der Wir-Tausch mit nahen Nachbarn
   const usOn = !flight && s.us !== 'off';
-  if (usOn) {
-    const nUs = clips.filter((c) => isUs(byId.get(c.mediaId))).length;
-    const mv = usPolish(clips, { byId, ov, moved: new Set((overrides.moves || []).map((x) => x.id)) });
+  const byTime = s.order !== 'streng' && !flight;
+  // verschobene Aufnahmen und ihr Ziel bleiben, wo die Zeitleiste sie hingelegt hat
+  const userMoved = new Set((overrides.moves || []).flatMap((x) => [x.id, x.before]).filter(Boolean));
+  const nUs = usOn ? clips.filter((c) => isUs(byId.get(c.mediaId))).length : 0;
+  if (byTime) {
+    const ar = arrangeBlocks(clips, { byId, ov, moved: userMoved, us: usOn });
+    // weiche Szenenübergänge bleiben auf ihren Taktanfängen (musikalische Stelle, nicht die Aufnahme)
+    if (ar.moved) {
+      dir.notes.push(`Reihenfolge nach Tageszeit: in ${ar.blocks} ${ar.blocks === 1 ? 'Tagesblock' : 'Tagesblöcken'} (Morgen & Mittag bzw. Nachmittag & Abend) ${ar.moved} Aufnahmen so gesetzt, dass${usOn && nUs ? ' ihr die ruhigen Passagen tragt, Natur und Dinge die schnellen,' : ''} Totalen und starke Bilder lange Plätze bekommen, die Bildenergie zur Songstelle passt und nie zwei ähnliche Bilder aufeinander folgen. Die Tage bleiben in ihrer Reihenfolge.`);
+    }
+  } else if (usOn) {
+    const mv = usPolish(clips, { byId, ov, moved: userMoved });
     if (nUs) dir.notes.push(`Wir-Vorrang: ${nUs} ${nUs === 1 ? 'Aufnahme' : 'Aufnahmen'} von euch${mv ? ` tragen die ruhigen Passagen (${mv}× mit einem nahen Nachbarn getauscht), Natur und Dinge die schnellen` : ' stehen schon in den ruhigen Passagen'}; ihr bekommt mehr Standzeit und das Schlussbild.`);
   }
 
   // Feinschliff wie ein Cutter: Standzeit nach Bildinhalt, stärkstes Bild auf den Einsatz und ans Ende
   if (!flight && s.cutter !== 'off') {
-    const cp = cutterPolish(clips, { an, win, byId, beatDur, ov, us: usOn, taps: (overrides.taps || []).map((t) => t - win.start) });
+    const cp = cutterPolish(clips, { an, win, byId, beatDur, ov, us: usOn, blocks: byTime, taps: (overrides.taps || []).map((t) => t - win.start) });
     if (cp.retimed || cp.hero) dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Feinschliff: ${[cp.retimed ? `${cp.retimed} Schnitte um ein bis zwei Beats verschoben, damit Totalen und starke Bilder wirken und Details knapp bleiben` : '', cp.hero ? `${cp.hero}× das stärkste Bild aus der Nähe auf den Einsatz bzw. ans Ende gesetzt` : ''].filter(Boolean).join('; ')}.`);
   }
 
@@ -1056,11 +1066,22 @@ function planOnce(opts) {
       if (pc && pc.motion && media[pc.mediaIndex] && media[pc.mediaIndex].kind === 'image') {
         // Match-Cut: gleicher Ausschnitt wie am Ende des vorigen Bilds, die Kamerabewegung läuft weiter
         // gleiche Geschwindigkeit wie im vorigen Bild: Weg im Verhältnis der Dauer
-        const f = pc.motion.from, to = pc.motion.to, k = Math.min(1.2, Math.max(0.3, visDur / Math.max(0.2, pc.visEnd - pc.visStart)));
-        const cl = (v) => Math.max(-1, Math.min(1, v));
-        c.motion = { from: { ...to }, to: { s: Math.max(1, to.s + (to.s - f.s) * k), x: cl(to.x + (to.x - f.x) * k), y: cl(to.y + (to.y - f.y) * k) } };
-        c.dir = pc.dir;
-        prevDir = pc.dir;
+        const f = pc.motion.from, to = pc.motion.to, k = Math.max(0.3, visDur / Math.max(0.2, pc.visEnd - pc.visStart));
+        // wie weit die Fahrt im Bild noch weitergehen kann (Bildrand, kein Zoom unter 1)
+        let kMax = Infinity;
+        for (const key of ['x', 'y']) { const d = to[key] - f[key]; if (d > 1e-6) kMax = Math.min(kMax, (1 - to[key]) / d); else if (d < -1e-6) kMax = Math.min(kMax, (-1 - to[key]) / d); }
+        { const d = to.s - f.s; if (d < -1e-6) kMax = Math.min(kMax, (1 - to.s) / d); }
+        const kB = Math.min(k, kMax);
+        // gleiche Geschwindigkeit ist der Sinn des Match-Cuts: reicht der Platz nicht, fährt schon das vorige Bild
+        // entsprechend ruhiger (sein Endpunkt bleibt, also bleibt der Anschluss); bliebe fast kein Weg, normaler Schnitt
+        if (kB < k * 0.35) c.matchCut = false;
+        else {
+          if (kB < k) scaleMotion(pc.motion, kB / k);
+          const f2 = pc.motion.from;
+          c.motion = { from: { ...to }, to: { s: Math.max(1, to.s + (to.s - f2.s) * k), x: Math.max(-1, Math.min(1, to.x + (to.x - f2.x) * k)), y: Math.max(-1, Math.min(1, to.y + (to.y - f2.y) * k)) } };
+          c.dir = pc.dir;
+          prevDir = pc.dir;
+        }
       }
     }
     if (c.reveal || (c.role === 'hook' && clips[c.i - 1] && clips[c.i - 1].reveal)) {
@@ -1096,6 +1117,15 @@ function planOnce(opts) {
     if (c.tout && c.tout.type === TR.DRIFT && c.motion) { const dx = c.motion.to.x - c.motion.from.x; c.tout.dirSign = Math.abs(dx) > 0.02 ? Math.sign(dx) : c.dir === 'left' ? -1 : 1; }
   }
   if (vSynced) dir.notes.push(`Video auf den Takt: in ${vSynced} ${vSynced === 1 ? 'Einstellung' : 'Einstellungen'} landen ${vHits} Bewegungsmomente (Sprung, Welle, Schwenk) genau auf Schlag, Snare oder Bassdrum; kein Schnitt reißt eine Bewegung ab.`);
+  // Match-Cuts, die ihr Tempo nicht halten konnten, sind normale Schnitte geworden: Notiz an die tatsächliche Zahl anpassen
+  {
+    const mcN = clips.filter((c) => c.matchCut).length;
+    const ni = dir.notes.findIndex((n) => /Match-Cut/.test(n));
+    if (ni >= 0 && mcN !== matches) {
+      if (!mcN) dir.notes.splice(ni, 1);
+      else dir.notes[ni] = `${mcN} Match-Cut${mcN === 1 ? '' : 's'}: Bilder mit ähnlichem Aufbau schneiden unsichtbar ineinander, die Kamerabewegung läuft im selben Tempo weiter.`;
+    }
+  }
   // nach dem Raster-Zoom: gleiches Bild, gleicher (zentrierter) Ausschnitt, dann sanfte Fahrt
   for (const c of clips) {
     if (!c.afterGrid || !c.motion) continue;
@@ -1116,6 +1146,16 @@ function planOnce(opts) {
       if (!nb.length) continue;
       const lim = Math.max(...nb) * 1.3;
       if (sp[i] > lim && lim > 0.002) { scaleMotion(clips[i].motion, lim / sp[i]); sp[i] = lim; }
+    }
+    // zweiter Durchgang, Paar für Paar: keine Fahrt mehr als 1,8× so schnell wie die direkt davor oder danach
+    // (nur bremsen, nie beschleunigen; nicht über einen Songteil-Wechsel, einen Match-Cut oder ein neu gewürfeltes Bild)
+    for (let pass = 0; pass < 2; pass++) {
+      for (let i = 1; i < clips.length; i++) {
+        const a = sp[i - 1], b = sp[i];
+        if (a == null || b == null || clips[i].sectionChange || clips[i].matchCut || (ov[i] && ov[i].again) || (ov[i - 1] && ov[i - 1].again)) continue;
+        if (b > a * 1.8 && a > 0.002) { scaleMotion(clips[i].motion, (a * 1.8) / b); sp[i] = a * 1.8; }
+        else if (a > b * 1.8 && b > 0.002) { scaleMotion(clips[i - 1].motion, (b * 1.8) / a); sp[i - 1] = b * 1.8; }
+      }
     }
   }
   if (loopClip) {
@@ -1281,7 +1321,13 @@ function planOnce(opts) {
         if (c.end < a + beatDur || c.start >= b - 0.05) continue;
         const nx = clips[c.i + 1];
         if (!plain(c) || !plain(nx) || nx.mediaId === c.mediaId) continue;
-        c.layer = { from: nx.i, mode, amp, pulse: mode === 'screen', dir: c.i % 2 ? 1 : -1 };
+        // Dosierung nach dem darübergelegten Bild: im Aufhell-Modus bringt ein helles, detailreiches Bild viel Licht ein –
+        // dann sanfter, damit der Puls weich bleibt (ein dunkles Bild darf voll wirken)
+        const nm = byId.get(nx.mediaId), cm = byId.get(c.mediaId);
+        const light = mode === 'screen' ? (nm.luma || 0.45) * (0.7 + 0.6 * (nm.sharp != null ? nm.sharp : 0.5)) : 0;
+        const dl = Math.abs((nm.luma || 0.45) - (cm.luma || 0.45));
+        const k = Math.max(0.45, Math.min(1, 1.35 - light * 1.3 - dl * 0.8));
+        c.layer = { from: nx.i, mode, amp: amp * k, pulse: mode === 'screen', dir: c.i % 2 ? 1 : -1 };
         n++;
       }
       return n;

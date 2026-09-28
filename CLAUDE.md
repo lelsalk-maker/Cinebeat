@@ -27,6 +27,7 @@ beat-synchrone Filme macht. Läuft komplett auf dem Gerät (iPhone ist Hauptziel
 | `plan/plan.js` | `planOnce`: Einstiege, Stil-Mittel, Zuteilung, Übergänge, Bewegung, Effekte, Overlays, Kapazität |
 | `plan/timeline.js` | `layersAt`, `clipIndexAt` |
 | `plan/us.js` | Wir-Vorrang: `usScore`/`isUs` (Markierung `m.us` vor Erkennung), `usPolish` tauscht Wir-Aufnahmen auf ruhige Plätze (≤4 Plätze, ≤3 min, gleiche Szene) |
+| `plan/arrange.js` | Anordnung nach Tageszeit: `dayBlock`, `arrangeBlocks` (lokale Suche je Block: Wir ruhig, Totalen/starke Bilder lang, Energie zur Songstelle, keine ähnlichen Nachbarn) |
 | `plan/cutter.js` | `cutterPolish`: Standzeit nach Bildinhalt (Schnitte ±1–2 Beats auf starken Zählzeiten), Höhepunkt-/Schlussbild |
 | `plan/vsync.js` | Videoschnitt auf den Takt: `hitGrid` (Eins/Snare/Bassdrum/Beats), `syncVideoOffset` legt Aktionsmomente (`m.hits`) aufs Raster |
 | `plan/advice.js` | Song zuerst: `idealLength`, `songAdvice` (ideale Menge per Testschnitt), `planQuality` (Bewertung), `bestCut` (beste von n Varianten), `hookScore` (Stopp-Wert der ersten 1,5 s), `improveHook` |
@@ -49,7 +50,7 @@ Ablauf je Ort (`rec.flow`): `song` (Song wählen) → `advice` (Songprofil + Emp
 
 ## Regeln, die gelten müssen
 - Alles lokal: keine Netzwerkzugriffe, keine Uploads.
-- Chronologie aus Metadaten (Ausnahmen: Startbild, Tausch innerhalb 3 min, Beinahe-Doppel versetzt).
+- Chronologie in Tagesblöcken (Standard `order: 'tageszeit'`): je Tag „Morgen & Mittag“ (bis 14 Uhr) und „Nachmittag & Abend“ (Nacht bis 4 Uhr = Vorabend, `dayBlock`); Blöcke nie vertauscht, innerhalb ordnet `arrangeBlocks` (plan/arrange.js) frei. `order: 'streng'`: Uhrzeit (Ausnahmen: Startbild, Tausch innerhalb 3 min, Beinahe-Doppel versetzt).
 - „Alle Aufnahmen“ (Standard): nichts weglassen; verdichten zuerst in Drop/Refrain; ruhige Teile ≥ 2 Beats.
 - Videos laufen wirklich (mind. ein Takt), bester Moment auf dem Schlag; nie in Sekundenbruchteil-Einstellungen.
 - Songdynamik: Drop-Einsatz ist ein Schnitt. Design: Schwarz/Dunkelblau/Beige, schlicht, modern.

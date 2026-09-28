@@ -763,6 +763,14 @@ class Engine {
    * Schlagzeug-Akzente: kurzer Zoom-Impuls nur auf der Bassdrum, ein kaum spürbares Rütteln auf der Snare.
    * Wirkt nur in den Zonen, die die Regie freigibt (z. B. Drop und Refrain).
    */
+  /** Dosierung der Takt-Akzente nach Bildschärfe: auf detailreichen Bildern wirkt derselbe Impuls härter. */
+  accentK(t) {
+    const i = clipIndexAt(this.plan.clips, t), c = this.plan.clips[i];
+    if (!c) return 1;
+    if (c._accK == null) { const m = this.media[c.mediaIndex]; c._accK = m && m.sharp != null ? Math.max(0.5, Math.min(1, 1.3 - m.sharp * 0.85)) : 1; }
+    return c._accK;
+  }
+
   drumFx(t) {
     const a = this.plan.accent;
     if (!a || !a.zones.some((z) => t >= z[0] && t < z[1])) return null;
@@ -771,7 +779,7 @@ class Engine {
       while (lo <= hi) { const mid = (lo + hi) >> 1; if (arr[mid] <= t) { r = mid; lo = mid + 1; } else hi = mid - 1; }
       return r >= 0 ? t - arr[r] : Infinity;
     };
-    const k = a.amt || 1;
+    const k = (a.amt || 1) * this.accentK(t);
     const dk = last(a.kicks);
     // Anschlag über 40 ms statt in einem Bild: der Impuls wirkt wie eine Kamera, die mitgeht, nicht wie ein Sprung
     const out = { zoom: 1 + 0.022 * k * smooth(clamp01(dk / 0.04)) * Math.exp(-Math.max(0, dk - 0.04) / 0.1), dx: 0, dy: 0, rot: 0 };
@@ -1003,7 +1011,7 @@ class Engine {
     if (ch && ch.zones.some((z) => t >= z[0] && t < z[1])) {
       let lo = 0, hi = ch.kicks.length - 1, r = -1;
       while (lo <= hi) { const mid = (lo + hi) >> 1; if (ch.kicks[mid] <= t) { r = mid; lo = mid + 1; } else hi = mid - 1; }
-      if (r >= 0) { const d = t - ch.kicks[r]; chroma = 0.0045 * smooth(clamp01(d / 0.03)) * Math.exp(-Math.max(0, d - 0.03) / 0.07); }
+      if (r >= 0) { const d = t - ch.kicks[r]; chroma = 0.0045 * this.accentK(t) * smooth(clamp01(d / 0.03)) * Math.exp(-Math.max(0, d - 0.03) / 0.07); }
     }
     const col = this.colorState(t, A && A.foc);
     const pop = this.colorPop(t);

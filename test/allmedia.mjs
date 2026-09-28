@@ -50,7 +50,9 @@ const res = await p.evaluate(async (b64) => {
     }
     return ids.map((id) => byId.get(id)).filter(Boolean);
   };
-  const inversions = (seq) => { let n = 0; for (let i = 2; i < seq.length; i++) if (seq[i].time < seq[i - 1].time - 3 * 60000 && seq[i].dupOf == null && seq[i - 1].dupOf == null) n++; return n; };
+  // Chronologie in Tagesblöcken (Morgen & Mittag / Nachmittag & Abend): innerhalb eines Blocks ordnet die Regie frei
+  const blk = (m) => dayBlock(m) || '';
+  const inversions = (seq) => { let n = 0; for (let i = 2; i < seq.length; i++) if (seq[i].time < seq[i - 1].time - 3 * 60000 && blk(seq[i]) !== blk(seq[i - 1]) && seq[i].dupOf == null && seq[i - 1].dupOf == null) n++; return n; };
   const check = (name, media, st, expectAll = true) => {
     const pl = plan(media, st);
     const sq = sequence(pl, media);

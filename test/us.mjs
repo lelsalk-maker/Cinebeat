@@ -50,7 +50,23 @@ const r = await p.evaluate(async (b64) => {
   // Schlussbild ist eine Wir-Aufnahme (wenn eine in der Nähe ist)
   const last = on.clips.filter((c) => !c.loop && byId.get(c.mediaId)).pop();
   if (last && !byId.get(last.mediaId).us) fails.push('Schlussbild nicht wir');
-  if (!on.notes.some((n) => /Wir-Vorrang/.test(n))) fails.push('keine Notiz');
+  if (!on.notes.some((n) => /Wir-Vorrang|Tageszeit/.test(n))) fails.push('keine Notiz');
+  // Tagesblöcke: zwei Tage × zwei Tageshälften – Blöcke nie vertauscht, innerhalb frei; streng = Uhrzeit
+  const T = new Date(2026, 4, 3, 9, 0).getTime(), H = 3600e3;
+  const times = [0, 1, 2, 3, 6, 7, 8, 9, 24, 25, 26, 27, 30, 31, 32, 33].flatMap((h) => [T + h * H, T + h * H + 20 * 60000]);
+  const m2 = times.map((t, i) => { const c = sc[i % sc.length]; return { id: 'b' + i, kind: 'image', name: 'B' + i, canvas: c, w: c.width, h: c.height, time: t, ...scoreImage(c, c.width, c.height), hash: [i * 7919, i * 104729], us: i % 4 === 1 }; });
+  const b2 = new Map(m2.map((m) => [m.id, m]));
+  const order = [...new Set(m2.map(dayBlock))];
+  const blocks = (pl) => { const seq = pl.clips.filter((c) => b2.get(c.mediaId) && !c.loop && !c.rush && c.role !== 'rush' && c.role !== 'hook' && !c.pre).map((c) => dayBlock(b2.get(c.mediaId))); let bad = 0; for (let i = 1; i < seq.length; i++) if (order.indexOf(seq[i]) < order.indexOf(seq[i - 1])) bad++; return bad; };
+  const pT = buildPlan({ an, media: m2, settings: { ...s, length: 'full', songStart: 'start' }, overrides: { texts: [], stickers: [] } });
+  const nb = blocks(pT);
+  if (nb) fails.push(`Tagesblöcke vertauscht (${nb})`);
+  if (order.length !== 4) fails.push('Blockbildung ' + order);
+  // Nacht bis 4 Uhr gehört zum Vorabend, 14 Uhr trennt die Tageshälften
+  if (dayBlock({ time: new Date(2026, 4, 3, 23, 30).getTime() }) !== dayBlock({ time: new Date(2026, 4, 4, 2, 0).getTime() })) fails.push('Nacht nicht beim Vorabend');
+  if (dayBlock({ time: new Date(2026, 4, 3, 13, 50).getTime() }) === dayBlock({ time: new Date(2026, 4, 3, 14, 10).getTime() })) fails.push('14-Uhr-Grenze');
+  const pS = buildPlan({ an, media: m2, settings: { ...s, length: 'full', songStart: 'start', order: 'streng' }, overrides: { texts: [], stickers: [] } });
+  if (pS.notes.some((n) => /Tageszeit/.test(n))) fails.push('streng ordnet trotzdem nach Tageszeit');
   return { fails, a, z };
 }, wav);
 console.log(r.fails.length ? 'FAIL ' + r.fails.join('; ') : 'OK us');

@@ -38,6 +38,7 @@ function normalizeSettings(st, defaults) {
     allMedia: pick1(s.allMedia, ['on', 'off'], 'on'),
     variant: pick1(s.variant, ['ausgewogen', 'ruhig', 'energisch'], 'ausgewogen'),
     us: pick1(s.us, ['auto', 'off'], 'auto'),
+    order: pick1(s.order, ['tageszeit', 'streng'], 'tageszeit'),
     mv: pick1(s.mv, ['off', 'on'], 'off'),
     match: pick1(s.match, ['auto', 'off'], 'auto'),
     morph: pick1(s.morph, ['off', 'on'], 'off'),
@@ -75,7 +76,7 @@ function normalizeSettings(st, defaults) {
 }
 
 /* ---------- Stil-Vorlage: ein Stil für alle Filme der Reise ---------- */
-const STYLE_KEYS = ['variant', 'us', 'mv', 'look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'allMedia', 'color', 'accent', 'parallax', 'drift', 'echo', 'stack', 'mini', 'chapKnock', 'chapMap', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
+const STYLE_KEYS = ['variant', 'us', 'order', 'mv', 'look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'allMedia', 'color', 'accent', 'parallax', 'drift', 'echo', 'stack', 'mini', 'chapKnock', 'chapMap', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
 const styleOf = (st) => Object.fromEntries(STYLE_KEYS.map((k) => [k, st[k]]));
 /** Einstellungen für neue Filme: Standard, darüber die Vorlage der Reise */
 function baseSettings(defaults) {
@@ -2568,6 +2569,7 @@ function renderStyle() {
   setRadio($('variantChips'), st.variant);
   $('mvBtn').setAttribute('aria-checked', String(st.mv === 'on'));
   $('usBtn').setAttribute('aria-checked', String(st.us !== 'off'));
+  $('orderBtn').setAttribute('aria-checked', String(st.order !== 'streng'));
   $('allChips').hidden = S.ctx.kind === 'bestof' || isFlight(S.ctx.rec);
   $('capHint').textContent = capacityText();
   setRadio($('preChips'), st.pre);
@@ -3569,6 +3571,7 @@ async function init() {
   bindSetting('drumChips', 'accent');
   bindSetting('allChips', 'allMedia');
   bindSetting('variantChips', 'variant');
+  $('orderBtn').addEventListener('click', () => { const st = S.ctx.rec.settings; st.order = st.order === 'streng' ? 'tageszeit' : 'streng'; commit(); savePlaceSoon(); scheduleRebuild(0); });
   $('usBtn').addEventListener('click', () => { const st = S.ctx.rec.settings; st.us = st.us === 'off' ? 'auto' : 'off'; commit(); savePlaceSoon(); scheduleRebuild(0); });
   $('mvBtn').addEventListener('click', () => { const st = S.ctx.rec.settings; st.mv = st.mv === 'on' ? 'off' : 'on'; commit(); savePlaceSoon(); engine && (engine.t = 0); scheduleRebuild(0); });
   bindSetting('colorChips', 'color');
