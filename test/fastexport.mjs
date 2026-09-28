@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 const OUT = process.env.OUT || '/tmp/cinebeat-test';
 (await import('node:fs')).mkdirSync(OUT, { recursive: true });
 makeStructuredSong(`${OUT}/struct.wav`, { bpm: 124 });
-const W = +(process.env.W || 360), H = +(process.env.H || 640);
+const W = +(process.env.W || 252), H = +(process.env.H || 448);
 const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
 const p = await b.newPage();
 p.on('pageerror', (e) => console.log('pageerror', e.message));

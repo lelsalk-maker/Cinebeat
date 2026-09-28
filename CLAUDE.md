@@ -5,9 +5,10 @@ beat-synchrone Filme macht. Läuft komplett auf dem Gerät (iPhone ist Hauptziel
 
 ## Befehle
 - `npm run build` – bündelt `src/` nach `docs/index.html` (PWA, GitHub Pages), `docs/CineBeat.html` (offline, CSP) und `dist/cinebeat.html` (Claude-Artefakt).
-- `npm test` – Lint + schnelle Tests (analysis, flow, style, videos, allmedia, ui, e2e, features), eine Zeile je Test.
-  Glätte (Schwenktempo, Richtungswechsel, Effektdichte): `npm test -- smooth`; Sprünge Bild für Bild: `npm test -- judder` (`JCONF` für eigene Einstellungen); Export nach App-Wechsel: `npm test -- bgexport`; Etappenkarte/Kapitel: `npm test -- trip`.
-- `npm test -- all` – alle Tests (~10 min). `npm test -- flow videos` – einzelne. Tests brauchen Playwright/Chromium (vorinstalliert).
+- `npm test -- changed` – **Standard nach Änderungen**: nur die Tests, die zu geänderten Dateien gehören (Zuordnung `MAP` in `test/run.mjs`).
+- `npm test` – schnelle Auswahl; `npm test -- all` – alles (~6 min, 4 parallel mit `CB_JOBS=4`, Standard 3); `npm test -- flow ui` – einzelne; `-v` zeigt jede Testzeile.
+- Ausgabe ist absichtlich knapp: eine Ergebniszeile, Details nur bei Fehlern. Zeitkritische Tests (`SERIAL`) laufen allein am Ende, lange werden zerlegt (`SPLIT`, z. B. `judder/story`).
+- Einzelne Prüfprogramme: Glätte `smooth`, Sprünge Bild für Bild `judder` (`JCONF`), Export nach App-Wechsel `bgexport`, Mithören `listen`, Karten/Kapitel `trip`. Tests brauchen Playwright/Chromium (vorinstalliert).
 - Veröffentlichen: `docs/sw.js` Cache-Version erhöhen (`cinebeat-vNN`), bauen, committen, pushen; Artefakt mit `dist/cinebeat.html` an die bestehende URL.
 
 ## Aufbau (Reihenfolge im Bündel = `build.mjs`)
@@ -50,7 +51,7 @@ Ablauf je Ort (`rec.flow`): `song` (Song wählen) → `advice` (Songprofil + Emp
 ## Effizient arbeiten (Token sparen)
 - Nicht ganze Dateien lesen: `grep -n` nach Funktions-/Variablennamen, dann gezielt `sed -n 'a,bp'`.
 - Änderungen mit kleinen, eindeutigen Ersetzungen (Python-Replace mit `assert old in s`).
-- Nach Änderungen `npm test -- <betroffene Tests>`; `npm test -- all` nur vor dem Veröffentlichen.
+- Nach Änderungen `npm test -- changed`; `npm test -- all` nur vor dem Veröffentlichen. Keine Testausgaben ungefiltert lesen.
 - Neue Planer-Logik in die passende `plan/*.js` statt in `plan.js`; neue Tests in `test/*.mjs` + in `test/run.mjs` eintragen.
 - Aufträge bündeln: mehrere Wünsche in einer Nachricht sparen Wiederholungen beim Einlesen; „wie letztes Mal“ reicht, Regeln stehen hier.
 - Screenshots nur zum Prüfen von Gestaltung ansehen (teuer); Logik über Test-Ausgaben prüfen.

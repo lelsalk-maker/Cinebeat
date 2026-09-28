@@ -1,5 +1,7 @@
 // Erzeugt Test-Songs mit bekannten Beat-Zeiten
-import { writeFileSync } from 'node:fs';
+import { writeFileSync as writeRaw, renameSync } from 'node:fs';
+// atomar schreiben: parallel laufende Tests lesen nie eine halb geschriebene Datei
+const writeFileSync = (file, buf) => { const tmp = `${file}.${process.pid}.tmp`; writeRaw(tmp, buf); renameSync(tmp, file); };
 export function makeSong(file, { bpm, dur = 40, sr = 44100, offset = 0.37, intro = 0, swingHats = true, seed = 1 }) {
   const n = Math.floor(dur * sr);
   const d = new Float32Array(n);

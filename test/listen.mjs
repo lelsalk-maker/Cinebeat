@@ -62,5 +62,22 @@ console.log('Aufnahme:', r);
 if (!(r.firstKickMs >= -1 && r.firstKickMs < 25)) errs.push(`Aufnahme beginnt nicht mit dem Song (${r.firstKickMs} ms)`);
 if (Math.abs(r.bpm - 120) > 1.5) errs.push('Tempo falsch: ' + r.bpm);
 if (r.offset !== 30) errs.push('Startstelle falsch');
+// mitgehörter Song: Export nur ohne Song (der Song ist nur mitgehört), Hinweis auf Instagram-Musik
+await page.click('#exportBtn');
+await page.waitForSelector('#qPick');
+const ex = await page.evaluate(() => ({ withDisabled: document.querySelector('#audPick [data-v="with"]').disabled, aud: document.getElementById('audHint').textContent }));
+console.log('Export:', ex.withDisabled, ex.aud.slice(0, 60));
+if (!ex.withDisabled) errs.push('Export mit mitgehörtem Song möglich');
+await page.keyboard.press('Escape');
+// Zugriff verweigert: klare Meldung statt Stille, Knopf wieder bedienbar
+const p2 = await (await b.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+await p2.addInitScript(() => { navigator.mediaDevices.getUserMedia = () => Promise.reject(Object.assign(new Error('nein'), { name: 'NotAllowedError' })); });
+await p2.goto('http://127.0.0.1:8123/index.html'); await p2.waitForSelector('.place'); await p2.click('.place');
+await p2.waitForFunction(() => CineBeat.S.plan && document.getElementById('busy').hidden, null, { timeout: 90000 });
+await p2.click('#tabbtn-music'); await p2.click('#micSong'); await p2.click('#micGo');
+await p2.waitForSelector('#micDenied:not([hidden])', { timeout: 10000 });
+const den = await p2.evaluate(() => ({ t: document.getElementById('micDenied').textContent, again: !document.getElementById('micGo').disabled }));
+console.log('Verweigert:', den.t.slice(0, 50), den.again);
+if (!/gesperrt/.test(den.t) || !den.again) errs.push('Meldung bei verweigertem Mikrofon fehlt');
 console.log('Fehler:', errs.length ? errs.join(' | ') : 'keine');
 await b.close();
