@@ -42,6 +42,10 @@ const LOOKS = {
     pal: { ink: '#eceef1', tone: [92, 70, 40] } },
   digicam: { label: 'Digicam', blurb: '2000er-Kamera: knackig, kühl, mit Blitz', grade: { sat: 1.1, vib: 0.1, contrast: 0.5, temp: -0.16, sh: [-0.01, 0.02, 0.03], hi: [0.0, 0.004, 0.02], lift: 0.0, crush: 0.0, bw: 0, grain: 0.018, vig: 0.08, tint: [0.99, 1.01, 1.03], glow: 0, leak: 0 },
     pal: { ink: '#ffffff', tone: [20, 32, 44] } },
+  // Diner: amerikanische Farbdias der 50er–70er, modern entwickelt – warmer Gelb-Rot-Braun-Stich, cremige Lichter,
+  // bräunliche Schatten, leicht angehobenes warmes Schwarz, und die Farben des Bilds stechen heraus (retro)
+  diner: { label: 'Diner', blurb: 'Amerika in den 50ern–70ern: warm, kräftige Farben', grade: { sat: 1.04, vib: 0.3, contrast: 0.36, temp: 0.2, sh: [0.045, 0.008, -0.02], hi: [0.05, 0.028, -0.04], lift: 0.028, crush: 0.03, bw: 0, grain: 0.028, vig: 0.3, tint: [1.03, 1.0, 0.92], glow: 0.2, leak: 0, retro: 1 },
+    pal: { ink: '#f7ecd6', tone: [118, 54, 30] } },
   noir: { label: 'Noir', blurb: 'Schwarzweiß mit Charakter', grade: { sat: 0, vib: 0, contrast: 0.55, temp: 0, sh: [0, 0, 0], hi: [0, 0, 0], lift: 0.02, crush: 0.02, bw: 1, grain: 0.05, vig: 0.5, tint: [1, 1, 1], glow: 0.05, leak: 0 },
     pal: { ink: '#f2f2f2', tone: [30, 30, 30] } },
 };
@@ -78,10 +82,10 @@ function bandRect(format, frame) {
 /** Länge des Aufblende-Einstiegs in Beats: zwei Takte, bei sehr langsamen Songs einer (Aufbau 3–5 s). */
 /**
  * Kino-Rollladen: Ablauf in Zähleinheiten (ein Schlag, bei schnellen Songs zwei). Sechs Ausschnitte erscheinen im
- * Kinoband – die ersten im halben Takt, dann ruhiger (0–3,5) –, Farbe fließt hinein (4,5), der Rollladen zieht dreimal
- * (6, 7, 8), Schwarz mit Ortstitel (9–12), dann öffnet sich das Bild flüssig bis zum Einsatz (20 = Refrain/Drop).
+ * Kinoband gleichmäßig im halben Takt (0–2,5), Farbe fließt hinein (3,5), der Rollladen zieht dreimal (5, 6, 7),
+ * Schwarz mit Ortstitel (8–11), dann öffnet sich das Bild flüssig bis zum Einsatz (20 = Refrain/Drop).
  */
-const SHUTTER = { tiles: [0, 0.5, 1, 1.5, 2.5, 3.5], color: 4.5, pulls: [6, 7, 8], black: 9, open: 12, end: 20 };
+const SHUTTER = { tiles: [0, 0.5, 1, 1.5, 2, 2.5], color: 3.5, pulls: [5, 6, 7], black: 8, open: 11, end: 20 };
 function shutterStep(an) {
   return an.beatPeriod < 0.36 ? 2 : 1;
 }

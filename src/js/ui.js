@@ -17,6 +17,7 @@ const LOOK_SWATCH = {
   blau: 'linear-gradient(120deg,#060d1c,#1c3560 55%,#7ea3d6)',
   film: 'linear-gradient(120deg,#4f3a2a,#a98563 50%,#e6d3b0)',
   digicam: 'linear-gradient(120deg,#0e1f33,#3b7fa8 50%,#ffa23a 88%)',
+  diner: 'linear-gradient(120deg,#5a2418,#c8412e 38%,#e9b949 64%,#5fb3a6 90%)',
   noir: 'linear-gradient(120deg,#050505,#4d4d4d 55%,#e6e6e6)',
 };
 const TEXT_COLORS = ['#efe6d2', '#ffffff', '#0b0d12', '#c7b48f', '#9fb8dc'];

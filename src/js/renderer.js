@@ -39,7 +39,7 @@ uniform vec2 uRes;
 uniform float uTime;
 uniform float uSat, uVib, uContrast, uTemp, uLift, uCrush, uBW, uGrain, uVig;
 uniform vec3 uTint, uSh, uHi;
-uniform float uGlow, uLeak, uFlash, uBars, uBlack, uDim, uDesat;
+uniform float uGlow, uLeak, uFlash, uBars, uBlack, uDim, uDesat, uRetro;
 uniform float uHasOvTop;
 uniform float uLod;
 uniform float uSharp;   // leichte Unscharfmaskierung über die Mipmap-Stufe
@@ -54,6 +54,41 @@ uniform float uMirror;  // Spiegelmoment
 uniform float uPop;     // Farbschub nach der Rückkehr der Farbe (klingt über gut einen Beat aus)
 
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+vec3 rgb2hsv(vec3 c) {
+  vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+  vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+  vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+  float d = q.x - min(q.w, q.y);
+  return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + 1e-10)), d / (q.x + 1e-10), q.x);
+}
+vec3 hsv2rgb(vec3 c) {
+  vec3 p = abs(fract(c.xxx + vec3(1.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0);
+  return c.z * mix(vec3(1.0), clamp(p - 1.0, 0.0, 1.0), c.y);
+}
+// Abstand zweier Farbtöne (Kreis) mit Vorzeichen, und weiches Fenster um einen Zielton
+float hueD(float h, float t) { return fract(t - h + 0.5) - 0.5; }
+float hueW(float h, float t, float w) { return 1.0 - smoothstep(0.0, w, abs(hueD(h, t))); }
+/*
+ * Diner (Farbdia der 50er–70er, modern entwickelt): jede Farbe wandert zu ihrem Ton aus alten Diner-Fotos –
+ * Rot zu Kirsch/Ketchup, Orange/Gelb zu Senf, Grün zu Oliv, Türkis zu Mint, Blau zu tiefem Himmelstürkis,
+ * Pink zu Kaugummi – und wird dabei kräftiger. Graue Töne und Haut bleiben ruhig (sonst wirkt es billig).
+ */
+vec3 retroColor(vec3 c, float k) {
+  vec3 h = rgb2hsv(clamp(c, 0.0, 1.0));
+  float gate = smoothstep(0.06, 0.28, h.y) * k;
+  float skin = hueW(h.x, 0.07, 0.05) * (1.0 - smoothstep(0.35, 0.8, h.y));
+  gate *= 1.0 - 0.8 * skin;
+  float wr = hueW(h.x, 0.0, 0.055), wo = hueW(h.x, 0.07, 0.04), wy = hueW(h.x, 0.13, 0.06), wg = hueW(h.x, 0.3, 0.1);
+  float wc = hueW(h.x, 0.49, 0.06), wb = hueW(h.x, 0.6, 0.08), wm = hueW(h.x, 0.92, 0.06);
+  h.x = fract(h.x + gate * (wr * 0.35 * hueD(h.x, 0.992) + wy * 0.6 * hueD(h.x, 0.108) + wg * 0.38 * hueD(h.x, 0.235)
+    + wc * 0.35 * hueD(h.x, 0.5) + wb * 0.42 * hueD(h.x, 0.548) + wm * 0.3 * hueD(h.x, 0.94)));
+  h.y = clamp(h.y * (1.0 + gate * (0.3 * wr + 0.12 * wo + 0.24 * wy - 0.14 * wg + 0.2 * wc + 0.16 * wb + 0.18 * wm) - 0.16 * skin * k), 0.0, 1.0);
+  // (Haut: der warme Grundton würde sie ins Orange schieben – etwas zurücknehmen, Richtung Pfirsich)
+  h.x = fract(h.x + 0.3 * skin * k * hueD(h.x, 0.058));
+  // dichte Farben wie auf Dia: Rot und Blau etwas tiefer, Gelb leuchtet
+  h.z *= 1.0 + gate * (-0.06 * wr - 0.09 * wb + 0.04 * wy);
+  return hsv2rgb(h);
+}
 // Schwarzweiß wie Film: panchromatische Mischung (Haut heller, Himmel dunkler), S-Kurve, dichte Schwarztöne, silbriger Ton
 vec3 filmBW(vec3 c) {
   float l = clamp(dot(c, vec3(0.34, 0.53, 0.13)), 0.0, 1.0);
@@ -257,6 +292,7 @@ void main() {
     // Vibrance: blasse Farben kräftiger, bereits satte (Haut, Sonnenuntergang) kaum
     float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b));
     c = mix(vec3(luma(c)), c, 1.0 + uVib * (1.0 - clamp((mx - mn) * 1.8, 0.0, 1.0)));
+    if (uRetro > 0.0) c = retroColor(c, uRetro);
     c = max(c, 0.0);
     c = c / (1.0 + max(c - 0.8, 0.0) * 1.4); // weiche Lichter
     c = clamp(c, 0.0, 1.0);
@@ -477,6 +513,7 @@ class Renderer {
     gl.uniform3fv(u.uTint, g.tint);
     gl.uniform1f(u.uGlow, this.isGL2 ? g.glow : 0);
     gl.uniform1f(u.uLeak, g.leak || 0);
+    gl.uniform1f(u.uRetro, g.retro || 0);
     gl.uniform1f(u.uFlash, f.flash || 0);
     gl.uniform1f(u.uBars, f.bars || 0);
     gl.uniform1f(u.uBlack, f.black || 0);

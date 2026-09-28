@@ -8,16 +8,16 @@
 import { spawn, execSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 const QUICK = ['analysis', 'smooth', 'flow', 'style', 'videos', 'allmedia', 'ui', 'e2e', 'features'];
-const ALL = ['meta', 'beats', 'longbeats', 'structure', 'score', 'mux', 'csp', 'offline', 'chapters', 'ui', 'e2e', 'trip', 'flight', 'overflow', 'features', 'flow', 'fastexport', 'ingest', 'adaptive', 'resume', 'sync', 'latency', 'quality', 'perf', 'style', 'stylevis', 'videos', 'allmedia', 'analysis', 'bgexport', 'smooth', 'judder', 'listen', 'workerscore', 'heat', 'grade', 'vsync', 'trips', 'levels', 'us', 'tap', 'hook', 'stimmig', 'carousel', 'carouselui', 'shutter', 'shutterui'];
+const ALL = ['meta', 'beats', 'longbeats', 'structure', 'score', 'mux', 'csp', 'offline', 'chapters', 'ui', 'e2e', 'trip', 'flight', 'overflow', 'features', 'flow', 'fastexport', 'ingest', 'adaptive', 'resume', 'sync', 'latency', 'quality', 'perf', 'style', 'stylevis', 'videos', 'allmedia', 'analysis', 'bgexport', 'smooth', 'judder', 'listen', 'workerscore', 'heat', 'grade', 'vsync', 'trips', 'levels', 'us', 'tap', 'hook', 'stimmig', 'carousel', 'carouselui', 'shutter', 'shutterui', 'diner'];
 // messen Zeit oder Bildrate: nie unter Last anderer Tests
 const SERIAL = new Set(['flight', 'ingest', 'perf', 'latency', 'sync', 'adaptive', 'fastexport', 'bgexport', 'tap']);
 // welche Tests eine Datei berühren
 const MAP = [
-  [/^src\/js\/plan\/|^src\/js\/director\.js/, ['analysis', 'smooth', 'flow', 'style', 'allmedia', 'videos', 'chapters', 'overflow', 'features', 'grade', 'vsync', 'us', 'tap', 'hook', 'stimmig', 'carousel', 'carouselui', 'shutter', 'shutterui']],
+  [/^src\/js\/plan\/|^src\/js\/director\.js/, ['analysis', 'smooth', 'flow', 'style', 'allmedia', 'videos', 'chapters', 'overflow', 'features', 'grade', 'vsync', 'us', 'tap', 'hook', 'stimmig', 'carousel', 'carouselui', 'shutter', 'shutterui', 'diner']],
   [/^src\/js\/audio\.js/, ['beats', 'longbeats', 'structure', 'listen', 'analysis', 'stimmig']],
   [/^src\/js\/(score|scoreworker)\.js/, ['score', 'analysis', 'ingest', 'workerscore', 'vsync']],
   [/^src\/js\/perflog\.js/, ['heat', 'workerscore']],
-  [/^src\/js\/(renderer|overlay)\.js/, ['judder', 'stylevis', 'quality', 'style', 'shutter']],
+  [/^src\/js\/(renderer|overlay)\.js/, ['judder', 'stylevis', 'quality', 'style', 'shutter', 'diner']],
   [/^src\/js\/engine\.js/, ['judder', 'fastexport', 'bgexport', 'sync', 'latency', 'perf', 'adaptive', 'resume', 'heat', 'carouselui', 'shutter']],
   [/^src\/js\/(mp4mux|demux)\.js/, ['mux', 'fastexport', 'bgexport', 'vsync', 'ingest']],
   [/^src\/js\/(meta|world)\.js/, ['meta', 'trip', 'flight']],

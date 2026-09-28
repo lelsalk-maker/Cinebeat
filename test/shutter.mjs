@@ -40,7 +40,9 @@ const r = await p.evaluate(async (b64) => {
   const picked = sp.ids.map((id) => byId.get(id)), weakest = Math.min(...picked.map(str));
   const better = media.filter((m) => !sp.ids.includes(m.id) && str(m) > weakest + 1e-9 && !picked.some((q) => twin(q, m)));
   if (better.length) fails.push('nicht die stärksten Aufnahmen: ' + better.map((m) => m.id).join(','));
-  // die ersten Felder schnell: mindestens vier in den ersten 1,5 s
+  // alle sechs Felder gleich schnell (synchron im halben Takt), mindestens vier in den ersten 1,5 s
+  const gaps = sp.reveal.slice(1).map((x, k) => x - sp.reveal[k]);
+  if (Math.max(...gaps) - Math.min(...gaps) > 0.03) fails.push('Felder nicht gleichmäßig: ' + gaps.map((x) => x.toFixed(3)));
   if (sp.reveal.filter((x) => x < 1.5).length < 4) fails.push('erste Felder nicht schnell: ' + sp.reveal.map((x) => x.toFixed(2)));
   const hk = hookScore(plan, media, an);
   out.hook = hk.score; out.hookParts = hk.parts.map((q) => q.k + ':' + q.v.toFixed(2)).join(' ');
@@ -79,7 +81,7 @@ const r = await p.evaluate(async (b64) => {
   const stat = (d, y0, y1, x0 = 0, x1 = 1) => { let L = 0, C = 0, n = 0; for (let y = Math.floor(y0 * H); y < Math.floor(y1 * H); y += 2) for (let x = Math.floor(x0 * W); x < Math.floor(x1 * W); x += 2) { const i = (y * W + x) * 4, r = d[i], g = d[i + 1], bb = d[i + 2]; L += (r + g + bb) / 3; C += Math.max(r, g, bb) - Math.min(r, g, bb); n++; } return { L: L / n, C: C / n }; };
   // Kinoband: 2,39 : 1 in der Mitte
   const bh = Math.min(H * 0.9, W / 2.39) / H, b0 = (1 - bh) / 2, b1 = b0 + bh;
-  const bw = await shot(sp.reveal[5] + 0.4), col = await shot(sp.colorAt + 0.9);
+  const bw = await shot(Math.min(sp.reveal[5] + 0.35, sp.colorAt - 0.03)), col = await shot(sp.colorAt + 0.9);
   const sFirst = stat(bw, b0 + 0.01, b1 - 0.01, 0.01, 0.15), sBw = stat(bw, b0 + 0.01, b1 - 0.01, 0.2, 0.99), sCol = stat(col, b0 + 0.01, b1 - 0.01, 0.2, 0.99);
   const outside = stat(bw, 0, b0 - 0.02).L + stat(bw, b1 + 0.02, 1).L;
   out.bw = sBw; out.col = sCol; out.first = sFirst; out.outside = +outside.toFixed(1);
@@ -115,7 +117,7 @@ const r = await p.evaluate(async (b64) => {
   const au = await eng._renderAudio(22050, true);
   const ch = au.getChannelData(0), sr = au.sampleRate;
   const rms = (a, z) => { let s = 0, n = 0; for (let i = Math.floor(a * sr); i < Math.floor(z * sr); i++) { s += ch[i] * ch[i]; n++; } return Math.sqrt(s / Math.max(1, n)); };
-  const u = (sh.end - sh.open) / 8;
+  const u = (sh.end - sh.open) / 9;
   const wallT = [0.3, mv[0].t - 0.05], fullT = [sh.end + 0.2, sh.end + 2];
   // Höhen über ~3 kHz (Hochpass erster Ordnung) mit und ohne Vorhang-Filter
   // drei Hochpass-Stufen hintereinander (18 dB/Oktave), sonst sickern Bassdrum und Bass in die Messung
