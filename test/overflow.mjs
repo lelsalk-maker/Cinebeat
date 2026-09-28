@@ -3,6 +3,8 @@ const OUT = process.env.OUT || '/tmp/cinebeat-test';
 (await import('node:fs')).mkdirSync(OUT, { recursive: true });
 const b = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
 const page = await (await b.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 })).newPage();
+// alle Reiter prüfen: Werkbank-Ebene
+await page.addInitScript(() => { try { localStorage.setItem('cinebeat-level', 'bench'); } catch (e) { /* egal */ } });
 await page.goto('http://127.0.0.1:8123/index.html');
 await page.waitForSelector('.place');
 await page.click('.place');

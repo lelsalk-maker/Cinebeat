@@ -26,6 +26,8 @@ function exifSeg(lat, lon, date) {
 }
 const b = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
 const page = await (await b.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 })).newPage();
+// alle Regler prüfen: Werkbank-Ebene
+await page.addInitScript(() => { try { localStorage.setItem('cinebeat-level', 'bench'); } catch (e) { /* egal */ } });
 const errs = [];
 page.on('pageerror', (e) => { errs.push(e.message); console.log('PAGEERR', e.message); });
 page.on('console', (m) => { if (m.type() === 'error') { errs.push(m.text()); console.log('CONSOLEERR', m.text()); } });
