@@ -138,6 +138,14 @@ textarea.text-in { resize: vertical; min-height: 70px; }
 #placeSub { font: 11.5px/1.4 var(--f-mono); color: var(--muted); letter-spacing: 0.06em; }
 .edit-title input:focus { outline: none; border-bottom: 1px dashed var(--line-2); }
 .undo { display: flex; gap: 6px; }
+/* Mini-Vorschau in der Kopfzeile: erscheint, sobald das große Bild beim Einstellen aus dem Blick scrollt */
+.mini { display: flex; align-items: center; gap: 8px; animation: miniIn 0.22s ease-out; }
+.mini-thumb { height: 44px; width: 25px; padding: 0; border-radius: 7px; overflow: hidden; border: 1px solid var(--line-2); background: #000; cursor: pointer; flex: none; }
+.mini-thumb canvas { display: block; width: 100%; height: 100%; }
+.mini-bar { position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--beige); transform-origin: left center; transform: scaleX(0); opacity: 0.85; pointer-events: none; }
+@keyframes miniIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@media (min-width: 960px) { .mini, .mini-bar { display: none !important; } }
+@media (prefers-reduced-motion: reduce) { .mini { animation: none; } }
 .edit-layout { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); margin-top: 4px; }
 @media (min-width: 960px) {
   .edit-layout { grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); align-items: start; }
@@ -501,6 +509,14 @@ details.more[open] { display: grid; gap: 16px; }
         <input id="placeName" type="text" maxlength="40" aria-label="Name des Orts" autocomplete="off" spellcheck="false">
         <input id="placeSub" type="text" maxlength="40" aria-label="Untertitel, z. B. Monat und Jahr" placeholder="Untertitel, z. B. Mai 2026" autocomplete="off">
       </div>
+      <div class="mini" id="mini" hidden>
+        <button class="mini-thumb" id="miniThumb" type="button" aria-label="Zur Vorschau"><canvas id="miniCanvas" width="54" height="96"></canvas></button>
+        <button class="icon-btn" id="miniPlay" type="button" aria-label="Abspielen">
+          <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></svg>
+          <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h3.6v14H7zM13.4 5H17v14h-3.6z" fill="currentColor"/></svg>
+        </button>
+      </div>
+      <i class="mini-bar" id="miniBar" aria-hidden="true" hidden></i>
       <div class="undo">
         <button class="icon-btn" id="undoBtn" type="button" aria-label="Rückgängig" disabled>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7H5V3M5.5 7.5A8 8 0 1 1 4 13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -9697,6 +9713,44 @@ class Engine {
       return safeKey;
     };
     let cancelled = false;
+    // Ton parallel zum Bild: rendern und kodieren, während der Bild-Encoder arbeitet (eigene Threads, gleiches Ergebnis);
+    // danach wartet nichts mehr auf den Ton. Auch der Ton übersteht einen App-Wechsel: bei einem Fehler neu kodieren.
+    const encodeAudio = async (buf) => {
+      for (let attempt = 0; ; attempt++) {
+        let af = null;
+        mux.aSamples = [];
+        mux.aDesc = null;
+        const aenc = new AudioEncoder({ output: (c, m) => mux.addAudioChunk(c, m), error: (e) => { af = e; } });
+        aenc.configure(as.cfg);
+        try {
+          const chunk = 1024;
+          const L = buf.getChannelData(0), R = buf.getChannelData(1);
+          for (let o = 0; o < buf.length && !cancelled; o += chunk) {
+            const nFr = Math.min(chunk, buf.length - o);
+            const data = new Float32Array(nFr * 2);
+            data.set(L.subarray(o, o + nFr), 0);
+            data.set(R.subarray(o, o + nFr), nFr);
+            const ad = new AudioData({ format: 'f32-planar', sampleRate: as.sampleRate, numberOfFrames: nFr, numberOfChannels: 2, timestamp: Math.round((o * 1e6) / as.sampleRate), data });
+            aenc.encode(ad);
+            ad.close();
+            if (aenc.encodeQueueSize > 20) await new Promise((r) => setTimeout(r, 1));
+          }
+          await aenc.flush();
+        } catch (e) { af = af || e; }
+        try { aenc.close(); } catch (e) { /* ignore */ }
+        if (!af || cancelled) return;
+        if (attempt >= 2) throw af;
+        await visible();
+      }
+    };
+    const audioJob = as ? this._renderAudio(as.sampleRate, withSong).then(encodeAudio) : null;
+    if (audioJob) audioJob.catch(() => { /* wird unten ausgewertet */ });
+    // Warten, bis der Encoder ein Bild abgenommen hat: sofort weiter statt in festen Takten nachzusehen
+    const drained = () => new Promise((res) => {
+      const done = () => { clearTimeout(tm); enc.removeEventListener('dequeue', done); res(); };
+      const tm = setTimeout(done, 4);
+      enc.addEventListener('dequeue', done);
+    });
     try {
       let n = 0;
       for (;;) {
@@ -9720,8 +9774,8 @@ class Engine {
           frame.close();
           if (failed) { n--; continue; }
           forceKey = false;
-          while (enc.encodeQueueSize > 4 && !failed && enc.state !== 'closed') await new Promise((r) => setTimeout(r, 2));
-          if (onProgress && n % 3 === 0) onProgress((n / N) * (as ? 0.93 : 1), t);
+          while (enc.encodeQueueSize > 4 && !failed && enc.state !== 'closed') await drained();
+          if (onProgress && n % 3 === 0) onProgress((n / N) * (as ? 0.98 : 1), t);
         }
         if (cancelled) break;
         try { await enc.flush(); } catch (e) { failed = failed || e; }
@@ -9732,38 +9786,10 @@ class Engine {
     } finally {
       try { enc.close(); } catch (e) { /* ignore */ }
     }
-    if (cancelled) { this.exporting = false; return null; }
+    if (cancelled) { this.exporting = false; if (audioJob) await audioJob.catch(() => {}); return null; }
     if (failed) { this.exporting = false; throw failed; }
-    if (as) {
-      const buf = await this._renderAudio(as.sampleRate, withSong);
-      // auch der Ton übersteht einen App-Wechsel: bei einem Fehler einfach neu kodieren (dauert nur Sekunden)
-      for (let attempt = 0; ; attempt++) {
-        failed = null;
-        mux.aSamples = [];
-        mux.aDesc = null;
-        const aenc = new AudioEncoder({ output: (c, m) => mux.addAudioChunk(c, m), error: (e) => { failed = e; } });
-        aenc.configure(as.cfg);
-        try {
-          const chunk = 1024;
-          const L = buf.getChannelData(0), R = buf.getChannelData(1);
-          for (let o = 0; o < buf.length; o += chunk) {
-            const nFr = Math.min(chunk, buf.length - o);
-            const data = new Float32Array(nFr * 2);
-            data.set(L.subarray(o, o + nFr), 0);
-            data.set(R.subarray(o, o + nFr), nFr);
-            const ad = new AudioData({ format: 'f32-planar', sampleRate: as.sampleRate, numberOfFrames: nFr, numberOfChannels: 2, timestamp: Math.round((o * 1e6) / as.sampleRate), data });
-            aenc.encode(ad);
-            ad.close();
-            if (aenc.encodeQueueSize > 20) await new Promise((r) => setTimeout(r, 1));
-          }
-          await aenc.flush();
-        } catch (e) { failed = failed || e; }
-        try { aenc.close(); } catch (e) { /* ignore */ }
-        if (!failed) break;
-        if (attempt >= 2) break;
-        await visible();
-      }
-      if (failed) { this.exporting = false; throw failed; }
+    if (audioJob) {
+      try { await audioJob; } catch (e) { this.exporting = false; throw e; }
     }
     onProgress && onProgress(1, D);
     const blob = mux.finalize();
@@ -10746,17 +10772,26 @@ async function detectFaces(item, src, sw, sh) {
   } catch (e) { /* nicht verfügbar */ }
 }
 
+/** Bildmaße (mit EXIF-Drehung) aus dem Dateikopf, ohne das Bild zu dekodieren; null, wenn nicht lesbar. */
+async function imageDims(url) {
+  const img = new Image();
+  img.src = url;
+  const ok = await waitEvent(img, ['load'], ['error'], 15000);
+  const d = ok && img.naturalWidth ? [img.naturalWidth, img.naturalHeight] : null;
+  img.src = '';
+  return d;
+}
+
 async function probeAndScore(item) {
   if (item.kind === 'image') {
     // Maße aus dem Dateikopf (ohne das Bild zu dekodieren), dann direkt klein dekodieren:
     // Bewertung und Vorschaubild brauchen nur 480 px, nicht das volle Kamerabild
-    const img = new Image();
-    img.src = item.url;
-    const ok = await waitEvent(img, ['load'], ['error'], 15000);
-    if (!ok || !img.naturalWidth) throw new Error('Bild nicht lesbar');
-    item.w = img.naturalWidth; item.h = img.naturalHeight;
+    if (!item.w || !item.h) {
+      const d = await imageDims(item.url);
+      if (!d) throw new Error('Bild nicht lesbar');
+      item.w = d[0]; item.h = d[1];
+    }
     const small = await decodeImage({ ...item, url: item.url }, 480, true);
-    img.src = '';
     const sw = small.width, sh = small.height;
     item.thumb = thumbFrom(small, sw, sh, 160);
     Object.assign(item, scoreImage(small, sw, sh));
@@ -10823,6 +10858,17 @@ function semaphore(n) {
   });
 }
 
+/** Zählsperre mit Gewicht: await take(w) wartet, bis w vom Budget frei ist (mindestens eins läuft immer). */
+function budget(total) {
+  let used = 0, busy = 0;
+  const wait = [];
+  const pump = () => { while (wait.length && (!busy || used + wait[0].w <= total)) { const q = wait.shift(); used += q.w; busy++; q.res(); } };
+  return async (w) => {
+    await new Promise((res) => { wait.push({ w, res }); pump(); });
+    return () => { used -= w; busy--; pump(); };
+  };
+}
+
 /** Führt fn für alle Elemente mit begrenzter Parallelität aus. */
 async function mapLimit(list, limit, fn) {
   let next = 0;
@@ -10848,20 +10894,24 @@ async function ingestFiles(fileList, onProgress) {
     all.push(it);
   }
   let done = 0, bad = 0;
-  // Parallel, aber schonend: ein Foto wird beim Lesen kurz in voller Kameraauflösung dekodiert (48 MP ≈ 190 MB),
-  // Videos brauchen einen der wenigen Hardware-Dekoder. Mehr gleichzeitig bringt kaum Tempo, aber Abstürze.
-  const vids = semaphore(1);
-  await mapLimit(fresh, 2, async (it) => {
+  // Parallel, aber schonend: ein Foto wird beim Lesen kurz in voller Kameraauflösung dekodiert (48 MP ≈ 190 MB).
+  // Darum teilen sich Fotos ein Pixelbudget (so viel wie früher zwei 48-MP-Fotos): normale 12-MP-Fotos laufen zu viert,
+  // große entsprechend weniger – schneller bei gleichem Speicher-Höchststand. Videos brauchen einen der wenigen Hardware-Dekoder.
+  const vids = semaphore(1), px = budget(96e6);
+  await mapLimit(fresh, 4, async (it) => {
     const release = it.kind === 'video' ? await vids() : null;
     try { await ingestOne(it); } finally { release && release(); }
     done++;
     onProgress && onProgress(done, fresh.length);
   });
   async function ingestOne(it) {
-    const meta = await readMediaMeta(it.file, it.kind);
+    // Metadaten und Bildmaße gleichzeitig lesen (beides nur der Dateikopf)
+    const [meta, dims] = await Promise.all([readMediaMeta(it.file, it.kind), it.kind === 'image' ? imageDims(it.url) : null]);
     if (meta.time) it.time = meta.time;
     if (meta.pos) it.pos = meta.pos;
-    try { await probeAndScore(it); } catch (e) { it.bad = true; bad++; }
+    let free = null;
+    if (dims) { it.w = dims[0]; it.h = dims[1]; free = await px(Math.min(96e6, it.w * it.h)); }
+    try { await probeAndScore(it); } catch (e) { it.bad = true; bad++; } finally { free && free(); }
     it.loading = false;
     if (!it.bad) saveWork(it);
   }
@@ -11598,7 +11648,52 @@ function drawStrip(t) {
   c.setAttribute('aria-valuenow', String(Math.round((tt / S.plan.duration) * 100)));
 }
 
+/* ---------- Mini-Vorschau: kleines Livebild + Abspielen in der Kopfzeile, solange das große Bild weggescrollt ist ---------- */
+const mini = { on: false, x: null, ratio: 0 };
+
+function setupMini() {
+  const box = $('mini'), bar = $('miniBar'), cv = $('miniCanvas');
+  mini.x = cv.getContext('2d', { alpha: false });
+  // nach jedem Vorschaubild (nicht beim Export) ein verkleinertes Abbild – nur solange die Mini-Vorschau zu sehen ist
+  const draw0 = engine.drawAt.bind(engine);
+  engine.drawAt = (t, mode) => { const r = draw0(t, mode); if (mini.on && mode !== 'offline') miniCopy(); return r; };
+  const show = (on) => {
+    on = on && !!S.plan && !$('viewEdit').hidden && $('flowStage').hidden && !S.exporting && window.innerWidth < 960;
+    if (on === mini.on) return;
+    mini.on = on; box.hidden = !on; bar.hidden = !on;
+    if (!on) return;
+    const sc = $('screen'), r = sc.width / Math.max(1, sc.height);
+    if (r !== mini.ratio) {
+      mini.ratio = r;
+      const h = 44, w = Math.round(Math.min(78, Math.max(25, h * r)));
+      $('miniThumb').style.width = w + 'px';
+      const d = Math.min(2, window.devicePixelRatio || 1);
+      cv.width = Math.round(w * d); cv.height = Math.round(h * d);
+    }
+    // Standbild sofort übernehmen (beim Abspielen kommt das nächste Bild ohnehin gleich)
+    if (!engine.playing) engine.renderStill(engine.t); else miniCopy();
+    updateTime(engine.t);
+  };
+  mini.show = show;
+  if ('IntersectionObserver' in window) {
+    let vis = true;
+    new window.IntersectionObserver((es) => { vis = es[es.length - 1].isIntersecting; show(!vis); }, { rootMargin: '-64px 0px 0px 0px', threshold: 0.12 }).observe($('monitor'));
+    window.addEventListener('resize', () => show(!vis));
+  }
+  $('miniThumb').addEventListener('click', () => window.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }));
+  $('miniPlay').addEventListener('click', togglePlay);
+}
+
+function miniCopy() {
+  const sc = $('screen'), c = mini.x.canvas;
+  // Bildausschnitt wie im Monitor (cover), direkt nach dem Zeichnen: der WebGL-Puffer ist dann noch gültig
+  const s = Math.max(c.width / sc.width, c.height / sc.height);
+  const w = sc.width * s, h = sc.height * s;
+  try { mini.x.drawImage(sc, (c.width - w) / 2, (c.height - h) / 2, w, h); } catch (e) { /* nicht verfügbar */ }
+}
+
 function updateTime(t) {
+  if (mini.on && S.plan) $('miniBar').style.transform = `scaleX(${Math.min(1, t / Math.max(0.01, S.plan.duration)).toFixed(4)})`;
   $('tc').textContent = fmtTC(t);
   drawStrip(t);
   if (engine && S.plan) {
@@ -11670,6 +11765,8 @@ function setPlayingUI(on) {
   // nach dem ersten Abspielen verdeckt kein Knopf mehr das Bild (Tippen aufs Bild startet und stoppt weiter)
   if (on) $('monitor').classList.add('played');
   $('playBtn').classList.toggle('playing', on);
+  $('miniPlay').classList.toggle('playing', on);
+  $('miniPlay').setAttribute('aria-label', on ? 'Pause' : 'Abspielen');
   $('playBtn').setAttribute('aria-label', on ? 'Pause' : 'Abspielen');
   if (!on) $('beatDot').classList.remove('on');
 }
@@ -13115,6 +13212,7 @@ async function init() {
   $('ovList').addEventListener('click', (e) => { const b = e.target.closest('[data-ov]'); if (b) { const o = findOverlay(b.dataset.ov); if (o) { engine.t = Math.min(o.end - 0.2, Math.max(o.start + 0.5, engine.t)); } openOverlaySheet(b.dataset.ov); } });
   $('safeBtn').addEventListener('click', (e) => { const on = e.currentTarget.getAttribute('aria-pressed') !== 'true'; e.currentTarget.setAttribute('aria-pressed', String(on)); $('safeZones').hidden = !on; });
   $('playBtn').addEventListener('click', togglePlay);
+  setupMini();
   $('bigPlay').addEventListener('click', (e) => { e.stopPropagation(); togglePlay(); });
   $('screen').addEventListener('click', () => { if (S.tab !== 'text') togglePlay(); });
   $('exportBtn').addEventListener('click', openExportSheet);
@@ -13153,7 +13251,7 @@ async function init() {
 window.CineBeat = {
   get S() { return S; },
   get engine() { return engine; },
-  openPlace, openBestof, addFiles, rebuild, newPlace, importSong,
+  openPlace, openBestof, addFiles, ingestFiles, rebuild, newPlace, importSong,
 };
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

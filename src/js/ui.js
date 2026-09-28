@@ -638,17 +638,26 @@ async function detectFaces(item, src, sw, sh) {
   } catch (e) { /* nicht verfügbar */ }
 }
 
+/** Bildmaße (mit EXIF-Drehung) aus dem Dateikopf, ohne das Bild zu dekodieren; null, wenn nicht lesbar. */
+async function imageDims(url) {
+  const img = new Image();
+  img.src = url;
+  const ok = await waitEvent(img, ['load'], ['error'], 15000);
+  const d = ok && img.naturalWidth ? [img.naturalWidth, img.naturalHeight] : null;
+  img.src = '';
+  return d;
+}
+
 async function probeAndScore(item) {
   if (item.kind === 'image') {
     // Maße aus dem Dateikopf (ohne das Bild zu dekodieren), dann direkt klein dekodieren:
     // Bewertung und Vorschaubild brauchen nur 480 px, nicht das volle Kamerabild
-    const img = new Image();
-    img.src = item.url;
-    const ok = await waitEvent(img, ['load'], ['error'], 15000);
-    if (!ok || !img.naturalWidth) throw new Error('Bild nicht lesbar');
-    item.w = img.naturalWidth; item.h = img.naturalHeight;
+    if (!item.w || !item.h) {
+      const d = await imageDims(item.url);
+      if (!d) throw new Error('Bild nicht lesbar');
+      item.w = d[0]; item.h = d[1];
+    }
     const small = await decodeImage({ ...item, url: item.url }, 480, true);
-    img.src = '';
     const sw = small.width, sh = small.height;
     item.thumb = thumbFrom(small, sw, sh, 160);
     Object.assign(item, scoreImage(small, sw, sh));
@@ -715,6 +724,17 @@ function semaphore(n) {
   });
 }
 
+/** Zählsperre mit Gewicht: await take(w) wartet, bis w vom Budget frei ist (mindestens eins läuft immer). */
+function budget(total) {
+  let used = 0, busy = 0;
+  const wait = [];
+  const pump = () => { while (wait.length && (!busy || used + wait[0].w <= total)) { const q = wait.shift(); used += q.w; busy++; q.res(); } };
+  return async (w) => {
+    await new Promise((res) => { wait.push({ w, res }); pump(); });
+    return () => { used -= w; busy--; pump(); };
+  };
+}
+
 /** Führt fn für alle Elemente mit begrenzter Parallelität aus. */
 async function mapLimit(list, limit, fn) {
   let next = 0;
@@ -740,20 +760,24 @@ async function ingestFiles(fileList, onProgress) {
     all.push(it);
   }
   let done = 0, bad = 0;
-  // Parallel, aber schonend: ein Foto wird beim Lesen kurz in voller Kameraauflösung dekodiert (48 MP ≈ 190 MB),
-  // Videos brauchen einen der wenigen Hardware-Dekoder. Mehr gleichzeitig bringt kaum Tempo, aber Abstürze.
-  const vids = semaphore(1);
-  await mapLimit(fresh, 2, async (it) => {
+  // Parallel, aber schonend: ein Foto wird beim Lesen kurz in voller Kameraauflösung dekodiert (48 MP ≈ 190 MB).
+  // Darum teilen sich Fotos ein Pixelbudget (so viel wie früher zwei 48-MP-Fotos): normale 12-MP-Fotos laufen zu viert,
+  // große entsprechend weniger – schneller bei gleichem Speicher-Höchststand. Videos brauchen einen der wenigen Hardware-Dekoder.
+  const vids = semaphore(1), px = budget(96e6);
+  await mapLimit(fresh, 4, async (it) => {
     const release = it.kind === 'video' ? await vids() : null;
     try { await ingestOne(it); } finally { release && release(); }
     done++;
     onProgress && onProgress(done, fresh.length);
   });
   async function ingestOne(it) {
-    const meta = await readMediaMeta(it.file, it.kind);
+    // Metadaten und Bildmaße gleichzeitig lesen (beides nur der Dateikopf)
+    const [meta, dims] = await Promise.all([readMediaMeta(it.file, it.kind), it.kind === 'image' ? imageDims(it.url) : null]);
     if (meta.time) it.time = meta.time;
     if (meta.pos) it.pos = meta.pos;
-    try { await probeAndScore(it); } catch (e) { it.bad = true; bad++; }
+    let free = null;
+    if (dims) { it.w = dims[0]; it.h = dims[1]; free = await px(Math.min(96e6, it.w * it.h)); }
+    try { await probeAndScore(it); } catch (e) { it.bad = true; bad++; } finally { free && free(); }
     it.loading = false;
     if (!it.bad) saveWork(it);
   }
@@ -1490,7 +1514,52 @@ function drawStrip(t) {
   c.setAttribute('aria-valuenow', String(Math.round((tt / S.plan.duration) * 100)));
 }
 
+/* ---------- Mini-Vorschau: kleines Livebild + Abspielen in der Kopfzeile, solange das große Bild weggescrollt ist ---------- */
+const mini = { on: false, x: null, ratio: 0 };
+
+function setupMini() {
+  const box = $('mini'), bar = $('miniBar'), cv = $('miniCanvas');
+  mini.x = cv.getContext('2d', { alpha: false });
+  // nach jedem Vorschaubild (nicht beim Export) ein verkleinertes Abbild – nur solange die Mini-Vorschau zu sehen ist
+  const draw0 = engine.drawAt.bind(engine);
+  engine.drawAt = (t, mode) => { const r = draw0(t, mode); if (mini.on && mode !== 'offline') miniCopy(); return r; };
+  const show = (on) => {
+    on = on && !!S.plan && !$('viewEdit').hidden && $('flowStage').hidden && !S.exporting && window.innerWidth < 960;
+    if (on === mini.on) return;
+    mini.on = on; box.hidden = !on; bar.hidden = !on;
+    if (!on) return;
+    const sc = $('screen'), r = sc.width / Math.max(1, sc.height);
+    if (r !== mini.ratio) {
+      mini.ratio = r;
+      const h = 44, w = Math.round(Math.min(78, Math.max(25, h * r)));
+      $('miniThumb').style.width = w + 'px';
+      const d = Math.min(2, window.devicePixelRatio || 1);
+      cv.width = Math.round(w * d); cv.height = Math.round(h * d);
+    }
+    // Standbild sofort übernehmen (beim Abspielen kommt das nächste Bild ohnehin gleich)
+    if (!engine.playing) engine.renderStill(engine.t); else miniCopy();
+    updateTime(engine.t);
+  };
+  mini.show = show;
+  if ('IntersectionObserver' in window) {
+    let vis = true;
+    new window.IntersectionObserver((es) => { vis = es[es.length - 1].isIntersecting; show(!vis); }, { rootMargin: '-64px 0px 0px 0px', threshold: 0.12 }).observe($('monitor'));
+    window.addEventListener('resize', () => show(!vis));
+  }
+  $('miniThumb').addEventListener('click', () => window.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }));
+  $('miniPlay').addEventListener('click', togglePlay);
+}
+
+function miniCopy() {
+  const sc = $('screen'), c = mini.x.canvas;
+  // Bildausschnitt wie im Monitor (cover), direkt nach dem Zeichnen: der WebGL-Puffer ist dann noch gültig
+  const s = Math.max(c.width / sc.width, c.height / sc.height);
+  const w = sc.width * s, h = sc.height * s;
+  try { mini.x.drawImage(sc, (c.width - w) / 2, (c.height - h) / 2, w, h); } catch (e) { /* nicht verfügbar */ }
+}
+
 function updateTime(t) {
+  if (mini.on && S.plan) $('miniBar').style.transform = `scaleX(${Math.min(1, t / Math.max(0.01, S.plan.duration)).toFixed(4)})`;
   $('tc').textContent = fmtTC(t);
   drawStrip(t);
   if (engine && S.plan) {
@@ -1562,6 +1631,8 @@ function setPlayingUI(on) {
   // nach dem ersten Abspielen verdeckt kein Knopf mehr das Bild (Tippen aufs Bild startet und stoppt weiter)
   if (on) $('monitor').classList.add('played');
   $('playBtn').classList.toggle('playing', on);
+  $('miniPlay').classList.toggle('playing', on);
+  $('miniPlay').setAttribute('aria-label', on ? 'Pause' : 'Abspielen');
   $('playBtn').setAttribute('aria-label', on ? 'Pause' : 'Abspielen');
   if (!on) $('beatDot').classList.remove('on');
 }
@@ -3007,6 +3078,7 @@ async function init() {
   $('ovList').addEventListener('click', (e) => { const b = e.target.closest('[data-ov]'); if (b) { const o = findOverlay(b.dataset.ov); if (o) { engine.t = Math.min(o.end - 0.2, Math.max(o.start + 0.5, engine.t)); } openOverlaySheet(b.dataset.ov); } });
   $('safeBtn').addEventListener('click', (e) => { const on = e.currentTarget.getAttribute('aria-pressed') !== 'true'; e.currentTarget.setAttribute('aria-pressed', String(on)); $('safeZones').hidden = !on; });
   $('playBtn').addEventListener('click', togglePlay);
+  setupMini();
   $('bigPlay').addEventListener('click', (e) => { e.stopPropagation(); togglePlay(); });
   $('screen').addEventListener('click', () => { if (S.tab !== 'text') togglePlay(); });
   $('exportBtn').addEventListener('click', openExportSheet);
@@ -3045,7 +3117,7 @@ async function init() {
 window.CineBeat = {
   get S() { return S; },
   get engine() { return engine; },
-  openPlace, openBestof, addFiles, rebuild, newPlace, importSong,
+  openPlace, openBestof, addFiles, ingestFiles, rebuild, newPlace, importSong,
 };
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

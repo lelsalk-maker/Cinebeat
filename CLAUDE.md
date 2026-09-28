@@ -47,6 +47,7 @@ Ablauf je Ort (`rec.flow`): `song` (Song wählen) → `advice` (Songprofil + Emp
 - „Alle Aufnahmen“ (Standard): nichts weglassen; verdichten zuerst in Drop/Refrain; ruhige Teile ≥ 2 Beats.
 - Videos laufen wirklich (mind. ein Takt), bester Moment auf dem Schlag; nie in Sekundenbruchteil-Einstellungen.
 - Songdynamik: Drop-Einsatz ist ein Schnitt. Design: Schwarz/Dunkelblau/Beige, schlicht, modern.
+- Export: Bild- und Tonspur müssen Bit für Bit gleich bleiben (Beschleunigung nur drumherum: Ton parallel, `dequeue`-Wecken). Einlesen: Fotos parallel über Pixelbudget (`budget` in ui.js), Videos einzeln.
 - Leistung: Vorschau 30 fps, 60 fps nur im Flüssig-Modus (Bild kostet < 4,5 ms, fällt nichts aus), begrenzte Auflösung, keine Arbeit pro Bild, die sich cachen lässt.
 
 ## Effizient arbeiten (Token sparen)

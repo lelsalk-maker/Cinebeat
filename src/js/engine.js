@@ -1469,6 +1469,44 @@ class Engine {
       return safeKey;
     };
     let cancelled = false;
+    // Ton parallel zum Bild: rendern und kodieren, während der Bild-Encoder arbeitet (eigene Threads, gleiches Ergebnis);
+    // danach wartet nichts mehr auf den Ton. Auch der Ton übersteht einen App-Wechsel: bei einem Fehler neu kodieren.
+    const encodeAudio = async (buf) => {
+      for (let attempt = 0; ; attempt++) {
+        let af = null;
+        mux.aSamples = [];
+        mux.aDesc = null;
+        const aenc = new AudioEncoder({ output: (c, m) => mux.addAudioChunk(c, m), error: (e) => { af = e; } });
+        aenc.configure(as.cfg);
+        try {
+          const chunk = 1024;
+          const L = buf.getChannelData(0), R = buf.getChannelData(1);
+          for (let o = 0; o < buf.length && !cancelled; o += chunk) {
+            const nFr = Math.min(chunk, buf.length - o);
+            const data = new Float32Array(nFr * 2);
+            data.set(L.subarray(o, o + nFr), 0);
+            data.set(R.subarray(o, o + nFr), nFr);
+            const ad = new AudioData({ format: 'f32-planar', sampleRate: as.sampleRate, numberOfFrames: nFr, numberOfChannels: 2, timestamp: Math.round((o * 1e6) / as.sampleRate), data });
+            aenc.encode(ad);
+            ad.close();
+            if (aenc.encodeQueueSize > 20) await new Promise((r) => setTimeout(r, 1));
+          }
+          await aenc.flush();
+        } catch (e) { af = af || e; }
+        try { aenc.close(); } catch (e) { /* ignore */ }
+        if (!af || cancelled) return;
+        if (attempt >= 2) throw af;
+        await visible();
+      }
+    };
+    const audioJob = as ? this._renderAudio(as.sampleRate, withSong).then(encodeAudio) : null;
+    if (audioJob) audioJob.catch(() => { /* wird unten ausgewertet */ });
+    // Warten, bis der Encoder ein Bild abgenommen hat: sofort weiter statt in festen Takten nachzusehen
+    const drained = () => new Promise((res) => {
+      const done = () => { clearTimeout(tm); enc.removeEventListener('dequeue', done); res(); };
+      const tm = setTimeout(done, 4);
+      enc.addEventListener('dequeue', done);
+    });
     try {
       let n = 0;
       for (;;) {
@@ -1492,8 +1530,8 @@ class Engine {
           frame.close();
           if (failed) { n--; continue; }
           forceKey = false;
-          while (enc.encodeQueueSize > 4 && !failed && enc.state !== 'closed') await new Promise((r) => setTimeout(r, 2));
-          if (onProgress && n % 3 === 0) onProgress((n / N) * (as ? 0.93 : 1), t);
+          while (enc.encodeQueueSize > 4 && !failed && enc.state !== 'closed') await drained();
+          if (onProgress && n % 3 === 0) onProgress((n / N) * (as ? 0.98 : 1), t);
         }
         if (cancelled) break;
         try { await enc.flush(); } catch (e) { failed = failed || e; }
@@ -1504,38 +1542,10 @@ class Engine {
     } finally {
       try { enc.close(); } catch (e) { /* ignore */ }
     }
-    if (cancelled) { this.exporting = false; return null; }
+    if (cancelled) { this.exporting = false; if (audioJob) await audioJob.catch(() => {}); return null; }
     if (failed) { this.exporting = false; throw failed; }
-    if (as) {
-      const buf = await this._renderAudio(as.sampleRate, withSong);
-      // auch der Ton übersteht einen App-Wechsel: bei einem Fehler einfach neu kodieren (dauert nur Sekunden)
-      for (let attempt = 0; ; attempt++) {
-        failed = null;
-        mux.aSamples = [];
-        mux.aDesc = null;
-        const aenc = new AudioEncoder({ output: (c, m) => mux.addAudioChunk(c, m), error: (e) => { failed = e; } });
-        aenc.configure(as.cfg);
-        try {
-          const chunk = 1024;
-          const L = buf.getChannelData(0), R = buf.getChannelData(1);
-          for (let o = 0; o < buf.length; o += chunk) {
-            const nFr = Math.min(chunk, buf.length - o);
-            const data = new Float32Array(nFr * 2);
-            data.set(L.subarray(o, o + nFr), 0);
-            data.set(R.subarray(o, o + nFr), nFr);
-            const ad = new AudioData({ format: 'f32-planar', sampleRate: as.sampleRate, numberOfFrames: nFr, numberOfChannels: 2, timestamp: Math.round((o * 1e6) / as.sampleRate), data });
-            aenc.encode(ad);
-            ad.close();
-            if (aenc.encodeQueueSize > 20) await new Promise((r) => setTimeout(r, 1));
-          }
-          await aenc.flush();
-        } catch (e) { failed = failed || e; }
-        try { aenc.close(); } catch (e) { /* ignore */ }
-        if (!failed) break;
-        if (attempt >= 2) break;
-        await visible();
-      }
-      if (failed) { this.exporting = false; throw failed; }
+    if (audioJob) {
+      try { await audioJob; } catch (e) { this.exporting = false; throw e; }
     }
     onProgress && onProgress(1, D);
     const blob = mux.finalize();
