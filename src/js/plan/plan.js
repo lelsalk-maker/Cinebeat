@@ -86,7 +86,15 @@ function planOnce(opts) {
     for (let t0 = teaseEnd; t0 < end - 0.05; t0 += sub) pieces.push({ start: t0, end: Math.min(end, t0 + sub), f: { pre: 'rew' } });
     pre = { kind: 'rewind', beats: 4 * bStep, end, teaseEnd, pieces };
   }
-  if (pre && pre.end > D * 0.35) pre = null;
+  // Kino-Rollladen: Wand aus sechs Hochkant-Aufnahmen, drei Züge, Schwarz mit Ortstitel, dann öffnet sich das Bild
+  let shutter = null;
+  if (intro === 'shutter' && !flight) {
+    const st = shutterStep(an), at = (k) => atB(k * st), u = beatDur * st;
+    shutter = { u, reveal: Array.from({ length: SHUTTER.tiles }, (_, k) => (k === 0 ? 0 : at(k))), colorAt: at(SHUTTER.color), pulls: SHUTTER.pulls.map(at), black: at(SHUTTER.black), open: at(SHUTTER.open), end: at(SHUTTER.end) };
+    if (shutter.end > D - Math.max(3, barDur * 2)) shutter = null;
+    else pre = { kind: 'shutter', beats: SHUTTER.black * st, end: shutter.black, pieces: [{ start: 0, end: shutter.black, f: { pre: 'wall' } }] };
+  }
+  if (pre && pre.kind !== 'shutter' && pre.end > D * 0.35) pre = null;
   const pb = pre ? pre.beats : 0;
   const T0 = pre ? pre.end : 0;
 
@@ -140,6 +148,19 @@ function planOnce(opts) {
     if (pb === 0) pieces[0].start = 0;
     rush = { pieces, end: atB(pb + 4) };
     if (rush.end > D * 0.35) rush = null;
+  }
+
+  // Kino-Rollladen: hinter dem Schwarz läuft schon das erste Bild; beim Öffnen wechseln die Bilder im Takt,
+  // auf den letzten beiden Zählzeiten doppelt so schnell – auf dem Einsatz steht das stärkste Bild
+  if (shutter) {
+    const u = shutter.u, pieces = [];
+    const cuts = [shutter.black, shutter.open + u];
+    for (let t0 = shutter.open + 2 * u; t0 < shutter.end - 2 * u - 0.05; t0 += u) cuts.push(t0);
+    const fast = u / 2 >= 0.2;
+    for (let t0 = shutter.end - 2 * u; t0 < shutter.end - 0.05; t0 += fast ? u / 2 : u) cuts.push(t0);
+    cuts.push(shutter.end);
+    for (let k = 0; k + 1 < cuts.length; k++) pieces.push({ start: cuts[k], end: cuts[k + 1], f: { rush: true } });
+    rush = { pieces, end: shutter.end, shutter: true };
   }
 
   // Einstieg: Mindestdauer der ersten Einstellung
@@ -583,6 +604,34 @@ function planOnce(opts) {
     if (pre.kind === 'countdown') {
       const others = main.filter((m) => m !== first && m !== hook);
       for (let i = 0; i < P; i++) { clips[i].mediaId = (others[i % Math.max(1, others.length)] || first || {}).id || null; clips[i].role = 'leader'; }
+    } else if (pre.kind === 'shutter' && shutter) {
+      // Wand: die besten Hochkant-Aufnahmen (höchstens drei Videos, sonst ruckelt es auf dem Handy), in ihrer Reihenfolge
+      const hookId = clips.find((c) => c.role === 'hook');
+      const cand = goodMedia(usable, allOn).filter((m) => !hookId || m.id !== hookId.mediaId);
+      const portrait = (m) => (m.w && m.h ? m.h > m.w * 1.05 : false);
+      const rank = cand.slice().sort((a, b) => (portrait(b) - portrait(a)) || ((b.score || 0) - (a.score || 0)));
+      const pick = [];
+      for (const m of rank) {
+        if (pick.length >= SHUTTER.tiles) break;
+        if (m.kind === 'video' && pick.filter((x) => x.kind === 'video').length >= 3) continue;
+        if (pick.some((x) => x.dupOf === m.id || m.dupOf === x.id)) continue;
+        pick.push(m);
+      }
+      for (const m of rank) if (pick.length < SHUTTER.tiles && !pick.includes(m)) pick.push(m);
+      const all = pick.length ? pick : (first ? [first] : []);
+      while (all.length && all.length < SHUTTER.tiles) all.push(all[all.length % Math.max(1, pick.length)]);
+      const ids = orderChrono(all.slice()).map((m) => m.id);
+      const u = shutter.u, mv = Math.min(0.62, u * 0.82);
+      const moves = [
+        { side: 'bottom', t: shutter.pulls[0], dur: mv, from: 0, to: 1 / 3 },
+        { side: 'top', t: shutter.pulls[1], dur: mv, from: 0, to: 1 / 3 },
+        { side: 'bottom', t: shutter.pulls[2], dur: mv * 1.1, from: 1 / 3, to: 2 / 3 + 0.004 },
+      ];
+      const c = clips[0];
+      c.split = { ids, orient: 'wall', reveal: shutter.reveal.slice(0, ids.length), colorAt: shutter.colorAt, shutter: { moves, closedAt: shutter.pulls[2] + mv * 1.1 } };
+      c.mediaId = ids[0];
+      c.role = 'wall';
+      shutter.moves = moves;
     } else {
       // Vorgeschmack: der spannendste Moment (gern ein Video), danach die Bilder des Films rückwärts
       const cand = main.filter((m) => m !== first && m !== hook);
@@ -1235,6 +1284,8 @@ function planOnce(opts) {
     dir.notes.push(`Mitgetippt: ${tapsRel.length} ${tapsRel.length === 1 ? 'Moment' : 'Momente'} von dir – ${cut ? `${cut}× genau auf dem Schlag geschnitten, mit kurzem Zoom-Stoß` : ''}${cut && rest ? '; ' : ''}${rest ? `${rest}× im Vorspann oder in einem durchlaufenden Video: dort nur der Zoom-Stoß, damit Titel und Video nicht zerreißen` : ''}.`);
   }
   const overlays = [];
+  const sfx = [];
+  let songEnv = null;
   // Nichts ist fest: Titel, Kapitel und Statistik lassen sich einzeln ausschalten
   const title = s.showTitle === false ? '' : (settings.title || '').trim();
   const subtitle = s.showTitle === false ? '' : (settings.subtitle || '').trim();
@@ -1442,6 +1493,17 @@ function planOnce(opts) {
     overlays.push({ type: 'rewind', start: pre.teaseEnd - 0.12, end: pre.end, teaseEnd: pre.teaseEnd });
     dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, 'Vorspann Rewind: ein kurzer Blick auf den besten Moment, dann spult der Film zurück an den Anfang.');
   }
+  if (pre && pre.kind === 'shutter' && shutter) {
+    const u = shutter.u;
+    overlays.push({ type: 'shutter', start: shutter.black - 0.03, open: shutter.open, end: shutter.end + 0.02 });
+    if (title) overlays.push({ type: 'city', text: title, sub: subtitle, geo, start: shutter.black + Math.min(0.25, u * 0.4), end: shutter.open + 2.2 * u });
+    // Geräusche: leise läuft der Projektor, dann drei Züge am Rollladen (der letzte schließt schwer)
+    sfx.push({ kind: 'projector', t: 0, dur: Math.max(0.6, shutter.pulls[0] + 0.25), gain: 0.55 });
+    (shutter.moves || []).forEach((m, k) => sfx.push({ kind: 'pull', t: Math.max(0, m.t - 0.02), dur: +(m.dur + 0.12).toFixed(3), v: k, gain: 0.9 }));
+    // der Song baut sich erst mit dem Öffnen auf und ist auf dem Einsatz voll da
+    songEnv = [[0, 0], [shutter.open - u, 0], [shutter.end, 1, 'in']];
+    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Kino-Rollladen: ${clips[0].split ? clips[0].split.ids.length : 6} Hochkant-Aufnahmen erscheinen im Takt, erst schwarzweiß, dann in Farbe; der Rollladen schließt in drei Zügen (unten, oben, ganz), auf Schwarz erscheint ${title ? `„${title}“` : 'der Ort'}${geo ? ' mit Koordinaten' : ''}; dann öffnet sich das Bild flüssig nach oben und unten, während der Song leise aufbaut – voll da auf dem Einsatz bei ${fmtMS(shutter.end)}.`);
+  }
   if (pre && pre.kind === 'countdown') dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, 'Vorspann Countdown: 3 · 2 · 1 wie im alten Kino, danach beginnt dein Einstieg.');
 
   if (intro === 'cinema') {
@@ -1629,7 +1691,8 @@ function planOnce(opts) {
   const seen = new Map();
   for (const c of plain) seen.set(c.mediaId, (seen.get(c.mediaId) || 0) + 1);
   // Bilder im Split-Screen zählen mit: dasselbe Bild einzeln und im Split wäre auch eine Doppelung
-  for (const c of clips) for (const id of c.split ? c.split.ids : c.stack ? c.stack.ids : []) seen.set(id, (seen.get(id) || 0) + 1);
+  // (die Wand des Kino-Rollladens ist ein Vorgeschmack wie der Rewind-Anriss, keine Doppelung)
+  for (const c of clips) for (const id of c.split && !c.pre ? c.split.ids : c.stack ? c.stack.ids : []) seen.set(id, (seen.get(id) || 0) + 1);
   const repeats = [...seen.values()].reduce((a, n) => a + Math.max(0, n - 1), 0);
   // Kapazität: wie viele Aufnahmen passen, welche bleiben draußen, welche Videos sind zu lang
   const usedSet = new Set(clips.flatMap((c) => (c.split ? c.split.ids : c.stack ? c.stack.ids : c.grid && c.grid.ids ? c.grid.ids.concat([c.mediaId]) : [c.mediaId])).filter(Boolean));
@@ -1668,9 +1731,9 @@ function planOnce(opts) {
   return {
     _m: { repeats, dropped: droppedIds.length, scale: usedScale, floor: (fr.shotMin / fr.shot) * (level >= 1 ? 0.5 : 1), D, max: fr.max, settings, extraNeed, level },
     capacity,
-    duration: D, win, clips: all, visibleClips: clips.length,
+    duration: D, win: songEnv ? { ...win, env: songEnv } : win, clips: all, visibleClips: clips.length,
     look: s.look, format: s.format, frame: s.frame, band, pace: s.pace, split: s.split, font: s.font || 'klassisch', motion: s.motion || 'ken', motionAmt: s.motionAmt || 'medium',
-    intro, outro, fx, overlays, notes: dir.notes, resolved: s, voice,
+    intro, outro, fx, overlays, sfx, notes: dir.notes, resolved: s, voice,
     beats: beatsRel, downs, beatEnergy, beatDur,
     accent, chroma, colorFx, parallax: s.parallax === 'on' ? 1 : 0,
     sections: (an.sections || []).filter((x) => x.end > win.start && x.start < win.end).map((x) => ({ ...x, start: Math.max(0, x.start - win.start), end: Math.min(D, x.end - win.start) })),

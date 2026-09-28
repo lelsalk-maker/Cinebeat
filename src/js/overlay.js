@@ -243,6 +243,7 @@ class OverlayPainter {
         else if (o.type === 'knockout') this.drawKnockout(ctx, o, t, geo);
         else if (o.type === 'leader') this.drawLeader(ctx, o, t, geo);
         else if (o.type === 'rewind') this.drawRewind(ctx, o, t, geo);
+        else if (o.type === 'shutter') this.drawShutter(ctx, o, t, geo);
         else if (o.type === 'reveal') this.drawReveal(ctx, o, t, geo);
         else if (o.type === 'countin') this.drawCountIn(ctx, o, t, geo);
         else if (o.type === 'datestamp') this.drawDateStamp(ctx, o, t, geo);
@@ -255,6 +256,34 @@ class OverlayPainter {
     }
     res.top = true;
     return res;
+  }
+
+  /**
+   * Kino-Rollladen, zweiter Teil: bis zum Öffnen ganz schwarz (darauf steht der Ortstitel), dann gleiten beide
+   * Behänge flüssig nach oben und unten auf – langsam lösen, gleiten, weich ankommen. Die Lamellen sind nur angedeutet.
+   */
+  drawShutter(ctx, o, t, g) {
+    const W = g.W, H = g.H;
+    const u = cl01((t - o.open) / Math.max(0.1, o.end - o.open));
+    const e = u * u * u * (u * (6 * u - 15) + 10);
+    const half = (H / 2) * (1 - e);
+    if (half <= 0.5) return;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, Math.ceil(half));
+    ctx.fillRect(0, Math.floor(H - half), W, Math.ceil(half));
+    if (e <= 0) return;
+    const slat = Math.max(6, H / 34), a = Math.min(1, e * 8) * Math.pow(1 - e, 0.6);
+    ctx.globalAlpha = 0.8 * a;
+    for (let k = 1; k * slat < half; k++) {
+      ctx.fillStyle = '#16181c';
+      ctx.fillRect(0, half - k * slat, W, Math.max(1, slat * 0.05));
+      ctx.fillRect(0, H - half + k * slat, W, Math.max(1, slat * 0.05));
+    }
+    ctx.fillStyle = '#2a2d33';
+    const rail = Math.max(2, slat * 0.16);
+    ctx.fillRect(0, half - rail, W, rail);
+    ctx.fillRect(0, H - half, W, rail);
+    ctx.globalAlpha = 1;
   }
 
   /** Bildbereich und Textzonen (berücksichtigt Kinoband und Instagram-Schutzzonen). */

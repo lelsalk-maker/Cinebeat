@@ -31,7 +31,7 @@ function normalizeSettings(st, defaults) {
     format: FORMATS[s.format] ? s.format : '9:16',
     look: s.look === 'auto' || LOOKS[s.look] ? s.look : 'auto',
     pace: pick1(s.pace, ['auto', 'ruhig', 'mittel', 'schnell'], 'auto'),
-    intro: pick1(s.intro, ['auto', 'rush', 'reveal', 'countdown', 'grid', 'knockout', 'cinema', 'city', 'hook', 'type', 'split'], 'auto'),
+    intro: pick1(s.intro, ['auto', 'shutter', 'rush', 'reveal', 'countdown', 'grid', 'knockout', 'cinema', 'city', 'hook', 'type', 'split'], 'auto'),
     outro: pick1(s.outro, ['auto', 'credits', 'loop', 'freeze', 'split', 'strip'], 'auto'),
     pre: pick1(s.pre, ['off', 'countdown', 'rewind'], 'off'),
     target: pick1(s.target, ['story', 'reel'], 'story'),
@@ -84,7 +84,7 @@ function baseSettings(defaults) {
 }
 function styleSummary(st) {
   const names = { snap: 'Impact-Zoom', sway: 'Pendeln', pulse: 'Puls', float: 'Schweben', tilt: 'Neigen', handheld: 'Handkamera' };
-  const intros = { reveal: 'Aufblende', countdown: 'Countdown', grid: '9er-Raster', knockout: 'Durch den Namen', cinema: 'Titelkarte', city: 'Ortsname', hook: 'Stärkstes Bild', type: 'Wort für Wort', split: 'Split-Screen' };
+  const intros = { shutter: 'Kino-Rollladen', rush: 'Bilderflut', reveal: 'Aufblende', countdown: 'Countdown', grid: '9er-Raster', knockout: 'Durch den Namen', cinema: 'Titelkarte', city: 'Ortsname', hook: 'Stärkstes Bild', type: 'Wort für Wort', split: 'Split-Screen' };
   return [st.look === 'auto' ? 'Look automatisch' : `Look ${LOOKS[st.look].label}`, `Schrift ${FONT_SETS[st.font].label}`, names[st.motion], st.pre !== 'off' ? (st.pre === 'rewind' ? 'Rewind' : 'Countdown') + ' +' : '', intros[st.intro], st.morph === 'on' ? 'Bild aus Bild' : '', st.burst === 'drop' ? 'Foto-Serie' : '', st.ramp === 'drop' ? 'Speed-Ramp' : '', st.km !== 'off' ? 'Koordinaten' : ''].filter(Boolean).join(' · ');
 }
 
@@ -2575,8 +2575,8 @@ function renderStyle() {
   setRadio($('preChips'), st.pre);
   $('preField').hidden = isFlight(S.ctx.rec);
   const introR = st.intro === 'auto' && r ? r.intro : st.intro;
-  for (const b of $('preChips').querySelectorAll('[data-v]')) b.disabled = (b.dataset.v !== 'off' && introR === 'split') || (b.dataset.v === 'countdown' && introR === 'countdown');
-  $('preHint').textContent = introR === 'split' ? 'Der Split-Screen-Einstieg steht für sich, ohne Vorspann.' : st.pre === 'rewind' ? 'Ein kurzer Blick auf den besten Moment, dann spult der Film wie eine Kassette zurück an den Anfang.' : st.pre === 'countdown' ? 'Countdown wie im alten Kino, danach dein Einstieg.' : 'Läuft vor dem Einstieg und lässt sich mit jedem Einstieg kombinieren, z. B. Countdown und danach das 9er-Raster.';
+  for (const b of $('preChips').querySelectorAll('[data-v]')) b.disabled = (b.dataset.v !== 'off' && (introR === 'split' || introR === 'shutter')) || (b.dataset.v === 'countdown' && introR === 'countdown');
+  $('preHint').textContent = introR === 'shutter' ? 'Der Kino-Rollladen bringt seinen eigenen Vorspann mit: sechs Hochkant-Aufnahmen, drei Züge am Rollladen, dann öffnet sich das Bild zum Song-Einsatz.' : introR === 'split' ? 'Der Split-Screen-Einstieg steht für sich, ohne Vorspann.' : st.pre === 'rewind' ? 'Ein kurzer Blick auf den besten Moment, dann spult der Film wie eine Kassette zurück an den Anfang.' : st.pre === 'countdown' ? 'Countdown wie im alten Kino, danach dein Einstieg.' : 'Läuft vor dem Einstieg und lässt sich mit jedem Einstieg kombinieren, z. B. Countdown und danach das 9er-Raster.';
   renderFx(st, r);
   const mt = $('mapThemeChips');
   if (!mt.children.length) mt.innerHTML = Object.entries(MAP_THEMES).map(([k, th]) => `<button type="button" role="radio" data-v="${k}"><i class="map-sw" style="background:radial-gradient(circle at 35% 35%, ${th.body0}, ${th.bg1});box-shadow:inset 0 0 0 2px ${th.ink}"></i>${th.label}</button>`).join('');
@@ -2599,7 +2599,7 @@ function renderStyle() {
     const b = $(group).querySelector('[data-v="auto"]');
     if (b) b.textContent = st[val] === 'auto' && r && names[r[val]] ? `Auto · ${names[r[val]]}` : 'Auto';
   };
-  autoLabel('introChips', 'intro', { reveal: 'Aufblende', countdown: 'Countdown', grid: '9er-Raster', knockout: 'Durch den Namen', cinema: 'Titelkarte', city: 'Ortsname', hook: 'Stärkstes Bild', type: 'Wort für Wort', split: 'Split' });
+  autoLabel('introChips', 'intro', { shutter: 'Kino-Rollladen', rush: 'Bilderflut', reveal: 'Aufblende', countdown: 'Countdown', grid: '9er-Raster', knockout: 'Durch den Namen', cinema: 'Titelkarte', city: 'Ortsname', hook: 'Stärkstes Bild', type: 'Wort für Wort', split: 'Split' });
   autoLabel('outroChips', 'outro', { credits: 'Schlusstitel', loop: 'Loop', freeze: 'Standbild', split: 'Split', strip: 'Filmstreifen' });
   autoLabel('frameChips', 'frame', { full: 'Vollbild', band: 'Kinoband' });
   autoLabel('paceChips', 'pace', { ruhig: 'ruhig', mittel: 'mittel', schnell: 'schnell' });
@@ -3186,7 +3186,7 @@ function openExportSheet() {
       ? 'Genau das, was Instagram erwartet. Kleine Datei, schneller Upload.'
       : quality === 'max' ? 'Doppelte Datenrate: feinere Details und Verläufe, auch nachdem Instagram das Video neu komprimiert.'
         : 'Für dein Archiv und große Bildschirme. Braucht deutlich länger; Instagram verkleinert 4K wieder auf 1080p.';
-    const voiceNote = engine.hasVoice ? ' Der Originalton deiner Videos ist in jedem Fall dabei.' : '';
+    const voiceNote = (engine.hasVoice ? ' Der Originalton deiner Videos ist in jedem Fall dabei.' : '') + (engine.hasSfx ? ' Die Rollladen-Geräusche sind immer dabei; am schönsten wirkt der Kino-Rollladen mit Song, weil der Song dann mit dem Öffnen aufblendet.' : '');
     body.querySelector('#audHint').textContent = (micSong
       ? `Der Song wurde nur mitgehört, deshalb exportiert die App ohne Ton. Füge „${S.ctx.song.name}“ in Instagram ab ${igStart()} hinzu.`
       : audio === 'without'
@@ -3209,7 +3209,7 @@ function openExportSheet() {
     if (e.target.closest('#carouselExport')) await runCarousel(body, { size: sizeOf(), fps, bpp: QUALITY[quality].bpp, withSong: !micSong, isCancelled: () => cancel });
     if (e.target.closest('#startExport')) {
       try { localStorage.setItem('cinebeat.export', JSON.stringify({ fps, audio, quality })); } catch (err) { /* egal */ }
-      await runExport(body, { size: sizeOf(), fps, bpp: QUALITY[quality].bpp, withSong: audio === 'with', withAudio: audio === 'with' || engine.hasVoice, isCancelled: () => cancel });
+      await runExport(body, { size: sizeOf(), fps, bpp: QUALITY[quality].bpp, withSong: audio === 'with', withAudio: audio === 'with' || engine.hasVoice || engine.hasSfx, isCancelled: () => cancel });
     }
   });
 }

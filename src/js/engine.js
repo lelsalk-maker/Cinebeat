@@ -16,6 +16,64 @@ function panelTime(c, k, t) {
   return (it.srcOffset || 0) + Math.max(0, tt - c.split.reveal[k]) * (it.rate || 1);
 }
 
+/**
+ * Geräusche für Einstiege, direkt auf dem Gerät erzeugt (reproduzierbar: fester Zufall, jeder Export klingt gleich).
+ * pull: ein Rollladen wird gezogen – Gurt-Rauschen, darüber das Rattern der Lamellen (erst schneller, am Ende langsamer),
+ * zum Schluss setzt er unten auf. v: 0/1/2 für den ersten bis dritten Zug (höher, der letzte schließt schwer).
+ * projector: leises Laufen eines Filmprojektors (24 Bilder pro Sekunde) unter dem Kino-Auftakt.
+ */
+function synthSfx(sr, kind, dur, v = 0) {
+  const n = Math.max(1, Math.round(dur * sr));
+  const out = new Float32Array(n);
+  const rnd = mulberry32(0x5f3a + v * 977 + (kind === 'pull' ? 1 : 2));
+  const noise = () => rnd() * 2 - 1;
+  if (kind === 'pull') {
+    const pitch = [0.92, 1.06, 0.98][v % 3], heavy = v === 2;
+    // Gurt: gefiltertes Rauschen, schwillt an und verebbt
+    let lp = 0, hp = 0, prev = 0;
+    const kLp = 1 - Math.exp(-2 * Math.PI * 2600 * pitch / sr), kHp = Math.exp(-2 * Math.PI * 420 / sr);
+    for (let i = 0; i < n; i++) {
+      const u = i / n;
+      const env = Math.min(1, u / 0.12) * Math.pow(1 - u, 0.7);
+      lp += kLp * (noise() - lp);
+      hp = kHp * (hp + lp - prev); prev = lp;
+      out[i] += hp * 0.22 * env;
+    }
+    // Lamellen: kurze Klicks, deren Abstand erst kleiner, dann wieder größer wird
+    let t = 0.02;
+    while (t < dur - 0.07) {
+      const u = t / dur;
+      const rate = (18 + 26 * Math.sin(Math.PI * Math.min(1, u * 1.1))) * pitch;
+      const i0 = Math.round(t * sr), len = Math.round(0.006 * sr), amp = (0.35 + 0.25 * rnd()) * Math.min(1, u / 0.1 + 0.3);
+      let f = 0;
+      for (let j = 0; j < len && i0 + j < n; j++) { f += 0.55 * (noise() - f); out[i0 + j] += f * amp * Math.exp(-j / (0.0012 * sr)); }
+      t += 1 / rate;
+    }
+    // Aufsetzen: dumpfer Schlag und ein trockenes Klacken
+    const hit = Math.round((dur - 0.075) * sr), f0 = (heavy ? 78 : 104) * pitch;
+    for (let j = 0; hit + j < n; j++) {
+      const x = j / sr;
+      out[hit + j] += Math.sin(2 * Math.PI * f0 * x) * Math.exp(-x * (heavy ? 22 : 34)) * (heavy ? 0.85 : 0.55);
+      if (j < 0.012 * sr) out[hit + j] += noise() * 0.5 * Math.exp(-x * 400);
+    }
+  } else if (kind === 'projector') {
+    // Greifer im Takt von 24 Bildern, weiches Rauschen der Lampe, sanft ein- und ausgeblendet
+    let lp = 0;
+    const k = 1 - Math.exp(-2 * Math.PI * 1500 / sr);
+    for (let i = 0; i < n; i++) {
+      const x = i / sr;
+      const env = Math.min(1, x / 0.5, (dur - x) / 0.5);
+      lp += k * (noise() - lp);
+      const ph = (x * 24) % 1;
+      out[i] = (lp * 0.05 + lp * 0.35 * Math.exp(-ph * 60)) * Math.max(0, env);
+    }
+  }
+  let peak = 0;
+  for (let i = 0; i < n; i++) peak = Math.max(peak, Math.abs(out[i]));
+  if (peak > 0.95) for (let i = 0; i < n; i++) out[i] *= 0.95 / peak;
+  return out;
+}
+
 const H264_CANDIDATES = (fps, w, h) => {
   if (w * h > 2200000) return fps > 30 ? ['avc1.640034', 'avc1.4D4034'] : ['avc1.640033', 'avc1.4D4033', 'avc1.640034'];
   const big = w * h > 1280 * 720;
@@ -257,6 +315,116 @@ class Engine {
       m.fastBad = true;
       if (s.fr) { s.fr.close(); s.fr = null; }
       return false;
+    }
+  }
+
+  /* ---------- Kino-Rollladen: Wand aus Hochkant-Feldern ---------- */
+  /**
+   * Die Felder erscheinen nacheinander wie auf einer Kinoleinwand (Lampe fährt hoch), erst schwarzweiß,
+   * dann fließt die Farbe hinein. Danach schließt ein Rollladen in drei Zügen: unten, oben, dann ganz.
+   */
+  composeWall(s, t) {
+    const c = s.clip, sp = c.split, cv = s.canvas;
+    const ctx = cv.getContext('2d');
+    const W = cv.width, H = cv.height;
+    const cols = W > H ? 3 : 2, rows = Math.ceil(s.panels.length / cols);
+    const gap = Math.max(2, Math.round(Math.min(W, H) * 0.014));
+    const pw = (W - gap * (cols + 1)) / cols, ph = (H - gap * (rows + 1)) / rows;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, H);
+    ctx.imageSmoothingQuality = 'high';
+    // Projektor: das Licht flackert kaum merklich (fest aus der Zeit abgeleitet, jeder Export gleich)
+    const fr = Math.floor(t * 24);
+    const flick = 0.035 * (((Math.sin(fr * 12.9898) * 43758.5453) % 1 + 1) % 1);
+    for (let k = 0; k < s.panels.length; k++) {
+      const p = s.panels[k];
+      if (!p || !p.m) continue;
+      const a = clamp01((t - sp.reveal[k]) / 0.42);
+      if (a <= 0) continue;
+      const e = easeOutCubic(a);
+      const x = gap + (k % cols) * (pw + gap), y = gap + Math.floor(k / cols) * (ph + gap);
+      const src = p.video && p.video.readyState >= 2 ? p.video : p.img || p.m.poster;
+      if (!src) continue;
+      const sw = src.videoWidth || src.width, sh = src.videoHeight || src.height;
+      if (!sw || !sh) continue;
+      // langsames Heranfahren je Feld, beim Erscheinen etwas größer (Lampe fährt hoch)
+      const life = Math.max(0, t - sp.reveal[k]);
+      const zoom = 1.0 + 0.05 * (1 - e) + 0.012 * life;
+      const sc = Math.max(pw / sw, ph / sh) * zoom;
+      const vw = pw / sc, vh = ph / sc;
+      const f = p.item.focus || [0.5, 0.45];
+      const sx = Math.max(0, Math.min(sw - vw, f[0] * sw - vw / 2));
+      const sy = Math.max(0, Math.min(sh - vh, f[1] * sh - vh / 2));
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x, y, pw, ph);
+      ctx.clip();
+      ctx.globalAlpha = e;
+      ctx.drawImage(src, sx, sy, vw, vh, x, y, pw, ph);
+      // Schwarzweiß, bis die Farbe hineinfließt (je Feld leicht versetzt)
+      const cp = smooth(clamp01((t - sp.colorAt - k * 0.07) / 0.55));
+      if (cp < 1) {
+        ctx.globalCompositeOperation = 'saturation';
+        ctx.globalAlpha = (1 - cp) * e;
+        ctx.fillStyle = '#808080';
+        ctx.fillRect(x, y, pw, ph);
+        ctx.globalCompositeOperation = 'source-over';
+      }
+      // Belichtung beim Erscheinen: kurz hell, dann das Bild
+      if (a < 1) { ctx.globalAlpha = 0.35 * (1 - a) * (1 - a); ctx.fillStyle = '#fff'; ctx.fillRect(x, y, pw, ph); }
+      ctx.restore();
+    }
+    ctx.globalAlpha = flick;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = 1;
+    // Rollladen: unten und oben je ein Behang aus Lamellen
+    const hb = this._shutterPos(sp.shutter, t, 'bottom') * H, ht = this._shutterPos(sp.shutter, t, 'top') * H;
+    const seams = 1 - clamp01((t - sp.shutter.closedAt) / 0.35);
+    if (hb > 0.5) this._drawSlats(ctx, W, H - hb, hb, 'bottom', seams, H);
+    if (ht > 0.5) this._drawSlats(ctx, W, 0, ht, 'top', seams, H);
+    this.r.upload(s.tex, cv);
+  }
+
+  /** Höhe eines Behangs (Anteil am Bild) zur Zeit t: jeder Zug fährt zügig, bremst und setzt mit leichtem Nachfedern auf. */
+  _shutterPos(sh, t, side) {
+    let h = 0;
+    for (const m of sh.moves) {
+      if (m.side !== side) continue;
+      const u = clamp01((t - m.t) / m.dur);
+      if (u <= 0) continue;
+      // zügig anziehen, auslaufen, leicht nachfedern
+      const base = u < 1 ? 1 - Math.pow(1 - u, 2.6) : 1;
+      const bounce = u < 1 ? 0 : 0.012 * Math.exp(-(t - m.t - m.dur) * 18) * Math.sin((t - m.t - m.dur) * 60);
+      h = m.from + (m.to - m.from) * base + bounce * (m.to - m.from);
+    }
+    return Math.max(0, Math.min(1, h));
+  }
+
+  /** Lamellen eines Rollladens: dunkle Profile mit feinen Fugen und einer Endleiste an der Kante. */
+  _drawSlats(ctx, W, y0, h, side, seams, H) {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, y0, W, h);
+    const slat = Math.max(6, H / 34);
+    if (seams > 0.01) {
+      // Fugen laufen mit dem Behang (Abstand von der Kante gemessen)
+      const edge = side === 'bottom' ? y0 : y0 + h;
+      ctx.globalAlpha = 0.9 * seams;
+      for (let k = 1; k * slat < h; k++) {
+        const y = side === 'bottom' ? edge + k * slat : edge - k * slat;
+        ctx.fillStyle = '#16181c';
+        ctx.fillRect(0, y - Math.max(1, slat * 0.05), W, Math.max(1, slat * 0.05));
+        ctx.fillStyle = '#0b0c0e';
+        ctx.fillRect(0, y, W, Math.max(1, slat * 0.08));
+      }
+      // Endleiste mit einem Hauch Licht
+      ctx.fillStyle = '#23262c';
+      const rail = Math.max(2, slat * 0.18);
+      ctx.fillRect(0, side === 'bottom' ? edge : edge - rail, W, rail);
+      ctx.globalAlpha = 1;
     }
   }
 
@@ -563,6 +731,7 @@ class Engine {
   }
 
   composeSplit(s, t) {
+    if (s.clip.split.orient === 'wall') { this.composeWall(s, t); return; }
     const c = s.clip, cv = s.canvas;
     const ctx = cv.getContext('2d');
     const W = cv.width, H = cv.height;
@@ -1084,6 +1253,21 @@ class Engine {
 
   _gainCurve(g, when, offset) {
     const w = this.plan.win, D = this.plan.duration;
+    // Hüllkurve des Einstiegs (Song baut sich leise auf): eine Kurve über den ganzen Film
+    if (w.env && w.env.length) {
+      const fo = Math.max(0.05, Math.min(w.fadeOut || 1, D * 0.3));
+      const out = (u) => Math.pow(Math.cos(clamp01(u) * Math.PI / 2), 1.6);
+      const envAt = (x) => { const e = w.env; if (x <= e[0][0]) return e[0][1]; for (let k = 1; k < e.length; k++) if (x <= e[k][0]) { const [a, ga] = e[k - 1], [b, gb] = e[k]; const u = (x - a) / Math.max(1e-6, b - a); return ga + (gb - ga) * (e[k][2] === 'in' ? u * u * u * (u * (6 * u - 15) + 10) : u); } return e[e.length - 1][1]; };
+      const gAt = (x) => envAt(x) * (x > D - fo ? out((x - (D - fo)) / fo) : 1);
+      const len = Math.max(0.02, D - offset);
+      const n = Math.max(2, Math.min(8000, Math.ceil(len * 60)));
+      const curve = new Float32Array(n);
+      for (let k = 0; k < n; k++) curve[k] = gAt(offset + (len * k) / (n - 1));
+      curve[n - 1] = 0;
+      g.gain.setValueAtTime(curve[0], when);
+      g.gain.setValueCurveAtTime(curve, when, len);
+      return;
+    }
     const fi = Math.max(0.005, w.fadeIn || 0.02);
     const fo = Math.max(0.05, Math.min(w.fadeOut || 1, D * 0.3));
     // Ausblenden nach dem Gehör: erst sanft, dann weich ins Leise (Kosinus statt gerader Linie, kein hörbares Abreißen)
@@ -1171,7 +1355,31 @@ class Engine {
       src.start(at(st), bufOff, v.t1 - st + 0.02);
       list.push(src);
     }
+    // Geräusche der Einstiege (Rollladen, Projektor)
+    for (const fxs of this.plan.sfx || []) {
+      if (fxs.t + fxs.dur <= offset + 0.01) continue;
+      const key = `${ac.sampleRate}|${fxs.kind}|${fxs.dur.toFixed(3)}|${fxs.v || 0}`;
+      this._sfxData = this._sfxData || new Map();
+      let data = this._sfxData.get(key);
+      if (!data) { data = synthSfx(ac.sampleRate, fxs.kind, fxs.dur, fxs.v || 0); this._sfxData.set(key, data); }
+      const buf = ac.createBuffer(1, data.length, ac.sampleRate);
+      buf.copyToChannel(data, 0);
+      const src = ac.createBufferSource();
+      src.buffer = buf;
+      const g = ac.createGain();
+      g.gain.value = fxs.gain != null ? fxs.gain : 1;
+      src.connect(g);
+      for (const o of outs) g.connect(o);
+      const st = Math.max(fxs.t, offset);
+      src.start(when + (st - offset), st - fxs.t);
+      list.push(src);
+    }
     return list;
+  }
+
+  /** Hat der Film eigene Geräusche (z. B. Rollladen-Einstieg)? */
+  get hasSfx() {
+    return !!(this.plan && this.plan.sfx && this.plan.sfx.length);
   }
 
   clock() {
