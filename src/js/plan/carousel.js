@@ -121,9 +121,58 @@ function carouselClipPlan(slide, { an, media, settings, corr, look }) {
   const sub = media.map((m) => (ids.has(m.id) ? { ...m, excluded: false } : { ...m, excluded: true }));
   const s = { ...settings, format: '4:5', length: slide.len, songStart: slide.start, intro: 'hook', outro: 'loop', pre: 'off', allMedia: 'on', showTitle: false, showChapters: false, showStats: false, midGrid: 'off', midCount: 'off', look: look || settings.look };
   const plan = buildPlan({ an, media: sub, settings: s, overrides: { texts: [], stickers: [] } });
+  // Clip-Slides sind kurz und gehören nur ihren Aufnahmen: jede Aufnahme bekommt genau einen Platz, der Clip ist
+  // lückenlos gefüllt (ein Video läuft durch, Fotos teilen sich den Clip auf den Schlägen)
+  carouselFill(plan, slide, media);
   for (const c of plan.clips) { const m = media[c.mediaIndex]; if (m && corr && corr.get(m.id)) c.corr = corr.get(m.id); }
   plan.overlays = plan.overlays.filter((o) => o.type === 'sticker');
   return plan;
+}
+
+/**
+ * Lückenlose Clip-Slide: n Aufnahmen teilen sich die Dauer gleichmäßig, Schnitte auf dem nächsten Schlag.
+ * Ein Video läuft im normalen Tempo durch, sein bester Moment liegt in der Mitte (ist es zu kurz, wird es sanft
+ * langsamer, höchstens auf die Hälfte, und bleibt am Ende stehen). Fotos behalten ihre geplante Kamerafahrt.
+ */
+function carouselFill(plan, slide, media) {
+  const D = plan.duration, n = slide.ids.length;
+  const byId = new Map(media.map((m) => [m.id, m]));
+  const own = plan.clips.filter((c) => !c.loop && media[c.mediaIndex] && slide.ids.includes(media[c.mediaIndex].id));
+  const bts = (plan.beats || []).filter((t) => t > 0.3 && t < D - 0.3);
+  const cuts = [0];
+  for (let k = 1; k < n; k++) {
+    const want = (D * k) / n;
+    const cand = bts.filter((t) => t > cuts[k - 1] + 0.45 && t < D - 0.45 * (n - k));
+    cuts.push(cand.length ? cand.reduce((a, t) => (Math.abs(t - want) < Math.abs(a - want) ? t : a)) : want);
+  }
+  cuts.push(D);
+  const tpl = own[0] || plan.clips[0];
+  const hadSound = new Set((plan.voice || []).map((v) => v.mediaId));
+  const voice = [];
+  plan.clips = slide.ids.map((id, k) => {
+    const m = byId.get(id);
+    const a = cuts[k], z = cuts[k + 1], len = z - a;
+    const prev = own.find((c) => media[c.mediaIndex] === m);
+    const c = { ...tpl, ...(prev || {}), i: k, start: a, end: z, visStart: a, visEnd: z, mediaIndex: media.indexOf(m), mediaId: id, tin: null, tout: null, loop: false, split: null, grid: null, freezeAt: undefined, role: k === 0 ? 'hook' : 'normal' };
+    delete c.rp; delete c.echo; delete c.layer;
+    if (m.kind === 'video') {
+      const dur = m.duration || len;
+      const rate = dur >= len ? 1 : Math.max(0.5, dur / len);
+      const hl = (m.highlights || []).map((h) => h.t);
+      const center = hl.length ? hl[0] : dur * 0.4;
+      c.rate = rate;
+      c.srcOffset = Math.max(0, Math.min(center - (len * rate) / 2, Math.max(0, dur - len * rate)));
+      if (dur - c.srcOffset < len * rate - 0.02) c.freezeAt = a + (dur - c.srcOffset) / rate - 0.04;
+      c.vid = id;
+      if (!prev || !prev.motion) c.motion = { from: { s: 1, x: 0, y: 0 }, to: { s: 1.04, x: 0, y: 0 } };
+      if (hadSound.has(id)) voice.push({ mediaIndex: media.indexOf(m), mediaId: id, t0: a, t1: c.freezeAt != null ? c.freezeAt : z, src: c.srcOffset, gain: m.sound });
+    } else {
+      c.rate = 1; c.srcOffset = 0; c.vid = null;
+      if (!prev || !prev.motion) c.motion = { from: { s: 1.02, x: 0, y: 0 }, to: { s: 1.08, x: 0, y: 0 } };
+    }
+    return c;
+  });
+  plan.voice = voice;
 }
 
 /** Plan einer Foto-Slide: das Foto allein, ruhiger Ausschnitt (Mitte der geplanten Kamerafahrt, Drittel-Regel). */

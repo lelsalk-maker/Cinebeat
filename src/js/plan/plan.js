@@ -398,6 +398,44 @@ function planOnce(opts) {
       const r2 = layoutChrono(chronoCtx, segs, queue, res.dropped.length * (k + 1));
       if (r2.dropped.length < res.dropped.length) res = r2;
     }
+    // Passt trotz Verdichten nicht alles hinein, fielen bisher schlicht die letzten weg. Jetzt bleibt der Aufbau des Films
+    // (Schnitte, Split-Screens, Tempo) genau so, nur die Aufnahmen tauschen ihre Plätze: eine stärkere, draußen
+    // gebliebene übernimmt den Platz der schwächsten aus demselben Tagesabschnitt; Favoriten und das Startbild sind
+    // „sicher im Film“ und bekommen notfalls einen Platz aus einem anderen Abschnitt (den zeitlich nächsten).
+    if (res.dropped.length) {
+      const keepS = (m) => (m.score || 0) + (s.us !== 'off' ? 0.15 * usScore(m) : 0) + (m.fav ? 10 : 0);
+      const strict = s.order === 'streng';
+      const slots = [];
+      for (const g of res.segs) {
+        if (special(g) && !g.burst) continue;
+        if (g.splitIds) g.splitIds.forEach((id, k) => slots.push({ g, k }));
+        else if (g.mediaId && !g.vslot && !g.repeat) slots.push({ g, k: -1 });
+      }
+      const idAt = (sl) => (sl.k < 0 ? sl.g.mediaId : sl.g.splitIds[sl.k]);
+      const byQ = new Map(queue.map((m) => [m.id, m]));
+      const out = res.dropped.filter((m) => m.kind === 'image').sort((a, b) => keepS(b) - keepS(a));
+      const nowOut = [];
+      for (const d of out) {
+        const must = d.fav || d === hk;
+        const fits = (sl) => {
+          const w = byQ.get(idAt(sl));
+          if (!w || w.kind !== 'image' || w.fav || w === hk || keepS(w) >= keepS(d) - 0.02) return false;
+          if (sl.g.splitIds && splitFit(w) !== splitFit(d)) return false;
+          if (strict) return Math.abs((w.time || 0) - (d.time || 0)) <= 3 * 60000;
+          return must || dayBlock(w) === dayBlock(d);
+        };
+        const cand = slots.filter(fits);
+        if (!cand.length) { nowOut.push(d); continue; }
+        // die schwächste; bei Favoriten ohne Platz im eigenen Abschnitt die zeitlich nächste
+        const same = cand.filter((sl) => dayBlock(byQ.get(idAt(sl))) === dayBlock(d));
+        const pool = same.length ? same : cand.sort((x, y) => Math.abs((byQ.get(idAt(x)).time || 0) - (d.time || 0)) - Math.abs((byQ.get(idAt(y)).time || 0) - (d.time || 0))).slice(0, 3);
+        const sl = pool.reduce((a2, x) => (keepS(byQ.get(idAt(x))) < keepS(byQ.get(idAt(a2))) ? x : a2));
+        const w = byQ.get(idAt(sl));
+        if (sl.k < 0) sl.g.mediaId = d.id; else sl.g.splitIds[sl.k] = d.id;
+        nowOut.push(w);
+      }
+      res = { ...res, dropped: [...nowOut, ...res.dropped.filter((m) => m.kind !== 'image')] };
+    }
     // „Beste Auswahl“: passt nicht alles, fallen die schwächsten Aufnahmen weg (nie das Startbild oder Favoriten)
     for (let k = 0; k < 3 && !allOn && res.dropped.length; k++) {
       // Wir-Vorrang: Aufnahmen von euch fallen zuletzt weg
@@ -808,7 +846,7 @@ function planOnce(opts) {
   const userMoved = new Set((overrides.moves || []).flatMap((x) => [x.id, x.before]).filter(Boolean));
   const nUs = usOn ? clips.filter((c) => isUs(byId.get(c.mediaId))).length : 0;
   if (byTime) {
-    const ar = arrangeBlocks(clips, { byId, ov, moved: userMoved, us: usOn, aspect: outAspect });
+    const ar = arrangeBlocks(clips, { byId, ov, moved: userMoved, us: usOn, aspect: outAspect, vary: s.recut ? ((s.seed >>> 0) ^ (s.recut * 2654435761)) >>> 0 : 0 });
     // weiche Szenenübergänge bleiben auf ihren Taktanfängen (musikalische Stelle, nicht die Aufnahme)
     if (ar.moved) {
       dir.notes.push(`Reihenfolge nach Tageszeit: in ${ar.blocks} ${ar.blocks === 1 ? 'Tagesblock' : 'Tagesblöcken'} (Morgen & Mittag bzw. Nachmittag & Abend) ${ar.moved} Aufnahmen so gesetzt, dass${usOn && nUs ? ' ihr die ruhigen Passagen tragt, Natur und Dinge die schnellen,' : ''} Totalen und starke Bilder lange Plätze bekommen, die Bildenergie zur Songstelle passt und nie zwei ähnliche Bilder aufeinander folgen. Die Tage bleiben in ihrer Reihenfolge.`);

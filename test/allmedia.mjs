@@ -86,6 +86,29 @@ const res = await p.evaluate(async (b64) => {
   // feste, sehr kurze Länge: so viel wie sinnvoll geht, der Rest wird benannt
   const p30 = check('story 30 s', trip, { target: 'story', length: 30 }, false);
   const miss30 = p30.capacity.droppedIds.length;
+  // Auswahl selbst bestimmen: draußen gebliebene als Favorit markiert kommen sicher hinein, dafür weichen schwächere
+  if (miss30) {
+    const byIdT = new Map(trip.map((m) => [m.id, m]));
+    const want = p30.capacity.droppedIds.slice(0, 3).filter((id) => byIdT.get(id).kind === 'image');
+    const trip2 = trip.map((m) => (want.includes(m.id) ? { ...m, fav: true } : m));
+    const p30f = plan(trip2, { target: 'story', length: 30 });
+    const still = want.filter((id) => p30f.capacity.droppedIds.includes(id));
+    if (still.length) fails.push(`Favoriten trotzdem draußen: ${still.join(',')}`);
+    // weichen muss, was schwach ist: nichts Draußengebliebenes ist stärker als das Schwächste im Film (ohne Favoriten)
+    const used = trip2.filter((m) => m.kind === 'image' && !p30f.capacity.droppedIds.includes(m.id) && !m.fav);
+    const outs = trip2.filter((m) => m.kind === 'image' && p30f.capacity.droppedIds.includes(m.id));
+    const weakestIn = Math.min(...used.map((m) => m.score || 0)), strongestOut = Math.max(...outs.map((m) => m.score || 0), -1);
+    out.pick30 = { dropped: p30f.capacity.droppedIds.length, weakestIn: +weakestIn.toFixed(3), strongestOut: +strongestOut.toFixed(3) };
+    // je Tagesabschnitt: nichts Draußengebliebenes ist deutlich stärker als das Schwächste im Film
+    for (const blk of new Set(trip2.map(dayBlock))) {
+      const inB = used.filter((m) => dayBlock(m) === blk), outB = outs.filter((m) => dayBlock(m) === blk);
+      if (!inB.length || !outB.length) continue;
+      // (Wir-Vorrang: Aufnahmen von euch zählen etwas mehr, wie in der Regie)
+      const kp = (m) => (m.score || 0) + 0.15 * usScore(m);
+      const wi = Math.min(...inB.map(kp)), so = Math.max(...outB.map(kp));
+      if (so > wi + 0.03) fails.push(`Tagesabschnitt ${blk}: stärkere Aufnahme (${so.toFixed(2)}) draußen, schwächere (${wi.toFixed(2)}) im Film`);
+    }
+  }
   if (miss30 > 8 || (miss30 && !p30.notes.some((n) => /passen nicht mehr/.test(n)))) fails.push('story 30 s: zu viel weggelassen oder nicht benannt');
   for (const intro of ['reveal', 'grid', 'countdown', 'rush', 'knockout', 'split', 'city']) check('intro ' + intro, trip, { target: 'reel', intro, title: 'Big Sur' });
   // viele Fotos in einer Story: verdichtet, aber vollständig

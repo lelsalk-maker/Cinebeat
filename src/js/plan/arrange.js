@@ -4,6 +4,13 @@
  * ruhigen Passagen, Natur und Dinge in die schnellen, Totalen und starke Bilder auf die langen Plätze, Bildenergie
  * passend zur Songstelle, nie zwei ähnliche Bilder nebeneinander. */
 
+/** Fester Zahlenwert einer Aufnahme-Kennung (für reproduzierbare Varianten). */
+function hashId(id) {
+  let h = 2166136261;
+  for (let i = 0; i < String(id).length; i++) h = Math.imul(h ^ String(id).charCodeAt(i), 16777619);
+  return h >>> 0;
+}
+
 /** Tagesblock einer Aufnahme ('2026-4-3-0' = 3. Mai, Morgen & Mittag) oder null ohne Zeit. */
 function dayBlock(m) {
   if (!m || !m.time) return null;
@@ -19,7 +26,7 @@ const SLOT_ENERGY = { drop: 1, chorus: 0.9, build: 0.65, verse: 0.4, intro: 0.3,
  * Fest bleiben: Videos, eigene Entscheidungen, verschobene Aufnahmen, Startbild, Stil-Mittel und Bilder, auf die sich
  * Rückspulen, Wiederholung oder Echo beziehen. Liefert { moved, blocks } für die Erklärung.
  */
-function arrangeBlocks(clips, { byId, ov = {}, moved: userMoved = new Set(), us = true, aspect = 0 }) {
+function arrangeBlocks(clips, { byId, ov = {}, moved: userMoved = new Set(), us = true, aspect = 0, vary = 0 }) {
   const special = (c) => c.split || c.grid || c.burst || c.rush || c.stack || c.strip || c.miniRew || c.pre || c.reveal || c.leader || c.flightAnim || c.loop || c.vid || c.gridMid || c.afterGrid || c.replay || c.replaySeg || c.repeatSeg || c.echo;
   // eigenes Motiv bleibt; „Gefällt mir nicht“ ändert nur die Bewegung und wird mitgeordnet
   const own = (c) => { const o = ov[c.i]; return !!(o && o.mediaId); };
@@ -50,6 +57,9 @@ function arrangeBlocks(clips, { byId, ov = {}, moved: userMoved = new Set(), us 
     if (c.sectionChange && (c.label === 'drop' || c.label === 'chorus')) v += ((m.score || 0.5) - meanScore) * 1.5;
     // bei Gleichstand die Aufnahmezeit: sanfter Zug zur ursprünglichen Reihenfolge
     v -= 0.15 * Math.abs(rank - pos) / Math.max(1, n);
+    // „Neu schneiden“: eine feste, je Schnitt andere Vorliebe (Aufnahme × Platz) – so entsteht eine neue Anordnung,
+    // die Regeln (Wir ruhig, starke Bilder lang, Energie zur Songstelle) wiegen weiter schwerer
+    if (vary) { let h = (vary ^ Math.imul(hashId(m.id), 2654435761) ^ Math.imul(c.i + 1, 40503)) >>> 0; h = Math.imul(h ^ (h >>> 15), 2246822519) >>> 0; v += ((h >>> 8) / 16777216 - 0.5) * 0.7; }
     return v;
   };
   // Zwischenspeicher: die Suche prüft viele Tausche, Bildvergleiche nur einmal rechnen
@@ -91,7 +101,8 @@ function arrangeBlocks(clips, { byId, ov = {}, moved: userMoved = new Set(), us 
   for (const c of clips) { if (c.chapter) ci++; chap.push(ci); }
   const groups = new Map();
   for (const k of idx) {
-    const d = dayBlock(img(clips[k].mediaId));
+    // (ohne Aufnahmezeit gibt es keine Chronologie – beim Neuschneiden dürfen sie als eine Gruppe neu angeordnet werden)
+    const d = dayBlock(img(clips[k].mediaId)) ?? (vary ? 'ohne-Zeit' : null);
     if (d == null) continue;
     const b = d + '|' + chap[k];
     if (!groups.has(b)) groups.set(b, []);

@@ -123,6 +123,17 @@ function planQuality(plan, media, detail) {
  * Sucht den besten Schnitt: mehrere vollständige Varianten (je eigene Zufallsfolge: Bewegung, Übergänge, Stilmittel)
  * werden geplant und bewertet; die beste gewinnt. Gibt { plan, seed, score, tried } zurück.
  */
+/** Wie ähnlich sind zwei Schnitte (0–1)? Gleiche Aufnahme am gleichen Platz und gleiche Schnittstellen. */
+function cutSimilarity(a, b) {
+  const seqA = a.clips.filter((c) => !c.loop).map((c) => c.mediaId || (c.split && c.split.ids.join('+')) || '');
+  const seqB = b.clips.filter((c) => !c.loop).map((c) => c.mediaId || (c.split && c.split.ids.join('+')) || '');
+  let same = 0;
+  for (let k = 0; k < Math.min(seqA.length, seqB.length); k++) if (seqA[k] === seqB[k]) same++;
+  const cutsB = b.clips.map((c) => c.start);
+  const cutSame = a.clips.filter((c) => cutsB.some((t) => Math.abs(t - c.start) < 0.03)).length / Math.max(1, a.clips.length);
+  return 0.65 * (same / Math.max(1, seqA.length, seqB.length)) + 0.35 * cutSame;
+}
+
 async function bestCut(opts, n = 8, onProgress) {
   const s0 = opts.settings.seed >>> 0;
   const seeds = [s0];
@@ -133,7 +144,9 @@ async function bestCut(opts, n = 8, onProgress) {
     const plan = buildPlan({ ...opts, settings: { ...opts.settings, seed: seeds[k] } });
     // harte Regeln gegen den Song (Schlag, Drop, Mindestzeiten, Reihenfolge): jede Unstimmigkeit kostet deutlich
     const audit = opts.an ? planAudit(plan, opts.media, opts.an) : [];
-    const score = planQuality(plan, opts.media) - audit.length * 4;
+    // „Neu schneiden“: eine Variante, die fast wie der bisherige Schnitt aussieht, zählt deutlich weniger
+    const same = opts.avoid ? cutSimilarity(plan, opts.avoid) : 0;
+    const score = planQuality(plan, opts.media) - audit.length * 4 - (same > 0.7 ? 30 * (same - 0.7) / 0.3 + 10 : 0);
     tried.push({ seed: seeds[k], score, audit: audit.length });
     // bei Gleichstand bleibt die bisherige Variante (die aktuelle zuerst)
     if (!best || score > best.score + 1e-6) { best = { plan, seed: seeds[k], score, audit }; stale = 0; } else stale++;
