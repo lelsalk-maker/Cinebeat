@@ -140,6 +140,11 @@ textarea.text-in { resize: vertical; min-height: 70px; }
 @media (min-width: 960px) {
   .monitor { width: min(100%, calc(72vh * var(--arw) / var(--arh))); width: min(100%, calc(72svh * var(--arw) / var(--arh))); }
 }
+/* Song-Ablauf: die Bühne nimmt die volle Breite und so viel Höhe wie der Inhalt braucht */
+.stage.flowing .transport, .stage.flowing .stage-tools { display: none; }
+.monitor.flow { aspect-ratio: auto; width: 100%; min-height: 0; }
+.monitor.flow .flow-stage { position: relative; inset: auto; overflow: visible; }
+.monitor.flow canvas#screen, .monitor.flow .hud, .monitor.flow .bigplay, .monitor.flow .sample-chip { display: none; }
 .monitor.dragging { cursor: grabbing; }
 .monitor.text-mode { touch-action: none; }
 .monitor canvas#screen { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }

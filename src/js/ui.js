@@ -1237,6 +1237,8 @@ async function rebuild(opts = {}) {
   // Song zuerst: solange der Song nicht feststeht, wird nichts geschnitten – die Bühne zeigt die Schritte
   if (flowPending(ctx)) { showFlow(media); return; }
   $('flowStage').hidden = true;
+  $('monitor').classList.remove('flow');
+  $('monitor').parentElement.classList.remove('flowing');
   $('regie').hidden = false;
   let plan;
   try {
@@ -1313,6 +1315,8 @@ function showFlow(media) {
   if (S.tab === 'material') renderMaterial();
   if (S.tab === 'music') renderMusic();
   busy(null);
+  $('monitor').classList.toggle('flow', !empty);
+  $('monitor').parentElement.classList.toggle('flowing', !empty);
   if (empty) { stage.hidden = true; return; }
   const nI = media.filter((m) => m.kind === 'image').length, nV = media.length - nI;
   const matLine = `${nI} ${nI === 1 ? 'Foto' : 'Fotos'}${nV ? ` und ${nV} ${nV === 1 ? 'Video' : 'Videos'}` : ''}`;
