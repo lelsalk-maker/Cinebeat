@@ -31,6 +31,7 @@ beat-synchrone Filme macht. Läuft komplett auf dem Gerät (iPhone ist Hauptziel
 | `plan/cutter.js` | `cutterPolish`: Standzeit nach Bildinhalt (Schnitte ±1–2 Beats auf starken Zählzeiten), Höhepunkt-/Schlussbild |
 | `plan/vsync.js` | Videoschnitt auf den Takt: `hitGrid` (Eins/Snare/Bassdrum/Beats), `syncVideoOffset` legt Aktionsmomente (`m.hits`) aufs Raster |
 | `plan/advice.js` | Song zuerst: `idealLength`, `songAdvice` (ideale Menge per Testschnitt), `planQuality` (Bewertung), `bestCut` (beste von n Varianten, abzüglich Unstimmigkeiten), `planAudit` (harte Regeln gegen den Song: Schlag, Drop, Mindestzeiten, Länge, Reihenfolge, nichts fehlt), `hookScore` (Stopp-Wert der ersten 1,5 s), `improveHook` |
+| `plan/carousel.js` | Karussell-Beitrag (4:5): `planCarousel` (6–10 Slides: stärkstes Foto vorn, danach chronologisch; beste Fotos einzeln je Tagesblock, dazwischen 3–6-s-Clips aus Videos oder Foto-Sequenzen, Song läuft von Clip zu Clip weiter, gemeinsamer `colorMatch`), `carouselClipPlan`/`carouselPhotoPlan`; Engine: `renderPlanFrame`, `exportPlan`; UI: `runCarousel` |
 | `director.js` | Auto-Regie: Varianten (`VARIANTS`), Musikvideo (`withMusicVideo`), Aussortieren (`autoOut`), Länge, Songausschnitt, Tempo, Look, Einstieg/Ende, Stil-Budget (`rs.*`) |
 | `perflog.js` | Leistungsprotokoll (`perfLog.add`, lokal, 40 Einträge) und Wärmeschutz beim Export (`HeatGuard`) |
 | `scoreworker.js` | Worker fürs Einlesen (mit `score.js` von `build.mjs` als `SCORE_WORKER_SRC` eingebettet, Blob-Worker) |

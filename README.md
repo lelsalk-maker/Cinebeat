@@ -96,6 +96,8 @@ Reisefilme im Kino-Look, geschnitten nach dem Aufbau deines Songs: für Instagra
 - **Karten-Moment** (Gesamtfilm): Bei jeder Etappe ab 20 km zeichnet eine kleine Karte oben rechts die Strecke vom letzten zum neuen Ort, mit Kilometern; die ganze Route ist fein gepunktet zu sehen.
 - **Nichts ist fest**: Titel, Kapitel und Reise-Statistik lassen sich einzeln ausschalten; Koordinaten und Kilometer sind standardmäßig aus.
 
+**Karussell-Beitrag** (Format Beitrag 4:5, Export → „Als Karussell“): die besten Fotos als Einzelbilder (JPEG), dazwischen kurze Clips (3–6 s, ganze Takte) aus euren Videos oder kleinen Foto-Sequenzen, geschnitten im Takt und mit dem Song, der von Clip zu Clip weiterläuft. Automatisch 6–10 Slides: vorn euer stärkstes Foto, danach chronologisch nach Tagesblöcken, nie zwei ähnliche Bilder, nie zwei Clips nebeneinander. Alle Slides teilen Look, Farbabgleich und Ausschnitt-Regeln; Dateien sind in Slide-Reihenfolge nummeriert und lassen sich gemeinsam in Fotos sichern.
+
 ## Musik und Instagram
 
 - **Datei** (MP3, M4A, WAV): wird lokal analysiert (Takt, Refrain, Drop, Pausen).

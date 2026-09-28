@@ -3154,7 +3154,8 @@ function openExportSheet() {
   let fps = prefs.fps === 60 ? 60 : 30;
   let audio = prefs.audio === 'with' && !micSong ? 'with' : 'without';
   let quality = QUALITY[prefs.quality] && prefs.quality !== '4k' ? prefs.quality : 'max';
-  const sizeOf = () => outputSize(st.format, QUALITY[quality].size);
+  // (Tests rechnen mit kleiner Auflösung: S.sizeOverride)
+  const sizeOf = () => S.sizeOverride || outputSize(st.format, QUALITY[quality].size);
   const body = openSheet(`
     <h3 id="sheetTitle">Film exportieren</h3>
     <p class="hint" id="expInfo"></p>
@@ -3165,6 +3166,7 @@ function openExportSheet() {
       <p class="hint small" id="audHint"></p></div>
     <button class="btn primary big" id="startExport" type="button"><i class="rec-dot" aria-hidden="true"></i>Export starten</button>
     <button class="btn ghost" id="coverExport" type="button">Titelbild für Reels erstellen</button>
+    ${st.format === '4:5' ? '<button class="btn primary-outline" id="carouselExport" type="button">Als Karussell: beste Fotos + Clips im Takt</button><p class="hint small" id="carHint">Die besten Fotos einzeln, dazwischen kurze Clips (3–6 s) im Takt mit dem Song, der von Clip zu Clip weiterläuft. Gleicher Look, gleicher Farbabgleich, 4:5.</p>' : ''}
     <div class="progress" id="expProgress" hidden>
       <div class="progress-bar"><span id="expBar"></span></div>
       <div class="progress-meta"><span id="expStage">Bereite vor …</span><span id="expPct">0 %</span></div>
@@ -3204,6 +3206,7 @@ function openExportSheet() {
     }
     if (e.target.closest('#cancelExport')) cancel = true;
     if (e.target.closest('#coverExport')) await makeCover(body, sizeOf());
+    if (e.target.closest('#carouselExport')) await runCarousel(body, { size: sizeOf(), fps, bpp: QUALITY[quality].bpp, withSong: !micSong, isCancelled: () => cancel });
     if (e.target.closest('#startExport')) {
       try { localStorage.setItem('cinebeat.export', JSON.stringify({ fps, audio, quality })); } catch (err) { /* egal */ }
       await runExport(body, { size: sizeOf(), fps, bpp: QUALITY[quality].bpp, withSong: audio === 'with', withAudio: audio === 'with' || engine.hasVoice, isCancelled: () => cancel });
@@ -3341,6 +3344,96 @@ function igHelp() {
 }
 
 /** Reel-Titelbild: stärkstes Bild mit Titel, als JPEG in Exportgröße (bleibt auf dem Gerät). */
+/** Karussell-Beitrag: Slides planen, Fotos als JPEG und Clips als MP4 (4:5) in Slide-Reihenfolge erzeugen. */
+async function runCarousel(body, { size, fps, bpp, withSong, isCancelled }) {
+  const media = engine.media, an = S.ctx.song.an, st = S.ctx.rec.settings;
+  const settings = { ...st, format: '4:5' };
+  const car = planCarousel({ an, media, settings });
+  if (!car.slides.length) { toast('Für ein Karussell fehlen Aufnahmen.', true); return; }
+  const opts = { an, media, settings, corr: car.corr, look: S.plan.resolved.look };
+  engine.ensureAudio();
+  S.exporting = true;
+  $('sheetBackdrop').onclick = null;
+  for (const el of body.querySelectorAll('.field, #startExport, #coverExport, #carouselExport, #carHint')) el.hidden = true;
+  const prog = body.querySelector('#expProgress');
+  prog.hidden = false;
+  const bar = body.querySelector('#expBar'), pct = body.querySelector('#expPct'), stage = body.querySelector('#expStage');
+  const setP = (p) => { bar.style.width = Math.round(p * 100) + '%'; pct.textContent = Math.round(p * 100) + ' %'; };
+  let wake = null;
+  try { if (navigator.wakeLock) wake = await navigator.wakeLock.request('screen'); } catch (e) { wake = null; }
+  const base = `${(S.ctx.kind === 'bestof' ? S.trip.name : S.ctx.rec.name || 'CineBeat').replace(/[^\p{L}\p{N} _-]/gu, '').trim().replace(/\s+/g, '_') || 'CineBeat'}_Karussell`;
+  const n = car.slides.length, files = [];
+  const t0 = performance.now();
+  try {
+    for (let k = 0; k < n && !isCancelled(); k++) {
+      const sl = car.slides[k], num = String(k + 1).padStart(2, '0');
+      stage.textContent = `Slide ${k + 1} von ${n}: ${sl.kind === 'photo' ? 'Foto' : 'Clip im Takt'} …`;
+      if (sl.kind === 'photo') {
+        const plan = carouselPhotoPlan(sl, opts);
+        const cv = await engine.renderPlanFrame(plan, plan.stillAt, size);
+        const blob = await new Promise((r) => cv.toBlob(r, 'image/jpeg', 0.95));
+        files.push(new File([blob], `${base}_${num}.jpg`, { type: 'image/jpeg' }));
+      } else {
+        const plan = carouselClipPlan(sl, opts);
+        const withAudio = withSong || !!(plan.voice && plan.voice.length);
+        const support = await Engine.exportSupport(size, fps, withAudio, bpp);
+        if (!support.video || (withAudio && !support.audio)) throw new Error('Dieses Gerät kann hier kein Video Bild für Bild erzeugen.');
+        const res = await engine.exportPlan(plan, { size, fps, withAudio, withSong, support, isCancelled, onProgress: (p) => setP((k + p) / n) });
+        if (!res) break;
+        files.push(new File([res.blob], `${base}_${num}.${res.ext}`, { type: res.type }));
+      }
+      setP((k + 1) / n);
+    }
+  } catch (e) {
+    console.error(e);
+    toast('Karussell fehlgeschlagen: ' + (e && e.message ? e.message : 'unbekannter Fehler'), true);
+  } finally {
+    try { if (wake) await wake.release(); } catch (e) { /* ignore */ }
+    S.exporting = false;
+    prog.hidden = true;
+  }
+  perfLog.add('plan', { what: 'Karussell erstellen', ms: Math.round(performance.now() - t0), slides: n });
+  await rebuild();
+  if (files.length < n) {
+    for (const el of body.querySelectorAll('.field, #startExport, #coverExport, #carouselExport, #carHint')) el.hidden = false;
+    if (isCancelled()) toast('Karussell abgebrochen.');
+    return;
+  }
+  showCarouselResult(body, files, car);
+}
+
+function showCarouselResult(body, files, car) {
+  const urls = files.map((f) => URL.createObjectURL(f));
+  const box = body.querySelector('#expResult');
+  box.hidden = false;
+  const canShare = (() => { try { return !!(navigator.canShare && navigator.canShare({ files })); } catch (e) { return false; } })();
+  const total = files.reduce((a, f) => a + f.size, 0);
+  box.innerHTML = `
+    <ol class="car-grid">${files.map((f, i) => `<li><span>${i + 1}</span>${f.type.startsWith('video') ? `<video src="${urls[i]}" muted loop playsinline autoplay></video>` : `<img src="${urls[i]}" alt="Slide ${i + 1}">`}</li>`).join('')}</ol>
+    <p class="hint small">${files.length} Slides · 4:5 · ${fmtBytes(total)}. ${esc(car.notes[0] || '')}</p>
+    <div class="sheet-actions">
+      ${canShare ? '<button class="btn primary big" data-car="share" type="button">Alle in Fotos sichern oder teilen</button>' : ''}
+      <button class="btn ${canShare ? '' : 'primary big'}" data-car="save" type="button">Als Dateien laden</button>
+    </div>
+    <div class="note"><ol class="steps">
+      <li>Alle Slides sichern (Reihenfolge = Dateinummer).</li>
+      <li>In Instagram <b>Beitrag</b> → mehrere auswählen → Slides in dieser Reihenfolge antippen.</li>
+      <li>Die Clips bringen den Song schon mit. Wer ihn lizenziert über Instagram will: Musik hinzufügen und nach <b>${esc(S.ctx.song.name)}</b> suchen.</li>
+    </ol></div>
+    <button class="btn ghost" data-car="close" type="button">Fertig</button>`;
+  box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  box.addEventListener('click', async (e) => {
+    const a = e.target.closest('[data-car]');
+    if (!a) return;
+    if (a.dataset.car === 'close') { closeSheet(); urls.forEach((u) => URL.revokeObjectURL(u)); }
+    if (a.dataset.car === 'share') {
+      try { await navigator.share({ files, title: files[0].name }); } catch (err) { if (err && err.name !== 'AbortError') toast('Teilen nicht möglich. Lade die Dateien stattdessen.', true); }
+    }
+    if (a.dataset.car === 'save') for (let i = 0; i < files.length; i++) { await saveBlob(files[i], files[i].name, urls[i]); await new Promise((r) => setTimeout(r, 350)); }
+  });
+  toast('Dein Karussell ist fertig.');
+}
+
 async function makeCover(body, size) {
   const btn = body.querySelector('#coverExport');
   btn.disabled = true;

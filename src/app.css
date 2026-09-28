@@ -506,3 +506,9 @@ body.comparing .mini, body.comparing .mini-bar { display: none !important; }
 .hook-parts li.mid { --c: var(--tungsten); }
 .hook-parts li.low { --c: var(--danger); }
 .hook-parts small { grid-column: 1 / -1; color: var(--muted); font-size: 12px; line-height: 1.4; }
+/* Karussell */
+.car-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(74px, 1fr)); gap: 6px; }
+.car-grid li { position: relative; aspect-ratio: 4 / 5; border-radius: 8px; overflow: hidden; background: var(--navy-2); border: 1px solid var(--line); }
+.car-grid img, .car-grid video { width: 100%; height: 100%; object-fit: cover; display: block; max-width: 100%; }
+.car-grid span { position: absolute; left: 4px; top: 4px; min-width: 18px; padding: 2px 4px; border-radius: 5px; font: 600 10px/1 var(--f-mono); text-align: center; background: rgba(5, 6, 8, 0.78); color: var(--beige); z-index: 1; }
+#carouselExport { width: 100%; }

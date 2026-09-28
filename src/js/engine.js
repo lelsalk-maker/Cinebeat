@@ -1325,6 +1325,45 @@ class Engine {
     }
   }
 
+  /** Karussell: Standbild eines eigenen Plans (Foto-Slide) als Leinwand; danach gilt wieder der Film. */
+  async renderPlanFrame(plan, t, size) {
+    this.pause();
+    const prev = this.plan, prevSize = this.size, prevT = this.t;
+    this.plan = plan;
+    this.exporting = true;
+    try {
+      this.r.resize(size.w, size.h); this.painter.resize(size.w, size.h); this.size = size;
+      this.releaseAll();
+      await this.renderStill(t);
+      this.drawAt(t, 'still');
+      const out = document.createElement('canvas');
+      out.width = size.w; out.height = size.h;
+      out.getContext('2d').drawImage(this.canvas, 0, 0);
+      return out;
+    } finally {
+      this.plan = prev;
+      this.exporting = false;
+      this.size = prevSize;
+      this.r.resize(prevSize.w, prevSize.h); this.painter.resize(prevSize.w, prevSize.h);
+      this.releaseAll();
+      this.t = prevT;
+    }
+  }
+
+  /** Karussell: einen eigenen Plan (Clip-Slide) Bild für Bild exportieren; danach gilt wieder der Film. */
+  async exportPlan(plan, opts) {
+    const prev = this.plan, prevSize = this.size, prevT = this.t;
+    this.plan = plan;
+    this.t = 0;
+    try { return await this.exportOffline(opts); } finally {
+      this.plan = prev;
+      this.size = prevSize;
+      this.r.resize(prevSize.w, prevSize.h); this.painter.resize(prevSize.w, prevSize.h);
+      this.releaseAll();
+      this.t = prevT;
+    }
+  }
+
   /* ---------- Offline-Export (Bild für Bild) ---------- */
   async _prepareExact(t, fps) {
     const needed = this.ensureWindow(t, 1.5);
