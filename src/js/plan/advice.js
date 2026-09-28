@@ -27,7 +27,16 @@ function idealLength(an, s) {
  * Empfehlung für den Song: ideale Länge und wie viele Fotos und Videos der Schnitt bei ruhigem, musikalischem Tempo trägt.
  * Die Zahl kommt aus einem echten Testschnitt der Regie (mit Platzhaltern), nicht aus einer Faustregel.
  */
+const ADVICE_CACHE = new WeakMap();
 function songAdvice(an, settings) {
+  // je Song und Ziel nur einmal rechnen (der Musik-Tab fragt oft)
+  const key = [settings.format, settings.target, settings.pace, settings.variant, settings.allMedia].join('|');
+  let byKey = ADVICE_CACHE.get(an);
+  if (!byKey) { byKey = new Map(); ADVICE_CACHE.set(an, byKey); }
+  if (!byKey.has(key)) byKey.set(key, songAdviceRaw(an, settings));
+  return byKey.get(key);
+}
+function songAdviceRaw(an, settings) {
   const s = { ...settings };
   const L = idealLength(an, s);
   const nV = Math.max(1, Math.min(4, Math.round(L / 16)));
@@ -118,16 +127,18 @@ async function bestCut(opts, n = 8, onProgress) {
   const s0 = opts.settings.seed >>> 0;
   const seeds = [s0];
   for (let k = 1; k < n; k++) seeds.push((Math.imul(s0 + k * 7919, 2654435761) >>> 0) % 1000000 + 1);
-  let best = null;
+  let best = null, stale = 0;
   const tried = [];
   for (let k = 0; k < seeds.length; k++) {
     const plan = buildPlan({ ...opts, settings: { ...opts.settings, seed: seeds[k] } });
     const score = planQuality(plan, opts.media);
     tried.push({ seed: seeds[k], score });
     // bei Gleichstand bleibt die bisherige Variante (die aktuelle zuerst)
-    if (!best || score > best.score + 1e-6) best = { plan, seed: seeds[k], score };
+    if (!best || score > best.score + 1e-6) { best = { plan, seed: seeds[k], score }; stale = 0; } else stale++;
     if (onProgress) onProgress(k + 1, seeds.length);
     await new Promise((r) => setTimeout(r, 0));
+    // bringen drei Varianten nacheinander nichts mehr, ist die beste gefunden (spart Rechenzeit auf dem Handy)
+    if (k >= 4 && stale >= 3) break;
   }
   return { ...best, tried };
 }

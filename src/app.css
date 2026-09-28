@@ -217,6 +217,14 @@ textarea.text-in { resize: vertical; min-height: 70px; }
 .regie-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .regie h2 { margin: 0; display: flex; align-items: center; gap: 8px; font-family: var(--f-display); font-size: 13px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--beige); }
 .regie h2 svg { width: 17px; height: 17px; }
+.decisions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.dec { display: grid; gap: 2px; align-content: start; min-height: 58px; padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(236, 234, 228, 0.1); background: rgba(5, 6, 8, 0.35); color: var(--text); text-align: left; cursor: pointer; transition: border-color 0.15s ease, background 0.15s ease; min-width: 0; }
+.dec:hover, .dec:focus-visible { border-color: rgba(228, 213, 183, 0.5); background: rgba(228, 213, 183, 0.06); }
+.dec span { font: 600 9.5px/1.2 var(--f-sans); letter-spacing: 0.12em; text-transform: uppercase; color: var(--beige-2); }
+.dec b { font-size: 14px; font-weight: 600; line-height: 1.2; overflow-wrap: anywhere; }
+.dec i { font-style: normal; font-size: 11px; color: var(--muted); line-height: 1.25; }
+.flash { animation: flashed 0.9s ease; border-radius: 12px; }
+@keyframes flashed { 0% { box-shadow: 0 0 0 0 rgba(228, 213, 183, 0); } 30% { box-shadow: 0 0 0 3px rgba(228, 213, 183, 0.55); } 100% { box-shadow: 0 0 0 0 rgba(228, 213, 183, 0); } }
 .regie-notes { margin: 0; padding: 0; list-style: none; display: grid; gap: 7px; }
 .regie-notes li { position: relative; padding-left: 16px; font-size: 13.5px; line-height: 1.45; color: #d6d9e0; }
 .regie-notes li::before { content: ""; position: absolute; left: 2px; top: 0.62em; width: 6px; height: 1px; background: var(--beige-2); }

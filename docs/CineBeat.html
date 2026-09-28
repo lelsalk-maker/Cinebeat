@@ -233,6 +233,14 @@ textarea.text-in { resize: vertical; min-height: 70px; }
 .regie-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .regie h2 { margin: 0; display: flex; align-items: center; gap: 8px; font-family: var(--f-display); font-size: 13px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--beige); }
 .regie h2 svg { width: 17px; height: 17px; }
+.decisions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.dec { display: grid; gap: 2px; align-content: start; min-height: 58px; padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(236, 234, 228, 0.1); background: rgba(5, 6, 8, 0.35); color: var(--text); text-align: left; cursor: pointer; transition: border-color 0.15s ease, background 0.15s ease; min-width: 0; }
+.dec:hover, .dec:focus-visible { border-color: rgba(228, 213, 183, 0.5); background: rgba(228, 213, 183, 0.06); }
+.dec span { font: 600 9.5px/1.2 var(--f-sans); letter-spacing: 0.12em; text-transform: uppercase; color: var(--beige-2); }
+.dec b { font-size: 14px; font-weight: 600; line-height: 1.2; overflow-wrap: anywhere; }
+.dec i { font-style: normal; font-size: 11px; color: var(--muted); line-height: 1.25; }
+.flash { animation: flashed 0.9s ease; border-radius: 12px; }
+@keyframes flashed { 0% { box-shadow: 0 0 0 0 rgba(228, 213, 183, 0); } 30% { box-shadow: 0 0 0 3px rgba(228, 213, 183, 0.55); } 100% { box-shadow: 0 0 0 0 rgba(228, 213, 183, 0); } }
 .regie-notes { margin: 0; padding: 0; list-style: none; display: grid; gap: 7px; }
 .regie-notes li { position: relative; padding-left: 16px; font-size: 13.5px; line-height: 1.45; color: #d6d9e0; }
 .regie-notes li::before { content: ""; position: absolute; left: 2px; top: 0.62em; width: 6px; height: 1px; background: var(--beige-2); }
@@ -553,6 +561,7 @@ details.more[open] { display: grid; gap: 16px; }
               Neu mischen
             </button>
           </div>
+          <div class="decisions" id="regieDecisions"></div>
           <ul class="regie-notes" id="regieNotes"></ul>
         </section>
 
@@ -5448,7 +5457,16 @@ function idealLength(an, s) {
  * Empfehlung für den Song: ideale Länge und wie viele Fotos und Videos der Schnitt bei ruhigem, musikalischem Tempo trägt.
  * Die Zahl kommt aus einem echten Testschnitt der Regie (mit Platzhaltern), nicht aus einer Faustregel.
  */
+const ADVICE_CACHE = new WeakMap();
 function songAdvice(an, settings) {
+  // je Song und Ziel nur einmal rechnen (der Musik-Tab fragt oft)
+  const key = [settings.format, settings.target, settings.pace, settings.variant, settings.allMedia].join('|');
+  let byKey = ADVICE_CACHE.get(an);
+  if (!byKey) { byKey = new Map(); ADVICE_CACHE.set(an, byKey); }
+  if (!byKey.has(key)) byKey.set(key, songAdviceRaw(an, settings));
+  return byKey.get(key);
+}
+function songAdviceRaw(an, settings) {
   const s = { ...settings };
   const L = idealLength(an, s);
   const nV = Math.max(1, Math.min(4, Math.round(L / 16)));
@@ -5539,16 +5557,18 @@ async function bestCut(opts, n = 8, onProgress) {
   const s0 = opts.settings.seed >>> 0;
   const seeds = [s0];
   for (let k = 1; k < n; k++) seeds.push((Math.imul(s0 + k * 7919, 2654435761) >>> 0) % 1000000 + 1);
-  let best = null;
+  let best = null, stale = 0;
   const tried = [];
   for (let k = 0; k < seeds.length; k++) {
     const plan = buildPlan({ ...opts, settings: { ...opts.settings, seed: seeds[k] } });
     const score = planQuality(plan, opts.media);
     tried.push({ seed: seeds[k], score });
     // bei Gleichstand bleibt die bisherige Variante (die aktuelle zuerst)
-    if (!best || score > best.score + 1e-6) best = { plan, seed: seeds[k], score };
+    if (!best || score > best.score + 1e-6) { best = { plan, seed: seeds[k], score }; stale = 0; } else stale++;
     if (onProgress) onProgress(k + 1, seeds.length);
     await new Promise((r) => setTimeout(r, 0));
+    // bringen drei Varianten nacheinander nichts mehr, ist die beste gefunden (spart Rechenzeit auf dem Handy)
+    if (k >= 4 && stale >= 3) break;
   }
   return { ...best, tried };
 }
@@ -11474,7 +11494,7 @@ async function cutFilm(n = 8) {
   $('flowStage').hidden = true;
   engine.t = 0;
   await rebuild({ fresh: true });
-  toast(`Fertig: der beste von ${n} Schnitten.`);
+  toast(`Fertig: der beste von ${res.tried.length} geprüften Schnitten.`);
 }
 
 async function showPoster() {
@@ -12180,15 +12200,39 @@ function renderFx(st, r) {
 }
 
 function renderRegie() {
-  const ul = $('regieNotes');
-  if (!S.plan || !S.ctx) { ul.innerHTML = ''; return; }
+  const ul = $('regieNotes'), dec = $('regieDecisions');
+  if (!S.plan || !S.ctx) { ul.innerHTML = ''; dec.innerHTML = ''; return; }
+  const p = S.plan, r = p.resolved;
   const good = S.ctx.media.filter((m) => !m.bad && !m.loading).length;
-  const notes = good ? S.plan.notes : ['Wähle Fotos und Videos. Die Auto-Regie bestimmt dann Filmlänge, Songausschnitt, Schnitt, Look und Farbangleichung.'];
-  const open = ul.dataset.open === '1';
-  const shown = open ? notes : notes.slice(0, 3);
-  ul.innerHTML = shown.map((n) => `<li>${esc(n)}</li>`).join('') + (notes.length > 3 ? `<li class="more-toggle"><button type="button" id="regieMore">${open ? 'Weniger anzeigen' : `${notes.length - 3} weitere Entscheidungen`}</button></li>` : '');
+  // Entscheidungen auf einen Blick: antippen springt zur passenden Einstellung
+  const lbl = (id, v) => { const el = document.querySelector(`#${id} [data-v="${v}"]`); return el ? el.textContent.trim() : v || '–'; };
+  const cap = p.capacity || {};
+  const off = (S.ctx.song && S.ctx.song.offset) || 0;
+  const items = good ? [
+    ['len', 'Länge', fmtClock(p.duration), `Song ${fmtClock(off + p.win.start)}–${fmtClock(off + p.win.end)}`],
+    ['intro', 'Einstieg', lbl('introChips', p.intro), p.pre && p.pre !== 'off' ? `mit ${lbl('preChips', p.pre)}` : ''],
+    ['outro', 'Ende', lbl('outroChips', p.outro), ''],
+    ['look', 'Look', LOOKS[r.look] ? LOOKS[r.look].label : r.look, r.mv === 'on' ? 'Musikvideo' : ({ ruhig: 'Variante ruhig', energisch: 'Variante energisch' }[r.variant] || '')],
+    ['pace', 'Schnitt', { ruhig: 'Ruhig', mittel: 'Mittel', schnell: 'Schnell' }[r.pace] || r.pace, `${p.visibleClips} Einstellungen`],
+    ['media', 'Aufnahmen', `${p.usedMedia} im Film`, cap.droppedIds && cap.droppedIds.length ? `${cap.droppedIds.length} draußen` : 'alle drin'],
+  ] : [];
+  dec.innerHTML = items.map(([k, l, v, sub]) => `<button type="button" class="dec" data-go="${k}"><span>${l}</span><b>${esc(v)}</b>${sub ? `<i>${esc(sub)}</i>` : ''}</button>`).join('');
+  const notes = good ? p.notes : ['Wähle Fotos und Videos. Die Auto-Regie bestimmt dann Filmlänge, Songausschnitt, Schnitt, Look und Farbangleichung.'];
+  const open = ul.dataset.open === '1' || !good;
+  ul.innerHTML = (open ? notes.map((n) => `<li>${esc(n)}</li>`).join('') : '') + (good ? `<li class="more-toggle"><button type="button" id="regieMore">${open ? 'Begründung ausblenden' : `Warum so? ${notes.length} Entscheidungen im Klartext`}</button></li>` : '');
   const mb = $('regieMore');
   if (mb) mb.addEventListener('click', () => { ul.dataset.open = open ? '0' : '1'; renderRegie(); });
+}
+
+/** Von einer Entscheidung direkt zur passenden Einstellung springen. */
+function goDecision(k) {
+  const target = { len: ['music', 'lenChips'], intro: ['style', 'introChips', 'grpStart'], outro: ['style', 'outroChips', 'grpStart'], look: ['style', 'lookGrid'], pace: ['style', 'paceChips', 'grpRhythm'], media: ['material', 'mediaGrid'] }[k];
+  if (!target) return;
+  const [tab, id, grp] = target;
+  $('tabbtn-' + tab).click();
+  if (grp) $(grp).open = true;
+  const el = $(id);
+  if (el) setTimeout(() => { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 900); }, 60);
 }
 
 function clipThumb(c) {
@@ -12952,6 +12996,7 @@ async function init() {
   });
   for (const id of ['fileMedia', 'fileMedia2']) $(id).addEventListener('change', (e) => { const fl = Array.from(e.target.files || []); e.target.value = ''; addFiles(fl); });
   $('micSong').addEventListener('click', openMicSheet);
+  $('regieDecisions').addEventListener('click', (e) => { const b = e.target.closest('[data-go]'); if (b) goDecision(b.dataset.go); });
   $('flowStage').addEventListener('click', async (e) => {
     const t = e.target.closest('[data-flow],[data-target]');
     if (!t || !S.ctx) return;

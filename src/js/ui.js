@@ -1392,7 +1392,7 @@ async function cutFilm(n = 8) {
   $('flowStage').hidden = true;
   engine.t = 0;
   await rebuild({ fresh: true });
-  toast(`Fertig: der beste von ${n} Schnitten.`);
+  toast(`Fertig: der beste von ${res.tried.length} geprüften Schnitten.`);
 }
 
 async function showPoster() {
@@ -2098,15 +2098,39 @@ function renderFx(st, r) {
 }
 
 function renderRegie() {
-  const ul = $('regieNotes');
-  if (!S.plan || !S.ctx) { ul.innerHTML = ''; return; }
+  const ul = $('regieNotes'), dec = $('regieDecisions');
+  if (!S.plan || !S.ctx) { ul.innerHTML = ''; dec.innerHTML = ''; return; }
+  const p = S.plan, r = p.resolved;
   const good = S.ctx.media.filter((m) => !m.bad && !m.loading).length;
-  const notes = good ? S.plan.notes : ['Wähle Fotos und Videos. Die Auto-Regie bestimmt dann Filmlänge, Songausschnitt, Schnitt, Look und Farbangleichung.'];
-  const open = ul.dataset.open === '1';
-  const shown = open ? notes : notes.slice(0, 3);
-  ul.innerHTML = shown.map((n) => `<li>${esc(n)}</li>`).join('') + (notes.length > 3 ? `<li class="more-toggle"><button type="button" id="regieMore">${open ? 'Weniger anzeigen' : `${notes.length - 3} weitere Entscheidungen`}</button></li>` : '');
+  // Entscheidungen auf einen Blick: antippen springt zur passenden Einstellung
+  const lbl = (id, v) => { const el = document.querySelector(`#${id} [data-v="${v}"]`); return el ? el.textContent.trim() : v || '–'; };
+  const cap = p.capacity || {};
+  const off = (S.ctx.song && S.ctx.song.offset) || 0;
+  const items = good ? [
+    ['len', 'Länge', fmtClock(p.duration), `Song ${fmtClock(off + p.win.start)}–${fmtClock(off + p.win.end)}`],
+    ['intro', 'Einstieg', lbl('introChips', p.intro), p.pre && p.pre !== 'off' ? `mit ${lbl('preChips', p.pre)}` : ''],
+    ['outro', 'Ende', lbl('outroChips', p.outro), ''],
+    ['look', 'Look', LOOKS[r.look] ? LOOKS[r.look].label : r.look, r.mv === 'on' ? 'Musikvideo' : ({ ruhig: 'Variante ruhig', energisch: 'Variante energisch' }[r.variant] || '')],
+    ['pace', 'Schnitt', { ruhig: 'Ruhig', mittel: 'Mittel', schnell: 'Schnell' }[r.pace] || r.pace, `${p.visibleClips} Einstellungen`],
+    ['media', 'Aufnahmen', `${p.usedMedia} im Film`, cap.droppedIds && cap.droppedIds.length ? `${cap.droppedIds.length} draußen` : 'alle drin'],
+  ] : [];
+  dec.innerHTML = items.map(([k, l, v, sub]) => `<button type="button" class="dec" data-go="${k}"><span>${l}</span><b>${esc(v)}</b>${sub ? `<i>${esc(sub)}</i>` : ''}</button>`).join('');
+  const notes = good ? p.notes : ['Wähle Fotos und Videos. Die Auto-Regie bestimmt dann Filmlänge, Songausschnitt, Schnitt, Look und Farbangleichung.'];
+  const open = ul.dataset.open === '1' || !good;
+  ul.innerHTML = (open ? notes.map((n) => `<li>${esc(n)}</li>`).join('') : '') + (good ? `<li class="more-toggle"><button type="button" id="regieMore">${open ? 'Begründung ausblenden' : `Warum so? ${notes.length} Entscheidungen im Klartext`}</button></li>` : '');
   const mb = $('regieMore');
   if (mb) mb.addEventListener('click', () => { ul.dataset.open = open ? '0' : '1'; renderRegie(); });
+}
+
+/** Von einer Entscheidung direkt zur passenden Einstellung springen. */
+function goDecision(k) {
+  const target = { len: ['music', 'lenChips'], intro: ['style', 'introChips', 'grpStart'], outro: ['style', 'outroChips', 'grpStart'], look: ['style', 'lookGrid'], pace: ['style', 'paceChips', 'grpRhythm'], media: ['material', 'mediaGrid'] }[k];
+  if (!target) return;
+  const [tab, id, grp] = target;
+  $('tabbtn-' + tab).click();
+  if (grp) $(grp).open = true;
+  const el = $(id);
+  if (el) setTimeout(() => { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 900); }, 60);
 }
 
 function clipThumb(c) {
@@ -2870,6 +2894,7 @@ async function init() {
   });
   for (const id of ['fileMedia', 'fileMedia2']) $(id).addEventListener('change', (e) => { const fl = Array.from(e.target.files || []); e.target.value = ''; addFiles(fl); });
   $('micSong').addEventListener('click', openMicSheet);
+  $('regieDecisions').addEventListener('click', (e) => { const b = e.target.closest('[data-go]'); if (b) goDecision(b.dataset.go); });
   $('flowStage').addEventListener('click', async (e) => {
     const t = e.target.closest('[data-flow],[data-target]');
     if (!t || !S.ctx) return;
