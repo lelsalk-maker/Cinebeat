@@ -7,7 +7,7 @@ const SCORE_SIZE = 160;
 let scoreCanvas = null;
 
 function scoreCtx(w, h) {
-  if (!scoreCanvas) scoreCanvas = document.createElement('canvas');
+  if (!scoreCanvas) scoreCanvas = typeof document !== 'undefined' ? document.createElement('canvas') : new OffscreenCanvas(w, h);
   scoreCanvas.width = w;
   scoreCanvas.height = h;
   return scoreCanvas.getContext('2d', { willReadFrequently: true });

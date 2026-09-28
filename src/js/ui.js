@@ -638,6 +638,39 @@ async function detectFaces(item, src, sw, sh) {
   } catch (e) { /* nicht verfügbar */ }
 }
 
+/* Hintergrund-Threads fürs Einlesen: Dekodieren, Bewerten und Vorschaubild außerhalb der Oberfläche.
+ * Gleiche Rechnung wie im Hauptthread (score.js); fehlt etwas (alter Browser, CSP), gilt der bisherige Weg. */
+const scoreWorkers = { pool: null, off: false, used: false, seq: 0, next: 0, cbs: new Map() };
+function scorePool() {
+  const W = scoreWorkers;
+  if (W.pool || W.off) return W.pool;
+  try {
+    if (typeof SCORE_WORKER_SRC !== 'string' || typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap !== 'function') throw new Error('nicht verfügbar');
+    const url = URL.createObjectURL(new Blob([SCORE_WORKER_SRC], { type: 'text/javascript' }));
+    const n = Math.max(1, Math.min(4, navigator.hardwareConcurrency || 4));
+    W.pool = Array.from({ length: n }, () => {
+      const w = new Worker(url);
+      w.onmessage = (e) => { const cb = W.cbs.get(e.data.id); if (cb) { W.cbs.delete(e.data.id); cb(e.data); } };
+      w.onerror = (e) => { e.preventDefault && e.preventDefault(); W.off = true; for (const cb of W.cbs.values()) cb({ error: 'worker' }); W.cbs.clear(); };
+      return w;
+    });
+  } catch (e) { W.off = true; W.pool = null; }
+  return W.pool;
+}
+/** Liefert { res, thumb, bmp } oder null (dann rechnet der Hauptthread) */
+function scoreInWorker(item) {
+  const pool = !decodeImage.noResize && item.file && scorePool();
+  if (!pool) return Promise.resolve(null);
+  const W = scoreWorkers, id = ++W.seq, w = pool[W.next++ % pool.length];
+  return new Promise((res) => {
+    W.cbs.set(id, (d) => {
+      if (d.fallback) decodeImage.noResize = true;
+      if (d.res) { W.used = true; res(d); } else res(null);
+    });
+    try { w.postMessage({ id, file: item.file, w: item.w, h: item.h, max: 480 }); } catch (e) { W.cbs.delete(id); res(null); }
+  });
+}
+
 /** Bildmaße (mit EXIF-Drehung) aus dem Dateikopf, ohne das Bild zu dekodieren; null, wenn nicht lesbar. */
 async function imageDims(url) {
   const img = new Image();
@@ -656,6 +689,14 @@ async function probeAndScore(item) {
       const d = await imageDims(item.url);
       if (!d) throw new Error('Bild nicht lesbar');
       item.w = d[0]; item.h = d[1];
+    }
+    const wr = await scoreInWorker(item);
+    if (wr) {
+      item.thumb = wr.thumb;
+      Object.assign(item, wr.res);
+      await detectFaces(item, wr.bmp, wr.bmp.width, wr.bmp.height);
+      wr.bmp.close();
+      return;
     }
     const small = await decodeImage({ ...item, url: item.url }, 480, true);
     const sw = small.width, sh = small.height;
@@ -760,6 +801,7 @@ async function ingestFiles(fileList, onProgress) {
     all.push(it);
   }
   let done = 0, bad = 0;
+  const tStart = performance.now();
   // Parallel, aber schonend: ein Foto wird beim Lesen kurz in voller Kameraauflösung dekodiert (48 MP ≈ 190 MB).
   // Darum teilen sich Fotos ein Pixelbudget (so viel wie früher zwei 48-MP-Fotos): normale 12-MP-Fotos laufen zu viert,
   // große entsprechend weniger – schneller bei gleichem Speicher-Höchststand. Videos brauchen einen der wenigen Hardware-Dekoder.
@@ -780,6 +822,10 @@ async function ingestFiles(fileList, onProgress) {
     try { await probeAndScore(it); } catch (e) { it.bad = true; bad++; } finally { free && free(); }
     it.loading = false;
     if (!it.bad) saveWork(it);
+  }
+  if (fresh.length) {
+    const nImg = fresh.filter((i) => i.kind === 'image').length, ms = performance.now() - tStart;
+    perfLog.add('import', { files: fresh.length, images: nImg, videos: fresh.length - nImg, ms: Math.round(ms), perItem: Math.round(ms / fresh.length), bad, worker: scoreWorkers.used });
   }
   return { items: all, fresh, bad, skipped: Array.from(fileList || []).length - files.length };
 }
@@ -1265,8 +1311,11 @@ async function rebuild(opts = {}) {
   $('monitor').parentElement.classList.remove('flowing');
   $('regie').hidden = false;
   let plan;
+  const tp = performance.now();
   try {
     plan = buildPlan(planOpts(ctx, media));
+    const ms = performance.now() - tp;
+    if (ms > 250) perfLog.add('plan', { what: 'Neu berechnen', ms: Math.round(ms), clips: plan.clips.length, media: media.length });
   } catch (e) {
     console.error(e);
     toast('Der Schnitt konnte nicht berechnet werden: ' + e.message, true);
@@ -1404,10 +1453,12 @@ async function cutFilm(n = 8) {
   engine.pause();
   busy(`Suche den besten Schnitt … Variante 1 von ${n}`);
   let res;
+  const tp = performance.now();
   try {
     res = await bestCut(planOpts(ctx, media), n, (k, N) => busy(`Suche den besten Schnitt … Variante ${Math.min(N, k + 1)} von ${N}`));
   } catch (e) { console.error(e); busy(null); toast('Der Schnitt konnte nicht berechnet werden: ' + e.message, true); return; }
   busy(null);
+  perfLog.add('plan', { what: 'Besten Schnitt suchen', ms: Math.round(performance.now() - tp), tried: res.tried, media: media.length });
   if (S.ctx !== ctx) return;
   ctx.rec.settings.seed = res.seed;
   if (ctx.rec.flow) ctx.rec.flow = 'done';
@@ -1558,7 +1609,10 @@ function miniCopy() {
   try { mini.x.drawImage(sc, (c.width - w) / 2, (c.height - h) / 2, w, h); } catch (e) { /* nicht verfügbar */ }
 }
 
+// Vorschau-Messung: gezeichnete Bilder je Sekunde während einer Wiedergabe
+const pv = { t0: 0, draws: 0 };
 function updateTime(t) {
+  if (engine && engine.playing) pv.draws++;
   if (mini.on && S.plan) $('miniBar').style.transform = `scaleX(${Math.min(1, t / Math.max(0.01, S.plan.duration)).toFixed(4)})`;
   $('tc').textContent = fmtTC(t);
   drawStrip(t);
@@ -1627,6 +1681,12 @@ function togglePlay() {
   else engine.play(engine.t >= S.plan.duration - 0.1 ? 0 : engine.t);
 }
 function setPlayingUI(on) {
+  if (on && !pv.t0) { pv.t0 = performance.now(); pv.draws = 0; }
+  else if (!on && pv.t0) {
+    const sec = (performance.now() - pv.t0) / 1000;
+    if (sec >= 3 && !S.exporting) perfLog.add('preview', { fps: Math.round(pv.draws / sec), costMs: Math.round((engine._cost || 0) * 10) / 10, scale: engine.scale || 1, fps60: !!engine._fps60 });
+    pv.t0 = 0;
+  }
   $('monitor').classList.toggle('playing', on);
   // nach dem ersten Abspielen verdeckt kein Knopf mehr das Bild (Tippen aufs Bild startet und stoppt weiter)
   if (on) $('monitor').classList.add('played');
@@ -1703,7 +1763,7 @@ async function renderTrip() {
   const covers = withMedia.map(placeCover).filter(Boolean).slice(0, 3);
   const arts = covers.length ? [0, 1, 2].map((i) => covers[i % covers.length]) : [];
   $('bestofArt').innerHTML = arts.length ? arts.map((c, i) => `<img src="${c}" alt="" style="top:${i * 33.3}%;height:32%">`).join('') : '<svg class="bestof-ph" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M3 9h18M3 15h18M7 5v4M12 5v4M17 5v4M7 15v4M12 15v4M17 15v4" stroke="currentColor" stroke-width="1.3"/></svg>';
-  $('storageHint').innerHTML = `Nur auf diesem Gerät: Orte, Einstellungen und ein Zwischenspeicher deiner gewählten Aufnahmen, damit angefangene Projekte erhalten bleiben. Nichts wird hochgeladen. Aufnahmen werden ${KEEP_DAYS} Tage nach der letzten Bearbeitung automatisch gelöscht.<span id="usage"></span> <button class="linklike" id="clearWorkBtn" type="button">Zwischenspeicher leeren</button> · <button class="linklike" id="wipeBtn" type="button">Alles löschen</button>`;
+  $('storageHint').innerHTML = `Nur auf diesem Gerät: Orte, Einstellungen und ein Zwischenspeicher deiner gewählten Aufnahmen, damit angefangene Projekte erhalten bleiben. Nichts wird hochgeladen. Aufnahmen werden ${KEEP_DAYS} Tage nach der letzten Bearbeitung automatisch gelöscht.<span id="usage"></span> <button class="linklike" id="clearWorkBtn" type="button">Zwischenspeicher leeren</button> · <button class="linklike" id="wipeBtn" type="button">Alles löschen</button> · <button class="linklike" id="perfBtn" type="button">Leistungsprotokoll</button>`;
   S.store.usage().then((u) => { const el = $('usage'); if (el && u && u.usage > 1e6) el.textContent = ` Belegt: ${fmtBytes(u.usage)}.`; });
 }
 
@@ -1754,6 +1814,37 @@ function placeMenu(id) {
       renderTrip();
       toast(isFlight(p) ? 'Flug entfernt.' : 'Ort entfernt.');
     }
+  });
+}
+
+/* ---------- Leistungsprotokoll ---------- */
+const PERF_DE = { import: 'Einlesen', plan: 'Planen', export: 'Export', preview: 'Vorschau' };
+function perfLine(e) {
+  const s = (ms) => (ms >= 1000 ? (ms / 1000).toFixed(1).replace('.', ',') + ' s' : ms + ' ms');
+  if (e.kind === 'import') return `${e.files} Aufnahmen (${e.images} Fotos, ${e.videos} Videos) in ${s(e.ms)} · ${s(e.perItem)} je Aufnahme${e.worker ? ' · im Hintergrund-Thread' : ''}${e.bad ? ` · ${e.bad} nicht lesbar` : ''}`;
+  if (e.kind === 'plan') return `${e.what}: ${s(e.ms)}${e.tried ? ` · ${e.tried} Varianten geprüft` : ''} · ${e.media} Aufnahmen`;
+  if (e.kind === 'export') return `${e.size} · ${e.fps} fps · ${String(e.secs).replace('.', ',')} s Film in ${s(e.totalMs)} (${String(e.speed).replace('.', ',')}× Echtzeit) · je Bild: Laden ${e.prepMs} ms, Zeichnen ${e.drawMs} ms, Encoder ${e.waitMs} ms${e.heat ? ` · Wärmeschutz ${e.heat}× (${s(e.coolMs)} Pause)` : ''}${e.resumes ? ` · ${e.resumes}× fortgesetzt` : ''} · ${String(e.mb).replace('.', ',')} MB`;
+  if (e.kind === 'preview') return `${e.fps} Bilder/s · ${e.costMs} ms je Bild · Auflösung ${Math.round(e.scale * 100)} %${e.fps60 ? ' · Flüssig-Modus' : ''}`;
+  return JSON.stringify(e);
+}
+function openPerf() {
+  const d = perfLog.device(), list = perfLog.list().reverse();
+  const when = (t) => new Date(t).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  const body = openSheet(`
+    <h3 id="sheetTitle">Leistungsprotokoll</h3>
+    <p class="hint small">Nur auf diesem Gerät gemessen und gespeichert. ${d.cores} Kerne${d.memGB ? ` · ${d.memGB} GB` : ''} · ${esc(d.screen)} @${d.dpr}× · Hintergrund-Thread ${d.worker ? 'ja' : 'nein'} · WebCodecs ${d.webcodecs ? 'ja' : 'nein'} · Wärmesensor ${d.pressure ? 'ja' : 'Bildzeit'}</p>
+    ${list.length ? `<ul class="perf-list">${list.map((e) => `<li><span class="pk">${PERF_DE[e.kind] || e.kind}<small>${when(e.at)}</small></span><span>${esc(perfLine(e))}</span></li>`).join('')}</ul>` : '<p class="hint">Noch keine Messungen. Lies Aufnahmen ein, spiele den Film ab oder exportiere, dann erscheinen hier die Zeiten.</p>'}
+    <div class="sheet-actions"><button class="btn" data-act="copy" type="button">Kopieren</button><button class="btn ghost" data-act="clear" type="button">Leeren</button><button class="btn ghost" data-act="close" type="button">Schließen</button></div>`);
+  body.addEventListener('click', async (e) => {
+    const a = e.target.closest('[data-act]');
+    if (!a) return;
+    if (a.dataset.act === 'copy') {
+      const txt = [`CineBeat Leistungsprotokoll · ${d.cores} Kerne · ${d.screen} · ${d.ua}`, ...list.map((x) => `${when(x.at)} ${PERF_DE[x.kind] || x.kind}: ${perfLine(x)}`)].join('\n');
+      try { await navigator.clipboard.writeText(txt); toast('Protokoll kopiert.'); } catch (err) { toast('Kopieren nicht möglich.', true); }
+      return;
+    }
+    if (a.dataset.act === 'clear') { perfLog.clear(); closeSheet(); toast('Protokoll geleert.'); return; }
+    closeSheet();
   });
 }
 
@@ -2915,7 +3006,7 @@ async function init() {
   $('addPlace').addEventListener('click', newPlace);
   $('addFlight').addEventListener('click', () => openFlightSheet(null));
   $('tripFiles').addEventListener('change', (e) => { const fl = Array.from(e.target.files || []); e.target.value = ''; if (fl.length) importTrip(fl); });
-  $('storageHint').addEventListener('click', (e) => { if (e.target.closest('#wipeBtn')) confirmWipe(); if (e.target.closest('#clearWorkBtn')) confirmClearWork(); });
+  $('storageHint').addEventListener('click', (e) => { if (e.target.closest('#wipeBtn')) confirmWipe(); if (e.target.closest('#clearWorkBtn')) confirmClearWork(); if (e.target.closest('#perfBtn')) openPerf(); });
   $('openBestof').addEventListener('click', openBestof);
   $('placeList').addEventListener('click', (e) => {
     const more = e.target.closest('[data-more]');
@@ -3117,7 +3208,7 @@ async function init() {
 window.CineBeat = {
   get S() { return S; },
   get engine() { return engine; },
-  openPlace, openBestof, addFiles, ingestFiles, rebuild, newPlace, importSong,
+  openPlace, openBestof, addFiles, ingestFiles, scoreWorkers, perfLog, rebuild, newPlace, importSong,
 };
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

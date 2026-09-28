@@ -1507,6 +1507,9 @@ class Engine {
       const tm = setTimeout(done, 4);
       enc.addEventListener('dequeue', done);
     });
+    // Messung fürs Leistungsprotokoll und Wärmeschutz
+    const heat = new HeatGuard();
+    const st = { prep: 0, draw: 0, wait: 0, frames: 0, t0: performance.now() };
     try {
       let n = 0;
       for (;;) {
@@ -1523,14 +1526,22 @@ class Engine {
           // Bildmitte: Bild n ist von n/fps bis (n+1)/fps zu sehen; es zeigt den Moment in der Mitte.
           // So liegt jeder Schnitt höchstens ein halbes Bild neben dem Beat (statt bis zu einem ganzen zu spät).
           const t = Math.min(D - 1e-3, (n + 0.5) / fps);
+          const a0 = performance.now();
           await this._prepareExact(t, fps);
+          const a1 = performance.now();
           this.drawAt(t, 'offline');
           const frame = new VideoFrame(this.canvas, { timestamp: Math.round(n * frameUs), duration: Math.round(frameUs) });
           try { enc.encode(frame, { keyFrame: forceKey || n % (fps * 2) === 0 }); } catch (e) { failed = failed || e; }
           frame.close();
+          const a2 = performance.now();
           if (failed) { n--; continue; }
           forceKey = false;
           while (enc.encodeQueueSize > 4 && !failed && enc.state !== 'closed') await drained();
+          const a3 = performance.now();
+          st.prep += a1 - a0; st.draw += a2 - a1; st.wait += a3 - a2; st.frames++;
+          // Wärmeschutz: Rechenzeit ohne das Warten aufs Laden der Bilder (das ist Dateizugriff, keine Hitze)
+          const cool = heat.frame(a2 - a1);
+          if (cool > 0) await new Promise((r) => setTimeout(r, cool));
           if (onProgress && n % 3 === 0) onProgress((n / N) * (as ? 0.98 : 1), t);
         }
         if (cancelled) break;
@@ -1541,7 +1552,9 @@ class Engine {
       }
     } finally {
       try { enc.close(); } catch (e) { /* ignore */ }
+      heat.close();
     }
+    const videoMs = performance.now() - st.t0;
     if (cancelled) { this.exporting = false; if (audioJob) await audioJob.catch(() => {}); return null; }
     if (failed) { this.exporting = false; throw failed; }
     if (audioJob) {
@@ -1550,6 +1563,13 @@ class Engine {
     onProgress && onProgress(1, D);
     const blob = mux.finalize();
     this.exporting = false;
+    const f = Math.max(1, st.frames), r1 = (v) => Math.round(v * 10) / 10;
+    perfLog.add('export', {
+      size: `${size.w}×${size.h}`, fps, secs: r1(D), codec: `${vs.kind}${as ? '/' + as.kind : ''}`, frames: st.frames,
+      totalMs: Math.round(performance.now() - st.t0), videoMs: Math.round(videoMs), audioWaitMs: Math.round(performance.now() - st.t0 - videoMs),
+      prepMs: r1(st.prep / f), drawMs: r1(st.draw / f), waitMs: r1(st.wait / f),
+      speed: r1(D / Math.max(0.001, (performance.now() - st.t0) / 1000)), heat: heat.events, coolMs: Math.round(heat.coolMs), resumes, mb: r1(blob.size / 1048576),
+    });
     return { blob, type: 'video/mp4', ext: 'mp4', codec: vs.kind, audio: as ? as.kind : null };
   }
 

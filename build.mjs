@@ -4,8 +4,10 @@
 //   dist/cinebeat.html   – Fragment für den Claude-Link (nicht im Repository)
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 const r = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
-const order = ['mediaio', 'meta', 'world', 'audio', 'score', 'plan/base', 'plan/cuts', 'plan/transitions', 'plan/media', 'plan/search', 'plan/chrono', 'plan/plan', 'plan/timeline', 'plan/cutter', 'plan/advice', 'director', 'renderer', 'overlay', 'mp4mux', 'demux', 'engine', 'store', 'demo', 'ui'];
-const js = "(function () {\n'use strict';\n" + order.map((n) => r(`src/js/${n}.js`)).join('\n') + '\n})();\n';
+const order = ['mediaio', 'meta', 'world', 'audio', 'score', 'plan/base', 'plan/cuts', 'plan/transitions', 'plan/media', 'plan/search', 'plan/chrono', 'plan/plan', 'plan/timeline', 'plan/cutter', 'plan/advice', 'director', 'renderer', 'overlay', 'mp4mux', 'demux', 'perflog', 'engine', 'store', 'demo', 'ui'];
+// Einlesen im Hintergrund-Thread: score.js + scoreworker.js als eigener Code (Blob-Worker, keine Netzwerkadresse)
+const workerSrc = "'use strict';\n" + r('src/js/score.js') + '\n' + r('src/js/scoreworker.js');
+const js = "(function () {\n'use strict';\nconst SCORE_WORKER_SRC = " + JSON.stringify(workerSrc) + ';\n' + order.map((n) => r(`src/js/${n}.js`)).join('\n') + '\n})();\n';
 const css = r('src/app.css');
 const body = r('src/body.html');
 const inner = `<style>\n${css}</style>\n${body}\n<script>\n${js}</script>\n`;
@@ -24,7 +26,7 @@ const CSP_OFFLINE = [
   "font-src 'none'",
   "object-src 'none'",
   "frame-src 'none'",
-  "worker-src 'none'",
+  'worker-src blob:',
   "manifest-src 'none'",
   "base-uri 'none'",
   "form-action 'none'",
@@ -39,7 +41,7 @@ const CSP_PWA = [
   "font-src 'none'",
   "object-src 'none'",
   "frame-src 'none'",
-  "worker-src 'self'",
+  "worker-src 'self' blob:",
   "manifest-src 'self'",
   "base-uri 'none'",
   "form-action 'none'",

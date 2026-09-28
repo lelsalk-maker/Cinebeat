@@ -8,22 +8,23 @@
 import { spawn, execSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 const QUICK = ['analysis', 'smooth', 'flow', 'style', 'videos', 'allmedia', 'ui', 'e2e', 'features'];
-const ALL = ['meta', 'beats', 'longbeats', 'structure', 'score', 'mux', 'csp', 'offline', 'chapters', 'ui', 'e2e', 'trip', 'flight', 'overflow', 'features', 'flow', 'fastexport', 'ingest', 'adaptive', 'resume', 'sync', 'latency', 'quality', 'perf', 'style', 'stylevis', 'videos', 'allmedia', 'analysis', 'bgexport', 'smooth', 'judder', 'listen'];
+const ALL = ['meta', 'beats', 'longbeats', 'structure', 'score', 'mux', 'csp', 'offline', 'chapters', 'ui', 'e2e', 'trip', 'flight', 'overflow', 'features', 'flow', 'fastexport', 'ingest', 'adaptive', 'resume', 'sync', 'latency', 'quality', 'perf', 'style', 'stylevis', 'videos', 'allmedia', 'analysis', 'bgexport', 'smooth', 'judder', 'listen', 'workerscore', 'heat'];
 // messen Zeit oder Bildrate: nie unter Last anderer Tests
 const SERIAL = new Set(['perf', 'latency', 'sync', 'adaptive', 'fastexport']);
 // welche Tests eine Datei berühren
 const MAP = [
   [/^src\/js\/plan\/|^src\/js\/director\.js/, ['analysis', 'smooth', 'flow', 'style', 'allmedia', 'videos', 'chapters', 'overflow', 'features']],
   [/^src\/js\/audio\.js/, ['beats', 'longbeats', 'structure', 'listen', 'analysis']],
-  [/^src\/js\/score\.js/, ['score', 'analysis', 'ingest']],
+  [/^src\/js\/(score|scoreworker)\.js/, ['score', 'analysis', 'ingest', 'workerscore']],
+  [/^src\/js\/perflog\.js/, ['heat', 'workerscore']],
   [/^src\/js\/(renderer|overlay)\.js/, ['judder', 'stylevis', 'quality', 'style']],
-  [/^src\/js\/engine\.js/, ['judder', 'fastexport', 'bgexport', 'sync', 'latency', 'perf', 'adaptive', 'resume']],
+  [/^src\/js\/engine\.js/, ['judder', 'fastexport', 'bgexport', 'sync', 'latency', 'perf', 'adaptive', 'resume', 'heat']],
   [/^src\/js\/(mp4mux|demux)\.js/, ['mux', 'fastexport', 'bgexport']],
   [/^src\/js\/(meta|world)\.js/, ['meta', 'trip', 'flight']],
-  [/^src\/(js\/ui\.js|body\.html|app\.css)/, ['ui', 'e2e', 'features', 'listen']],
+  [/^src\/(js\/ui\.js|body\.html|app\.css)/, ['ui', 'e2e', 'features', 'listen', 'workerscore']],
   [/^src\/js\/store\.js/, ['resume', 'trip', 'offline']],
   [/^src\/js\/(mediaio|demo)\.js/, ['ingest', 'videos', 'e2e']],
-  [/^(build\.mjs|docs\/sw\.js)/, ['offline', 'csp']],
+  [/^(build\.mjs|docs\/sw\.js)/, ['offline', 'csp', 'workerscore']],
 ];
 const args = process.argv.slice(2);
 const verbose = args.includes('-v');
