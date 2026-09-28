@@ -1693,6 +1693,11 @@ function drawStrip(t) {
   const tt = t == null ? (engine ? engine.t : 0) : t;
   const px = (tt / S.plan.duration) * c.width;
   const dpr = Math.min(2, window.devicePixelRatio || 1);
+  // mitgetippte Momente (gespeicherte beige, gerade getippte im Kinolicht)
+  const tp = (S.ctx && S.ctx.rec.overrides.taps) || [];
+  const mark = (songT, col) => { const t = songT - S.plan.win.start; if (t < 0 || t > S.plan.duration) return; const x0 = (t / S.plan.duration) * c.width; x.fillStyle = col; x.beginPath(); x.moveTo(x0 - 4 * dpr, 0); x.lineTo(x0 + 4 * dpr, 0); x.lineTo(x0, 6 * dpr); x.fill(); };
+  for (const t of tp) mark(t, '#e4d5b7');
+  for (const t of TAP.list) mark(t, '#f2c98a');
   // Abspielmarke in warmem Kinolicht (--tungsten): „läuft gerade“ hebt sich vom beigen Bedienelement ab
   x.fillStyle = '#f2c98a';
   x.fillRect(Math.round(px - dpr), 0, 2 * dpr, c.height);
@@ -1795,6 +1800,68 @@ function setupCompare() {
     pickVariant(CMP.keys[Math.max(0, Math.min(CMP.keys.length - 1, i + (dx < 0 ? 1 : -1)))]);
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('compare').hidden) closeCompare(false); });
+}
+
+/* ---------- Im Takt mittippen: beim Abspielen aufs Bild tippen = „hier soll es krachen“.
+ * Jeder Tipp rastet auf den nächsten Schlag (Reaktionszeit ausgeglichen); dort schneidet die Regie mit Zoom-Stoß. ---------- */
+const TAP = { on: false, list: [] };
+const TAP_REACT = 0.06; // typische Verzögerung zwischen Hören und Tippen
+function tapSnap(songT) {
+  const an = S.ctx.song.an, beats = an.beats || [];
+  let best = null, bd = Infinity;
+  for (const b of beats) { const d = Math.abs(b - songT); if (d < bd) { bd = d; best = b; } else if (b > songT) break; }
+  return best != null && bd < Math.max(0.25, (an.beatPeriod || 0.5) * 0.5) ? +best.toFixed(4) : null;
+}
+function tapStart() {
+  if (!S.plan || flowPending(S.ctx) || TAP.on) return;
+  TAP.on = true; TAP.list = [];
+  $('tapBar').hidden = false;
+  $('monitor').classList.add('tapping');
+  $('tapBtn').setAttribute('aria-pressed', 'true');
+  updateTapCount();
+  engine.t = 0;
+  engine.play(0);
+}
+function updateTapCount() {
+  const had = (S.ctx.rec.overrides.taps || []).length;
+  $('tapClear').hidden = !had || TAP.list.length > 0;
+  $('tapCount').textContent = TAP.list.length ? `${TAP.list.length} ${TAP.list.length === 1 ? 'Moment' : 'Momente'} getippt` : had ? `Tippe mit (bisher ${had} gesetzt; neue kommen dazu)` : 'Tippe aufs Bild, wo es krachen soll';
+}
+function tapHit(e) {
+  const songT = S.plan.win.start + engine.t - TAP_REACT;
+  const b = tapSnap(songT);
+  // Rückmeldung am Finger
+  const mon = $('monitor'), r = mon.getBoundingClientRect(), dot = document.createElement('i');
+  dot.className = 'tap-ripple';
+  dot.style.left = ((e.clientX || r.left + r.width / 2) - r.left) + 'px'; dot.style.top = ((e.clientY || r.top + r.height / 2) - r.top) + 'px';
+  mon.appendChild(dot);
+  setTimeout(() => dot.remove(), 600);
+  if (b == null) return;
+  const half = (S.ctx.song.an.beatPeriod || 0.5) * 0.5;
+  if (TAP.list.some((t) => Math.abs(t - b) < half)) return;
+  TAP.list.push(b);
+  updateTapCount();
+  drawStrip();
+}
+async function tapEnd(take) {
+  if (!TAP.on) return;
+  TAP.on = false;
+  $('tapBar').hidden = true;
+  $('monitor').classList.remove('tapping');
+  $('tapBtn').setAttribute('aria-pressed', 'false');
+  engine.pause();
+  const n = TAP.list.length;
+  if (take && n) {
+    const half = (S.ctx.song.an.beatPeriod || 0.5) * 0.5;
+    const all = [...(S.ctx.rec.overrides.taps || [])];
+    for (const t of TAP.list) if (!all.some((x) => Math.abs(x - t) < half)) all.push(t);
+    S.ctx.rec.overrides.taps = all.sort((a, b) => a - b);
+    commit(); savePlaceSoon();
+    toast(`${n} ${n === 1 ? 'Moment' : 'Momente'} übernommen: dort schneidet die Regie jetzt genau auf dem Schlag.`);
+  }
+  TAP.list = [];
+  engine.t = 0;
+  await rebuild();
 }
 
 /* ---------- Mini-Vorschau: kleines Livebild + Abspielen in der Kopfzeile, solange das große Bild weggescrollt ist ---------- */
@@ -3328,7 +3395,7 @@ async function init() {
   }
   engine.onTime = updateTime;
   engine.onState = setPlayingUI;
-  engine.onEnded = () => { if (!S.exporting) { engine.t = 0; showPoster(); } };
+  engine.onEnded = () => { if (TAP.on) { tapEnd(true); return; } if (!S.exporting) { engine.t = 0; showPoster(); } };
 
   await S.store.open();
   S.trips = (await S.store.all('trip')).filter((t) => t && t.id);
@@ -3505,7 +3572,7 @@ async function init() {
     try { d.open = localStorage.getItem('cb.grp.' + d.id) === '1'; } catch (err) { /* ignore */ }
     d.addEventListener('toggle', () => { try { localStorage.setItem('cb.grp.' + d.id, d.open ? '1' : '0'); } catch (err) { /* ignore */ } });
   }
-  $('resetCuts').addEventListener('click', () => { S.ctx.rec.overrides.clips = {}; delete S.ctx.rec.overrides.moves; commit(); savePlaceSoon(); rebuild(); toast('Schnitt zurückgesetzt.'); });
+  $('resetCuts').addEventListener('click', () => { S.ctx.rec.overrides.clips = {}; delete S.ctx.rec.overrides.moves; delete S.ctx.rec.overrides.taps; commit(); savePlaceSoon(); rebuild(); toast('Schnitt zurückgesetzt.'); });
   $('addText').addEventListener('click', () => addOverlay('text'));
   $('addPin').addEventListener('click', () => addOverlay('pin'));
   $('addDate').addEventListener('click', () => addOverlay('date'));
@@ -3526,7 +3593,11 @@ async function init() {
   try { lv0 = localStorage.getItem(LEVEL_KEY) || 'regie'; } catch (e) { /* egal */ }
   setLevel(lv0, false);
   $('bigPlay').addEventListener('click', (e) => { e.stopPropagation(); togglePlay(); });
-  $('screen').addEventListener('click', () => { if (S.tab !== 'text') togglePlay(); });
+  $('screen').addEventListener('click', (e) => { if (TAP.on) { tapHit(e); return; } if (S.tab !== 'text') togglePlay(); });
+  $('tapBtn').addEventListener('click', () => (TAP.on ? tapEnd(true) : tapStart()));
+  $('tapDone').addEventListener('click', () => tapEnd(true));
+  $('tapClear').addEventListener('click', () => { delete S.ctx.rec.overrides.taps; commit(); savePlaceSoon(); TAP.list = []; tapEnd(false); toast('Mitgetippte Momente gelöscht.'); });
+  $('tapCancel').addEventListener('click', () => tapEnd(false));
   $('exportBtn').addEventListener('click', openExportSheet);
   $('sheetBackdrop').addEventListener('click', closeSheet);
   document.addEventListener('keydown', (e) => {

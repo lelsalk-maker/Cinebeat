@@ -8,12 +8,12 @@
 import { spawn, execSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 const QUICK = ['analysis', 'smooth', 'flow', 'style', 'videos', 'allmedia', 'ui', 'e2e', 'features'];
-const ALL = ['meta', 'beats', 'longbeats', 'structure', 'score', 'mux', 'csp', 'offline', 'chapters', 'ui', 'e2e', 'trip', 'flight', 'overflow', 'features', 'flow', 'fastexport', 'ingest', 'adaptive', 'resume', 'sync', 'latency', 'quality', 'perf', 'style', 'stylevis', 'videos', 'allmedia', 'analysis', 'bgexport', 'smooth', 'judder', 'listen', 'workerscore', 'heat', 'grade', 'vsync', 'trips', 'levels', 'us'];
+const ALL = ['meta', 'beats', 'longbeats', 'structure', 'score', 'mux', 'csp', 'offline', 'chapters', 'ui', 'e2e', 'trip', 'flight', 'overflow', 'features', 'flow', 'fastexport', 'ingest', 'adaptive', 'resume', 'sync', 'latency', 'quality', 'perf', 'style', 'stylevis', 'videos', 'allmedia', 'analysis', 'bgexport', 'smooth', 'judder', 'listen', 'workerscore', 'heat', 'grade', 'vsync', 'trips', 'levels', 'us', 'tap'];
 // messen Zeit oder Bildrate: nie unter Last anderer Tests
 const SERIAL = new Set(['ingest', 'perf', 'latency', 'sync', 'adaptive', 'fastexport']);
 // welche Tests eine Datei berühren
 const MAP = [
-  [/^src\/js\/plan\/|^src\/js\/director\.js/, ['analysis', 'smooth', 'flow', 'style', 'allmedia', 'videos', 'chapters', 'overflow', 'features', 'grade', 'vsync', 'us']],
+  [/^src\/js\/plan\/|^src\/js\/director\.js/, ['analysis', 'smooth', 'flow', 'style', 'allmedia', 'videos', 'chapters', 'overflow', 'features', 'grade', 'vsync', 'us', 'tap']],
   [/^src\/js\/audio\.js/, ['beats', 'longbeats', 'structure', 'listen', 'analysis']],
   [/^src\/js\/(score|scoreworker)\.js/, ['score', 'analysis', 'ingest', 'workerscore', 'vsync']],
   [/^src\/js\/perflog\.js/, ['heat', 'workerscore']],
@@ -21,7 +21,7 @@ const MAP = [
   [/^src\/js\/engine\.js/, ['judder', 'fastexport', 'bgexport', 'sync', 'latency', 'perf', 'adaptive', 'resume', 'heat']],
   [/^src\/js\/(mp4mux|demux)\.js/, ['mux', 'fastexport', 'bgexport', 'vsync', 'ingest']],
   [/^src\/js\/(meta|world)\.js/, ['meta', 'trip', 'flight']],
-  [/^src\/(js\/ui\.js|body\.html|app\.css)/, ['ui', 'e2e', 'features', 'listen', 'workerscore', 'trips', 'levels']],
+  [/^src\/(js\/ui\.js|body\.html|app\.css)/, ['ui', 'e2e', 'features', 'listen', 'workerscore', 'trips', 'levels', 'tap']],
   [/^src\/js\/store\.js/, ['resume', 'trip', 'offline', 'trips']],
   [/^src\/js\/(mediaio|demo)\.js/, ['ingest', 'videos', 'e2e']],
   [/^(build\.mjs|docs\/sw\.js)/, ['offline', 'csp', 'workerscore']],

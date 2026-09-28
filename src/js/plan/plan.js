@@ -33,14 +33,14 @@ function planOnce(opts) {
   const minShot = flight ? 0 : level >= 1 ? Math.max(0.4, beatDur * 0.9) : fr.shotMin * (settings.pace === 'schnell' ? 0.5 : 0.7);
   // Mindestlänge in ruhigen Songteilen, wenn verdichtet wird: zwei Beats (Break/Intro/Outro), die Dynamik bleibt hörbar und sichtbar
   const calmMin = level >= 1 && level < 4 ? Math.max(0.9, beatDur * 2) : 0;
-  let segs = planCuts(an, win, s.pace, opts._scale || 1, shotBase, minShot, calmMin);
+  let segs = planCuts(an, win, s.pace, opts._scale || 1, shotBase, minShot, calmMin, overrides.taps);
   let usedScale = opts._scale || 1;
   // erste Schätzung; die Suche in buildPlan gibt die Schnittlänge danach direkt vor
   if (!flight && !opts._scale) {
     const imgTime = Math.max(barDur, D - Math.min(vidT, D * 0.7) - barDur);
     const haveShot = D / Math.max(1, segs.length), wantShot = imgTime / imgN;
     const scale = Math.max(fr.shotMin / fr.shot, Math.min(3, wantShot / haveShot));
-    if (Math.abs(scale - 1) > 0.12) { segs = planCuts(an, win, s.pace, scale, shotBase, minShot, calmMin); usedScale = scale; }
+    if (Math.abs(scale - 1) > 0.12) { segs = planCuts(an, win, s.pace, scale, shotBase, minShot, calmMin, overrides.taps); usedScale = scale; }
   }
 
   // Flug: Abflug (2 Takte) · Aufnahmen an Bord (je 1 Takt) · Fluganimation (2 Takte) · Landung (Rest)
@@ -755,7 +755,7 @@ function planOnce(opts) {
 
   // Feinschliff wie ein Cutter: Standzeit nach Bildinhalt, stärkstes Bild auf den Einsatz und ans Ende
   if (!flight && s.cutter !== 'off') {
-    const cp = cutterPolish(clips, { an, win, byId, beatDur, ov, us: usOn });
+    const cp = cutterPolish(clips, { an, win, byId, beatDur, ov, us: usOn, taps: (overrides.taps || []).map((t) => t - win.start) });
     if (cp.retimed || cp.hero) dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Feinschliff: ${[cp.retimed ? `${cp.retimed} Schnitte um ein bis zwei Beats verschoben, damit Totalen und starke Bilder wirken und Details knapp bleiben` : '', cp.hero ? `${cp.hero}× das stärkste Bild aus der Nähe auf den Einsatz bzw. ans Ende gesetzt` : ''].filter(Boolean).join('; ')}.`);
   }
 
@@ -1130,6 +1130,13 @@ function planOnce(opts) {
 
   // Effekte & Einblendungen
   const fx = [];
+  // im Takt mitgetippt: Akzent (kurzer Zoom-Stoß) genau auf dem Schlag
+  const tapsRel = (overrides.taps || []).map((t) => t - win.start).filter((t) => t > 0.1 && t < D - 0.1);
+  for (const t of tapsRel) fx.push({ type: 'punch', start: t, end: t + 0.42, amp: 0.85, tap: true });
+  if (tapsRel.length) {
+    const cut = tapsRel.filter((t) => clips.some((c) => Math.abs(c.start - t) < 0.02)).length, rest = tapsRel.length - cut;
+    dir.notes.push(`Mitgetippt: ${tapsRel.length} ${tapsRel.length === 1 ? 'Moment' : 'Momente'} von dir – ${cut ? `${cut}× genau auf dem Schlag geschnitten, mit kurzem Zoom-Stoß` : ''}${cut && rest ? '; ' : ''}${rest ? `${rest}× im Vorspann oder in einem durchlaufenden Video: dort nur der Zoom-Stoß, damit Titel und Video nicht zerreißen` : ''}.`);
+  }
   const overlays = [];
   // Nichts ist fest: Titel, Kapitel und Statistik lassen sich einzeln ausschalten
   const title = s.showTitle === false ? '' : (settings.title || '').trim();

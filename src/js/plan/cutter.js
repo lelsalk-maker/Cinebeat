@@ -7,7 +7,7 @@
  * Liefert { retimed, hero } für die Erklärung der Regie.
  */
 function cutterPolish(clips, ctx) {
-  const { an, win, byId, beatDur, ov = {}, us = false } = ctx;
+  const { an, win, byId, beatDur, ov = {}, us = false, taps = [] } = ctx;
   const beats = Array.from(an.beats || []).map((b) => b - win.start);
   const bars = Array.from(an.barStart || []).map((b) => b - win.start);
   const onBar = (t) => bars.some((b) => Math.abs(b - t) < 0.04);
@@ -49,7 +49,8 @@ function cutterPolish(clips, ctx) {
       for (let k = 0; k < run.length - 1; k++) {
         acc += w[k];
         const a = run[k], b = run[k + 1], cur = a.end;
-        if (onPhrase(cur)) continue;
+        // Phrasenanfänge und mitgetippte Schnitte bleiben, wo sie sind
+        if (onPhrase(cur) || taps.some((t) => Math.abs(t - cur) < 0.05)) continue;
         const fromBar = onBar(cur);
         const want = t0 + (total * acc) / W;
         let best = cur;

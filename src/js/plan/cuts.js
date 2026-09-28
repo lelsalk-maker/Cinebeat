@@ -3,7 +3,7 @@
  * Schnittpunkte per dynamischer Programmierung auf Beats, Takten, Phrasen,
  * Abschnittswechseln und Akzenten. Zieldauer je Einstellung folgt dem Songteil.
  */
-function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0) {
+function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0, taps = []) {
   const D = win.end - win.start;
   const beatDur = an.beatPeriod;
   const bars = an.barStart || [];
@@ -13,13 +13,13 @@ function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0
   const secStarts = (an.sections || []).map((s) => s.start).filter((t) => t > win.start + 0.3 && t < win.end - 0.3);
   const stops = (an.stops || []).filter((s) => s.t > win.start + 0.5 && s.end < win.end - 0.3);
   const cands = new Map();
-  const add = (abs, w, forced) => {
+  const add = (abs, w, forced, tap) => {
     const t = abs - win.start;
     if (t <= 0.15 || t >= D - 0.15) return;
     const key = Math.round(t * 100);
     const prev = cands.get(key) || cands.get(key - 1) || cands.get(key + 1);
-    if (prev) { prev.w = Math.max(prev.w, w) + (w > 1 ? 0.5 : 0); prev.forced = prev.forced || !!forced; return; }
-    cands.set(key, { t, w, forced: !!forced });
+    if (prev) { prev.w = Math.max(prev.w, w) + (w > 1 ? 0.5 : 0); prev.forced = prev.forced || !!forced; prev.tap = prev.tap || !!tap; return; }
+    cands.set(key, { t, w, forced: !!forced, tap: !!tap });
   };
   for (const b of an.beats) {
     const k = Math.round(b * 1000);
@@ -33,6 +33,8 @@ function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0
   const snap = (t) => { let m = t, d = Infinity; for (const b of an.beats) { const x = Math.abs(b - t); if (x < d) { d = x; m = b; } else if (b > t) break; } return d < beatDur * 0.35 ? m : t; };
   for (const s of secStarts) add(snap(s), 12, true);
   for (const s of stops) add(snap(s.end), 10, true);
+  // im Takt mitgetippt: dort wird auf jeden Fall geschnitten (Zeiten schon auf den Schlag gerastet)
+  for (const t of taps || []) if (t > win.start + 0.2 && t < win.end - 0.2) add(t, 14, true, true);
   const pts = [{ t: 0, w: 0, forced: true }, ...Array.from(cands.values()).sort((a, b) => a.t - b.t), { t: D, w: 0, forced: true }];
 
   // Mindestlänge je Einstellung (Format); nur die Akzent-Schnitte auf den ersten Beats des Drops dürfen kürzer sein
@@ -88,7 +90,7 @@ function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0
   cuts.reverse();
   const segs = [];
   let prev = 0;
-  for (const j of cuts) { segs.push({ start: pts[prev].t, end: pts[j].t, w: pts[prev].w }); prev = j; }
+  for (const j of cuts) { segs.push({ start: pts[prev].t, end: pts[j].t, w: pts[prev].w, ...(pts[prev].tap ? { tap: true } : {}) }); prev = j; }
   for (const s of stops) {
     const t = s.t - win.start;
     const seg = segs.find((x) => t > x.start + 0.1 && t < x.end);

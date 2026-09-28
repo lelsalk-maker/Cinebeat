@@ -91,7 +91,8 @@ function layoutChrono(ctx, segs0, queue, bias) {
       const prev = sg[i - 1];
       let k = i;
       while (k < sg.length && normal(sg[k]) && !onBar(sg[k].end) && sg[k].end - g.start < barDur) k++;
-      if (k < sg.length && normal(sg[k]) && onBar(sg[k].end) && sg[k].end - g.start <= barDur * 0.8 && k + 1 < sg.length && normal(sg[k + 1])
+      // mitgetippte Schnitte bleiben: nie über einen Tipp hinweg zusammenlegen
+      if (k < sg.length && normal(sg[k]) && onBar(sg[k].end) && sg[k].end - g.start <= barDur * 0.8 && k + 1 < sg.length && normal(sg[k + 1]) && !sg.slice(i, k + 1).some((x) => x.tap)
         && prev && (prev.mediaId || prev.splitIds) && !prev.vslot && !special(prev) && !skipSeg(prev) && prev.end - prev.start + (sg[k].end - g.start) <= barDur * 2.2) {
         prev.end = sg[k].end;
         sg.splice(i, k - i + 1);
@@ -124,7 +125,7 @@ function layoutChrono(ctx, segs0, queue, bias) {
           k++;
         }
         const prev = sg[i - 1];
-        if (pk >= i && sg[pk].end - g.start < Math.max(minW(head), w * 0.5) && sg[pk].end - g.start < 3.2 && prev && (prev.mediaId || prev.splitIds) && !prev.vslot && !special(prev) && !skipSeg(prev) && pk + 1 < sg.length && (normal(sg[pk + 1]) || sg[pk + 1].burst || sg[pk + 1].stackSeg)) {
+        if (pk >= i && !sg.slice(i, pk + 1).some((x) => x.tap) && sg[pk].end - g.start < Math.max(minW(head), w * 0.5) && sg[pk].end - g.start < 3.2 && prev && (prev.mediaId || prev.splitIds) && !prev.vslot && !special(prev) && !skipSeg(prev) && pk + 1 < sg.length && (normal(sg[pk + 1]) || sg[pk + 1].burst || sg[pk + 1].stackSeg)) {
           prev.end = sg[pk].end;
           sg.splice(i, pk - i + 1);
           i--;
