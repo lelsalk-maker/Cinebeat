@@ -26,9 +26,10 @@ beat-synchrone Filme macht. Läuft komplett auf dem Gerät (iPhone ist Hauptziel
 | `plan/chrono.js` | `layoutChrono`: Aufnahmen streng chronologisch auf die Schnitte (Split, Serie, Stapel, Videoplätze) |
 | `plan/plan.js` | `planOnce`: Einstiege, Stil-Mittel, Zuteilung, Übergänge, Bewegung, Effekte, Overlays, Kapazität |
 | `plan/timeline.js` | `layersAt`, `clipIndexAt` |
+| `plan/us.js` | Wir-Vorrang: `usScore`/`isUs` (Markierung `m.us` vor Erkennung), `usPolish` tauscht Wir-Aufnahmen auf ruhige Plätze (≤4 Plätze, ≤3 min, gleiche Szene) |
 | `plan/cutter.js` | `cutterPolish`: Standzeit nach Bildinhalt (Schnitte ±1–2 Beats auf starken Zählzeiten), Höhepunkt-/Schlussbild |
 | `plan/vsync.js` | Videoschnitt auf den Takt: `hitGrid` (Eins/Snare/Bassdrum/Beats), `syncVideoOffset` legt Aktionsmomente (`m.hits`) aufs Raster |
-| `plan/advice.js` | Song zuerst: `idealLength`, `songAdvice` (ideale Menge per Testschnitt), `planQuality` (Bewertung), `bestCut` (beste von n Varianten) |
+| `plan/advice.js` | Song zuerst: `idealLength`, `songAdvice` (ideale Menge per Testschnitt), `planQuality` (Bewertung), `bestCut` (beste von n Varianten), `hookScore` (Stopp-Wert der ersten 1,5 s), `improveHook` |
 | `director.js` | Auto-Regie: Varianten (`VARIANTS`), Musikvideo (`withMusicVideo`), Aussortieren (`autoOut`), Länge, Songausschnitt, Tempo, Look, Einstieg/Ende, Stil-Budget (`rs.*`) |
 | `perflog.js` | Leistungsprotokoll (`perfLog.add`, lokal, 40 Einträge) und Wärmeschutz beim Export (`HeatGuard`) |
 | `scoreworker.js` | Worker fürs Einlesen (mit `score.js` von `build.mjs` als `SCORE_WORKER_SRC` eingebettet, Blob-Worker) |
@@ -53,6 +54,7 @@ Ablauf je Ort (`rec.flow`): `song` (Song wählen) → `advice` (Songprofil + Emp
 - Videos laufen wirklich (mind. ein Takt), bester Moment auf dem Schlag; nie in Sekundenbruchteil-Einstellungen.
 - Songdynamik: Drop-Einsatz ist ein Schnitt. Design: Schwarz/Dunkelblau/Beige, schlicht, modern.
 - Farbe: `colorMatch` gleicht je Szene an (`[r,g,b,gamma]`), Stimmung bleibt. Ausschnitt: `framePoint` (Drittel, Horizont, Kopf).
+- Mitgetippt: `overrides.taps` (Songzeit, auf Beats gerastet) → erzwungene Schnitte in `planCuts` (Segment `tap`), Zoom-Stoß (`fx.tap`); Cutter und Zusammenlegungen in `chrono.js` lassen sie stehen; im Vorspann/Video nur Akzent.
 - Videos: Feinanalyse (`analyzeVideoAction`) läuft nach dem Einlesen im Hintergrund (`vAct`), pausiert beim Export; `cutFilm` wartet darauf.
 - Export: Bild- und Tonspur müssen Bit für Bit gleich bleiben (Beschleunigung nur drumherum: Ton parallel, `dequeue`-Wecken). Einlesen: Fotos parallel über Pixelbudget (`budget` in ui.js), Videos einzeln.
 - Leistung: Vorschau 30 fps, 60 fps nur im Flüssig-Modus (Bild kostet < 4,5 ms, fällt nichts aus), begrenzte Auflösung, keine Arbeit pro Bild, die sich cachen lässt.

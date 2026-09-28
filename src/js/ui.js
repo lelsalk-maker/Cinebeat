@@ -1912,6 +1912,7 @@ function miniCopy() {
 const pv = { t0: 0, draws: 0 };
 function updateTime(t) {
   if (engine && engine.playing) pv.draws++;
+  hookLoopTick(t);
   if (mini.on && S.plan) $('miniBar').style.transform = `scaleX(${Math.min(1, t / Math.max(0.01, S.plan.duration)).toFixed(4)})`;
   $('tc').textContent = fmtTC(t);
   drawStrip(t);
@@ -2679,6 +2680,11 @@ function renderRegie() {
     ['pace', 'Schnitt', { ruhig: 'Ruhig', mittel: 'Mittel', schnell: 'Schnell' }[r.pace] || r.pace, `${p.visibleClips} Einstellungen`],
     ['media', 'Aufnahmen', `${p.usedMedia} im Film`, cap.droppedIds && cap.droppedIds.length ? `${cap.droppedIds.length} draußen` : 'alle drin'],
   ] : [];
+  // Hook-Prüfung: Stopp-Wert der ersten 1,5 s
+  if (good && S.ctx.song && S.ctx.song.an) {
+    try { S.hook = hookScore(p, S.ctx.media.filter((m) => !m.loading && !m.bad), S.ctx.song.an); } catch (e) { S.hook = null; }
+    if (S.hook) items.unshift(['hook', 'Hook', `${S.hook.score} / 100`, S.hook.score >= 75 ? 'stoppt beim Scrollen' : S.hook.score >= 55 ? 'geht noch stärker' : 'wird leicht weggewischt']);
+  }
   dec.innerHTML = items.map(([k, l, v, sub]) => `<button type="button" class="dec" data-go="${k}"><span>${l}</span><b>${esc(v)}</b>${sub ? `<i>${esc(sub)}</i>` : ''}</button>`).join('');
   const notes = good ? p.notes : ['Wähle Fotos und Videos. Die Auto-Regie bestimmt dann Filmlänge, Songausschnitt, Schnitt, Look und Farbangleichung.'];
   const open = ul.dataset.open === '1' || !good;
@@ -2687,8 +2693,55 @@ function renderRegie() {
   if (mb) mb.addEventListener('click', () => { ul.dataset.open = open ? '0' : '1'; renderRegie(); });
 }
 
+/* ---------- Hook-Prüfung: messbare Mechanik der ersten 1,5 s, Schleife und automatische Verbesserung ---------- */
+const HOOKLOOP = { on: false, n: 0 };
+function hookLoopTick(t) {
+  if (!HOOKLOOP.on || !engine.playing) return;
+  if (t < 1.5) return;
+  if (++HOOKLOOP.n >= 4) { HOOKLOOP.on = false; engine.pause(); engine.t = 0; return; }
+  engine.play(0);
+}
+function openHookSheet() {
+  const h = S.hook;
+  if (!h) return;
+  const verdict = h.score >= 75 ? 'Stoppt beim Scrollen.' : h.score >= 55 ? 'Solide, geht aber stärker.' : 'Wird leicht weggewischt.';
+  const body = openSheet(`
+    <h3 id="sheetTitle">Hook · ${h.score} von 100</h3>
+    <p class="hint">${verdict} Gemessen wird kein Geschmack, sondern was in den ersten 1,5 Sekunden im Feed über Weiterwischen entscheidet.</p>
+    <ul class="hook-parts">${h.parts.map((x) => `<li class="${x.v >= 0.7 ? 'ok' : x.v >= 0.4 ? 'mid' : 'low'}"><span>${esc(x.label)}</span><i style="--v:${Math.round(x.v * 100)}%"></i>${x.v < 0.7 ? `<small>${esc(x.tip)}</small>` : ''}</li>`).join('')}</ul>
+    <div class="sheet-actions">
+      <button class="btn primary" data-act="improve" type="button">Automatisch verbessern</button>
+      <button class="btn" data-act="loop" type="button">Erste 1,5 s in Schleife</button>
+      <button class="btn ghost" data-act="close" type="button">Schließen</button>
+    </div>`);
+  body.addEventListener('click', async (e) => {
+    const a = e.target.closest('[data-act]');
+    if (!a) return;
+    if (a.dataset.act === 'loop') { closeSheet(); HOOKLOOP.on = true; HOOKLOOP.n = 0; engine.play(0); return; }
+    if (a.dataset.act === 'improve') {
+      closeSheet();
+      const ctx = S.ctx, media = ctx.media.filter((m) => !m.loading && !m.bad);
+      engine.pause();
+      busy('Probiere Einstiege, Songstart und Startbild …');
+      let r;
+      try { r = await improveHook(planOpts(ctx, media), (k, n) => busy(`Probiere Einstiege, Songstart und Startbild … ${k} von ${n}`)); } catch (err) { console.error(err); r = null; }
+      busy(null);
+      if (!r || !r.settings) { toast(r ? `Der Hook ist schon das Stärkste, was dein Material hergibt (${r.from}/100), ohne den übrigen Film zu verschlechtern.` : 'Konnte den Hook nicht prüfen.'); return; }
+      Object.assign(ctx.rec.settings, r.settings);
+      ctx.rec.hookId = r.hookId;
+      commit(); savePlaceSoon();
+      engine.t = 0;
+      await rebuild();
+      toast(`Hook verbessert: ${r.from} → ${r.to} von 100. Rückgängig mit ↶.`);
+      return;
+    }
+    closeSheet();
+  });
+}
+
 /** Von einer Entscheidung direkt zur passenden Einstellung springen. */
 function goDecision(k) {
+  if (k === 'hook') { openHookSheet(); return; }
   const target = { len: ['music', 'lenChips'], intro: ['style', 'introChips', 'grpStart'], outro: ['style', 'outroChips', 'grpStart'], look: ['style', 'lookGrid'], pace: ['style', 'paceChips', 'grpRhythm'], media: ['material', 'mediaGrid'] }[k];
   if (!target) return;
   const [tab, id, grp] = target;

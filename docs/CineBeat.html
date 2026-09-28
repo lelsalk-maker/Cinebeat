@@ -514,6 +514,14 @@ body.comparing .mini, body.comparing .mini-bar { display: none !important; }
 .tap-ripple { position: absolute; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; border: 2px solid var(--tungsten); pointer-events: none; animation: tapRipple 0.55s ease-out forwards; z-index: 5; }
 @keyframes tapRipple { from { transform: scale(0.6); opacity: 1; } to { transform: scale(4.2); opacity: 0; } }
 #tapBtn[aria-pressed="true"] { color: var(--tungsten); border-color: var(--tungsten); }
+/* Hook-Prüfung */
+.hook-parts { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 10px; }
+.hook-parts li { display: grid; grid-template-columns: minmax(0, 1fr) 96px; gap: 4px 12px; align-items: center; font-size: 13.5px; }
+.hook-parts i { height: 6px; border-radius: 999px; background: linear-gradient(90deg, var(--c) var(--v), var(--navy-2) var(--v)); }
+.hook-parts li.ok { --c: var(--beige); }
+.hook-parts li.mid { --c: var(--tungsten); }
+.hook-parts li.low { --c: var(--danger); }
+.hook-parts small { grid-column: 1 / -1; color: var(--muted); font-size: 12px; line-height: 1.4; }
 </style>
 <div class="app">
   <!-- ================= Reise ================= -->
@@ -5945,6 +5953,88 @@ async function bestCut(opts, n = 8, onProgress) {
     if (k >= 4 && stale >= 3) break;
   }
   return { ...best, tried };
+}
+
+/**
+ * Hook-Prüfung: Stoppt jemand beim Scrollen? Kein Geschmacksurteil, sondern die Mechanik der ersten 1,5 s, die im Feed
+ * über Weiterwischen entscheidet: sofort Bewegung, früh eine Veränderung, ein starkes Motiv, Menschen, Musik ohne
+ * Anlauf, kein langsames Einblenden. Liefert { score 0–100, parts: [{k, label, v 0–1, tip}] }.
+ */
+function hookScore(plan, media, an) {
+  const W = 1.5;
+  const clips = plan.clips.filter((c) => !c.loop);
+  const early = clips.filter((c) => c.visStart < W);
+  const mOf = (c) => media[c.mediaIndex];
+  const cl = (x) => Math.max(0, Math.min(1, x));
+  const parts = [];
+  const add = (k, label, v, w, tip) => parts.push({ k, label, v: cl(v), w, tip });
+  // 1. Bewegung ab dem ersten Bild: Kamerafahrt je Sekunde oder bewegtes Video
+  const c0 = early[0] || clips[0];
+  const m0 = c0 && mOf(c0);
+  let mv = 0;
+  if (c0 && c0.motion) {
+    const d = Math.max(0.3, c0.visEnd - c0.visStart), a = c0.motion.from, b = c0.motion.to;
+    // sanfte Kamerafahrt zählt wenig, deutliche Bewegung viel (Zoom-Anteil und Weg je Sekunde)
+    mv = (Math.abs(b.s - a.s) * 4 + Math.hypot(b.x - a.x, b.y - a.y) * 0.8) / d / 0.45;
+  }
+  if (m0 && m0.kind === 'video') mv = Math.max(mv, (m0.motion || 0) / 0.04);
+  if (plan.intro === 'rush' || plan.intro === 'knockout') mv = Math.max(mv, 1);
+  add('motion', 'Bewegung ab dem ersten Bild', mv, 0.2, 'Stillstand in der ersten Sekunde wird weggewischt: ein Video oder eine schnelle Bilderfolge vorn hilft.');
+  // 2. frühe Veränderung: ein Schnitt in den ersten 1,5 s zeigt „hier passiert etwas“
+  const cuts = clips.filter((c) => c.start > 0.05 && c.start < W).length;
+  add('change', 'Früher Schnitt', cuts >= 2 ? 1 : cuts === 1 ? 0.8 : 0.15, 0.2, 'Der erste Schnitt kommt spät: eine schnelle Bilderfolge oder ein kürzeres erstes Bild.');
+  // 3. stärkstes Motiv vorn (verglichen mit dem, was der Film sonst zeigt)
+  const used = clips.map(mOf).filter(Boolean).map((m) => m.score || 0).sort((a, b) => a - b);
+  const q = (p) => used.length ? used[Math.min(used.length - 1, Math.floor(p * used.length))] : 0.5;
+  const top = Math.max(0, ...early.map(mOf).filter(Boolean).map((m) => m.score || 0));
+  add('strong', 'Starkes Motiv vorn', (top - q(0.5)) / Math.max(0.02, q(0.92) - q(0.5)), 0.2, 'Vorn steht nicht euer bestes Bild: das stärkste als Startbild nehmen.');
+  // 4. Menschen: Gesichter halten den Blick
+  const ppl = Math.max(0, ...clips.filter((c) => c.visStart < 2).map(mOf).filter(Boolean).map((m) => usScore(m)));
+  add('people', 'Menschen im Bild', 0.3 + ppl * 0.7, 0.15, 'In den ersten 2 s ist niemand zu sehen: ein Bild von euch vorn bindet stärker.');
+  // 5. Musik trägt sofort: Energie der ersten Schläge gegenüber dem Song
+  const en = Array.from(an.energy || []), bt = Array.from(an.beats || []);
+  const med = en.length ? en.slice().sort((a, b) => a - b)[en.length >> 1] : 0.5;
+  const firstE = bt.map((b, i) => [b, en[i] || 0]).filter(([b]) => b >= plan.win.start - 0.05 && b < plan.win.start + W).map(([, e]) => e);
+  const eAvg = firstE.length ? firstE.reduce((a, b) => a + b, 0) / firstE.length : med;
+  add('music', 'Musik trägt sofort', (eAvg / Math.max(0.05, med) - 0.6) / 0.6, 0.15, 'Der Song beginnt leise: „Ab Refrain“ oder „Kurz davor“ als Songstart.');
+  // 6. kein langsamer Anlauf aus Schwarz
+  const black = (plan.fx || []).some((f) => (f.type === 'black' || f.type === 'dim') && f.start < 0.3 && f.end > 0.45);
+  const slow = plan.intro === 'cinema' || (plan.win.fadeIn || 0) > 0.3;
+  add('start', 'Kein Anlauf aus Schwarz', black ? 0 : slow ? 0.4 : 1, 0.1, 'Der Film blendet langsam auf: einen Einstieg ohne Schwarzbild wählen.');
+  const score = Math.round(100 * parts.reduce((a, p) => a + p.v * p.w, 0) / parts.reduce((a, p) => a + p.w, 0));
+  return { score, parts };
+}
+
+/**
+ * Hook automatisch verbessern: probiert Einstieg, Songstart und Startbild durch und nimmt die Kombination mit dem
+ * höchsten Stopp-Wert – nur, wenn der übrige Film dadurch nicht schlechter wird. Liefert { settings, hookId, from, to }.
+ */
+async function improveHook(opts, onProgress) {
+  const s0 = opts.settings;
+  const base = buildPlan(opts);
+  const h0 = hookScore(base, opts.media, opts.an).score, q0 = planQuality(base, opts.media);
+  const imgs = opts.media.filter((m) => m.kind === 'image' && !m.bad && !m.excluded);
+  const byScore = imgs.slice().sort((a, b) => (b.score || 0) - (a.score || 0));
+  const bestUs = imgs.filter((m) => isUs(m)).sort((a, b) => (b.score || 0) - (a.score || 0))[0];
+  const hooks = [s0.hookId || null, byScore[0] && byScore[0].id, bestUs && bestUs.id].filter((v, i, a) => a.indexOf(v) === i);
+  const intros = [s0.intro || 'auto', 'rush', 'hook', 'knockout'].filter((v, i, a) => a.indexOf(v) === i);
+  const starts = [s0.songStart == null ? 'auto' : s0.songStart, 'hook', 'prehook'].filter((v, i, a) => a.indexOf(v) === i);
+  let best = { h: h0, settings: null, hookId: s0.hookId || null };
+  const total = intros.length * starts.length * hooks.length;
+  let k = 0;
+  for (const intro of intros) for (const songStart of starts) for (const hookId of hooks) {
+    k++;
+    if (onProgress) { onProgress(k, total); await new Promise((r) => setTimeout(r, 0)); }
+    const settings = { ...s0, intro, songStart, hookId };
+    let plan;
+    try { plan = buildPlan({ ...opts, settings }); } catch (e) { continue; }
+    const h = hookScore(plan, opts.media, opts.an).score;
+    if (h <= best.h + 2) continue;
+    // der Rest des Films darf nicht leiden
+    if (planQuality(plan, opts.media) < q0 - Math.max(0.5, Math.abs(q0) * 0.08)) continue;
+    best = { h, settings: { intro, songStart }, hookId };
+  }
+  return { from: h0, to: best.h, settings: best.settings, hookId: best.hookId };
 }
 
 /* ============================================================
@@ -12558,6 +12648,7 @@ function miniCopy() {
 const pv = { t0: 0, draws: 0 };
 function updateTime(t) {
   if (engine && engine.playing) pv.draws++;
+  hookLoopTick(t);
   if (mini.on && S.plan) $('miniBar').style.transform = `scaleX(${Math.min(1, t / Math.max(0.01, S.plan.duration)).toFixed(4)})`;
   $('tc').textContent = fmtTC(t);
   drawStrip(t);
@@ -13325,6 +13416,11 @@ function renderRegie() {
     ['pace', 'Schnitt', { ruhig: 'Ruhig', mittel: 'Mittel', schnell: 'Schnell' }[r.pace] || r.pace, `${p.visibleClips} Einstellungen`],
     ['media', 'Aufnahmen', `${p.usedMedia} im Film`, cap.droppedIds && cap.droppedIds.length ? `${cap.droppedIds.length} draußen` : 'alle drin'],
   ] : [];
+  // Hook-Prüfung: Stopp-Wert der ersten 1,5 s
+  if (good && S.ctx.song && S.ctx.song.an) {
+    try { S.hook = hookScore(p, S.ctx.media.filter((m) => !m.loading && !m.bad), S.ctx.song.an); } catch (e) { S.hook = null; }
+    if (S.hook) items.unshift(['hook', 'Hook', `${S.hook.score} / 100`, S.hook.score >= 75 ? 'stoppt beim Scrollen' : S.hook.score >= 55 ? 'geht noch stärker' : 'wird leicht weggewischt']);
+  }
   dec.innerHTML = items.map(([k, l, v, sub]) => `<button type="button" class="dec" data-go="${k}"><span>${l}</span><b>${esc(v)}</b>${sub ? `<i>${esc(sub)}</i>` : ''}</button>`).join('');
   const notes = good ? p.notes : ['Wähle Fotos und Videos. Die Auto-Regie bestimmt dann Filmlänge, Songausschnitt, Schnitt, Look und Farbangleichung.'];
   const open = ul.dataset.open === '1' || !good;
@@ -13333,8 +13429,55 @@ function renderRegie() {
   if (mb) mb.addEventListener('click', () => { ul.dataset.open = open ? '0' : '1'; renderRegie(); });
 }
 
+/* ---------- Hook-Prüfung: messbare Mechanik der ersten 1,5 s, Schleife und automatische Verbesserung ---------- */
+const HOOKLOOP = { on: false, n: 0 };
+function hookLoopTick(t) {
+  if (!HOOKLOOP.on || !engine.playing) return;
+  if (t < 1.5) return;
+  if (++HOOKLOOP.n >= 4) { HOOKLOOP.on = false; engine.pause(); engine.t = 0; return; }
+  engine.play(0);
+}
+function openHookSheet() {
+  const h = S.hook;
+  if (!h) return;
+  const verdict = h.score >= 75 ? 'Stoppt beim Scrollen.' : h.score >= 55 ? 'Solide, geht aber stärker.' : 'Wird leicht weggewischt.';
+  const body = openSheet(`
+    <h3 id="sheetTitle">Hook · ${h.score} von 100</h3>
+    <p class="hint">${verdict} Gemessen wird kein Geschmack, sondern was in den ersten 1,5 Sekunden im Feed über Weiterwischen entscheidet.</p>
+    <ul class="hook-parts">${h.parts.map((x) => `<li class="${x.v >= 0.7 ? 'ok' : x.v >= 0.4 ? 'mid' : 'low'}"><span>${esc(x.label)}</span><i style="--v:${Math.round(x.v * 100)}%"></i>${x.v < 0.7 ? `<small>${esc(x.tip)}</small>` : ''}</li>`).join('')}</ul>
+    <div class="sheet-actions">
+      <button class="btn primary" data-act="improve" type="button">Automatisch verbessern</button>
+      <button class="btn" data-act="loop" type="button">Erste 1,5 s in Schleife</button>
+      <button class="btn ghost" data-act="close" type="button">Schließen</button>
+    </div>`);
+  body.addEventListener('click', async (e) => {
+    const a = e.target.closest('[data-act]');
+    if (!a) return;
+    if (a.dataset.act === 'loop') { closeSheet(); HOOKLOOP.on = true; HOOKLOOP.n = 0; engine.play(0); return; }
+    if (a.dataset.act === 'improve') {
+      closeSheet();
+      const ctx = S.ctx, media = ctx.media.filter((m) => !m.loading && !m.bad);
+      engine.pause();
+      busy('Probiere Einstiege, Songstart und Startbild …');
+      let r;
+      try { r = await improveHook(planOpts(ctx, media), (k, n) => busy(`Probiere Einstiege, Songstart und Startbild … ${k} von ${n}`)); } catch (err) { console.error(err); r = null; }
+      busy(null);
+      if (!r || !r.settings) { toast(r ? `Der Hook ist schon das Stärkste, was dein Material hergibt (${r.from}/100), ohne den übrigen Film zu verschlechtern.` : 'Konnte den Hook nicht prüfen.'); return; }
+      Object.assign(ctx.rec.settings, r.settings);
+      ctx.rec.hookId = r.hookId;
+      commit(); savePlaceSoon();
+      engine.t = 0;
+      await rebuild();
+      toast(`Hook verbessert: ${r.from} → ${r.to} von 100. Rückgängig mit ↶.`);
+      return;
+    }
+    closeSheet();
+  });
+}
+
 /** Von einer Entscheidung direkt zur passenden Einstellung springen. */
 function goDecision(k) {
+  if (k === 'hook') { openHookSheet(); return; }
   const target = { len: ['music', 'lenChips'], intro: ['style', 'introChips', 'grpStart'], outro: ['style', 'outroChips', 'grpStart'], look: ['style', 'lookGrid'], pace: ['style', 'paceChips', 'grpRhythm'], media: ['material', 'mediaGrid'] }[k];
   if (!target) return;
   const [tab, id, grp] = target;

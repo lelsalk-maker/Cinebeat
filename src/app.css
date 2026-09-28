@@ -498,3 +498,11 @@ body.comparing .mini, body.comparing .mini-bar { display: none !important; }
 .tap-ripple { position: absolute; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; border: 2px solid var(--tungsten); pointer-events: none; animation: tapRipple 0.55s ease-out forwards; z-index: 5; }
 @keyframes tapRipple { from { transform: scale(0.6); opacity: 1; } to { transform: scale(4.2); opacity: 0; } }
 #tapBtn[aria-pressed="true"] { color: var(--tungsten); border-color: var(--tungsten); }
+/* Hook-Prüfung */
+.hook-parts { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 10px; }
+.hook-parts li { display: grid; grid-template-columns: minmax(0, 1fr) 96px; gap: 4px 12px; align-items: center; font-size: 13.5px; }
+.hook-parts i { height: 6px; border-radius: 999px; background: linear-gradient(90deg, var(--c) var(--v), var(--navy-2) var(--v)); }
+.hook-parts li.ok { --c: var(--beige); }
+.hook-parts li.mid { --c: var(--tungsten); }
+.hook-parts li.low { --c: var(--danger); }
+.hook-parts small { grid-column: 1 / -1; color: var(--muted); font-size: 12px; line-height: 1.4; }
