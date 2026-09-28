@@ -373,7 +373,9 @@ function planOnce(opts) {
     }
     // „Beste Auswahl“: passt nicht alles, fallen die schwächsten Aufnahmen weg (nie das Startbild oder Favoriten)
     for (let k = 0; k < 3 && !allOn && res.dropped.length; k++) {
-      const weak = queue.filter((m) => m !== hk && !m.fav && m.kind === 'image').sort((a, b) => (a.score || 0) - (b.score || 0)).slice(0, res.dropped.length);
+      // Wir-Vorrang: Aufnahmen von euch fallen zuletzt weg
+      const keep = (m) => (m.score || 0) + (s.us !== 'off' ? 0.15 * usScore(m) : 0);
+      const weak = queue.filter((m) => m !== hk && !m.fav && m.kind === 'image').sort((a, b) => keep(a) - keep(b)).slice(0, res.dropped.length);
       queue = queue.filter((m) => !weak.includes(m));
       res = layoutChrono(chronoCtx, segs, queue, 0);
     }
@@ -743,9 +745,17 @@ function planOnce(opts) {
     if (ids.length >= 3) { lastC.strip = { ids }; lastC.mediaId = ids[0]; }
   }
 
+  // Wir-Vorrang: eure Aufnahmen in die ruhigen Passagen, Natur und Dinge in die schnellen (innerhalb jeder Szene)
+  const usOn = !flight && s.us !== 'off';
+  if (usOn) {
+    const nUs = clips.filter((c) => isUs(byId.get(c.mediaId))).length;
+    const mv = usPolish(clips, { byId, ov, moved: new Set((overrides.moves || []).map((x) => x.id)) });
+    if (nUs) dir.notes.push(`Wir-Vorrang: ${nUs} ${nUs === 1 ? 'Aufnahme' : 'Aufnahmen'} von euch${mv ? ` tragen die ruhigen Passagen (${mv}× mit einem nahen Nachbarn getauscht), Natur und Dinge die schnellen` : ' stehen schon in den ruhigen Passagen'}; ihr bekommt mehr Standzeit und das Schlussbild.`);
+  }
+
   // Feinschliff wie ein Cutter: Standzeit nach Bildinhalt, stärkstes Bild auf den Einsatz und ans Ende
   if (!flight && s.cutter !== 'off') {
-    const cp = cutterPolish(clips, { an, win, byId, beatDur, ov });
+    const cp = cutterPolish(clips, { an, win, byId, beatDur, ov, us: usOn });
     if (cp.retimed || cp.hero) dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Feinschliff: ${[cp.retimed ? `${cp.retimed} Schnitte um ein bis zwei Beats verschoben, damit Totalen und starke Bilder wirken und Details knapp bleiben` : '', cp.hero ? `${cp.hero}× das stärkste Bild aus der Nähe auf den Einsatz bzw. ans Ende gesetzt` : ''].filter(Boolean).join('; ')}.`);
   }
 

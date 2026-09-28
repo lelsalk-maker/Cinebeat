@@ -37,6 +37,7 @@ function normalizeSettings(st, defaults) {
     target: pick1(s.target, ['story', 'reel'], 'story'),
     allMedia: pick1(s.allMedia, ['on', 'off'], 'on'),
     variant: pick1(s.variant, ['ausgewogen', 'ruhig', 'energisch'], 'ausgewogen'),
+    us: pick1(s.us, ['auto', 'off'], 'auto'),
     mv: pick1(s.mv, ['off', 'on'], 'off'),
     match: pick1(s.match, ['auto', 'off'], 'auto'),
     morph: pick1(s.morph, ['off', 'on'], 'off'),
@@ -74,7 +75,7 @@ function normalizeSettings(st, defaults) {
 }
 
 /* ---------- Stil-Vorlage: ein Stil für alle Filme der Reise ---------- */
-const STYLE_KEYS = ['variant', 'mv', 'look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'allMedia', 'color', 'accent', 'parallax', 'drift', 'echo', 'stack', 'mini', 'chapKnock', 'chapMap', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
+const STYLE_KEYS = ['variant', 'us', 'mv', 'look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'allMedia', 'color', 'accent', 'parallax', 'drift', 'echo', 'stack', 'mini', 'chapKnock', 'chapMap', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
 const styleOf = (st) => Object.fromEntries(STYLE_KEYS.map((k) => [k, st[k]]));
 /** Einstellungen für neue Filme: Standard, darüber die Vorlage der Reise */
 function baseSettings(defaults) {
@@ -858,7 +859,7 @@ async function ingestFiles(fileList, onProgress) {
 
 function applyFlags(rec, items) {
   const fl = rec.flags || {};
-  for (const m of items) { const f = fl[m.id]; m.fav = !!(f && f.fav); m.excluded = !!(f && f.excluded); m.sound = (f && f.sound) || 0; m.trim = (f && f.trim) || null; }
+  for (const m of items) { const f = fl[m.id]; m.fav = !!(f && f.fav); m.excluded = !!(f && f.excluded); m.sound = (f && f.sound) || 0; m.trim = (f && f.trim) || null; m.us = f && f.us != null ? !!f.us : undefined; }
   markDuplicates(items);
 }
 
@@ -883,7 +884,7 @@ function saveMediaFlags(item) {
   const rec = S.ctx && S.ctx.kind === 'place' ? S.ctx.rec : S.places.find((p) => (p.fps || []).includes(item.id));
   if (!rec) return;
   rec.flags = rec.flags || {};
-  if (item.fav || item.excluded || item.sound || item.trim) rec.flags[item.id] = { fav: !!item.fav, excluded: !!item.excluded, sound: item.sound || 0, trim: item.trim || null };
+  if (item.fav || item.excluded || item.sound || item.trim || item.us != null) rec.flags[item.id] = { fav: !!item.fav, excluded: !!item.excluded, sound: item.sound || 0, trim: item.trim || null, ...(item.us != null ? { us: !!item.us } : {}) };
   else delete rec.flags[item.id];
   if (rec === (S.ctx && S.ctx.rec)) savePlaceSoon(); else S.store.put('places', rec).catch(() => {});
 }
@@ -1379,7 +1380,7 @@ function snapshot() {
   const c = S.ctx;
   return JSON.stringify({
     settings: c.rec.settings, overrides: c.rec.overrides, hookId: c.rec.hookId || null, songId: c.rec.songId,
-    flags: c.media.map((m) => [m.id, !!m.fav, !!m.excluded]),
+    flags: c.media.map((m) => [m.id, !!m.fav, !!m.excluded, m.us == null ? null : !!m.us]),
   });
 }
 function startHistory() { S.hist = { stack: [snapshot()], idx: 0 }; updateUndo(); }
@@ -1408,7 +1409,8 @@ async function applySnapshot(json) {
   const map = new Map(s.flags.map((f) => [f[0], f]));
   for (const m of c.media) {
     const f = map.get(m.id);
-    if (f && (m.fav !== f[1] || m.excluded !== f[2])) { m.fav = f[1]; m.excluded = f[2]; saveMediaFlags(m); }
+    const us = f && f[3] != null ? f[3] : undefined;
+    if (f && (m.fav !== f[1] || m.excluded !== f[2] || m.us !== us)) { m.fav = f[1]; m.excluded = f[2]; m.us = us; saveMediaFlags(m); }
   }
   if (songChanged) await attachSong(c.rec.songId);
   S.selOverlay = null;
@@ -2294,6 +2296,7 @@ function renderMaterial() {
       ${m.kind === 'video' && m.duration ? `<span class="badge${tooLong.has(m.id) ? ' warn' : ''}">▶ ${m.trim ? '✂ ' + fmtClock(videoSpan(m)) : fmtClock(m.duration)}</span>` : ''}
       ${!m.excluded && !m.bad && autoOut(m) ? `<span class="out">aussortiert · ${autoOut(m)}</span>` : dropped.has(m.id) && !m.excluded ? '<span class="out">nicht im Film</span>' : ''}
       ${m.fav ? '<span class="flag fav">♥</span>' : ''}
+      ${!m.bad && !m.loading && isUs(m) ? `<span class="flag us${m.us === true ? ' set' : ''}" title="${m.us === true ? 'von dir als Wir markiert' : 'als Wir erkannt'}">WIR</span>` : ''}
       ${m.kind === 'video' && m.sound ? '<span class="flag snd" aria-label="Originalton an"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z" fill="currentColor"/><path d="M15.5 9a4 4 0 010 6M17.8 6.8a7 7 0 010 10.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>' : ''}
       ${isStart ? '<span class="flag start">START</span>' : ''}
       ${role ? `<span class="flag start">${role}</span>` : ''}
@@ -2316,6 +2319,8 @@ function openMediaSheet(id) {
     ${m.kind === 'video' && m.duration ? trimHTML(m) : ''}
     ${m.kind === 'video' ? `<div class="field"><span class="field-label">Originalton</span><div id="sndPick">${radioHTML('Originalton', VOICE_LEVELS, String(m.sound || 0))}</div>
       <p class="hint small">Mit Ton läuft das Video in Echtzeit, die Musik wird dort automatisch leiser.</p></div>` : ''}
+    <div class="field"><span class="field-label">Wir-Aufnahme</span><div id="usPick">${radioHTML('Wir-Aufnahme', [['auto', `Automatisch (${usScore({ ...m, us: undefined }) >= 0.5 ? 'erkannt' : 'nicht erkannt'})`], ['yes', 'Ja, wir'], ['no', 'Nein']], m.us === true ? 'yes' : m.us === false ? 'no' : 'auto')}</div>
+      <p class="hint small">Wir-Aufnahmen tragen die ruhigen Passagen und bekommen mehr Zeit; Natur, Häuser und Dinge die schnellen.</p></div>
     <div class="sheet-actions">
       <button class="btn" data-act="fav" type="button">${m.fav ? '♥ Kein Favorit mehr' : '♡ Als Favorit markieren'}</button>
       ${flightRole ? `<button class="btn" data-act="takeoff" type="button">${flightRole === 'takeoff' ? '✓ Abflug' : 'Als Abflug verwenden'}</button>
@@ -2328,6 +2333,8 @@ function openMediaSheet(id) {
   if (pv) pv.addEventListener('error', () => { if (m.thumb && pv.src !== m.thumb) pv.src = m.thumb; }, { once: true });
   if (m.kind === 'video' && m.duration) setupTrim(body, m);
   body.addEventListener('click', async (e) => {
+    const u = e.target.closest('#usPick [role="radio"]');
+    if (u) { setRadio(u.closest('.chips'), u.dataset.v); m.us = u.dataset.v === 'yes' ? true : u.dataset.v === 'no' ? false : undefined; saveMediaFlags(m); commit(); scheduleRebuild(0); renderMaterial(); return; }
     const r = e.target.closest('#sndPick [role="radio"]');
     if (r) { setRadio(r.closest('.chips'), r.dataset.v); await setVoice(m, +r.dataset.v); if (!m.audio) setRadio(r.closest('.chips'), '0'); return; }
     const a = e.target.closest('[data-act]');
@@ -2492,6 +2499,7 @@ function renderStyle() {
   setRadio($('allChips'), st.allMedia);
   setRadio($('variantChips'), st.variant);
   $('mvBtn').setAttribute('aria-checked', String(st.mv === 'on'));
+  $('usBtn').setAttribute('aria-checked', String(st.us !== 'off'));
   $('allChips').hidden = S.ctx.kind === 'bestof' || isFlight(S.ctx.rec);
   $('capHint').textContent = capacityText();
   setRadio($('preChips'), st.pre);
@@ -3441,6 +3449,7 @@ async function init() {
   bindSetting('drumChips', 'accent');
   bindSetting('allChips', 'allMedia');
   bindSetting('variantChips', 'variant');
+  $('usBtn').addEventListener('click', () => { const st = S.ctx.rec.settings; st.us = st.us === 'off' ? 'auto' : 'off'; commit(); savePlaceSoon(); scheduleRebuild(0); });
   $('mvBtn').addEventListener('click', () => { const st = S.ctx.rec.settings; st.mv = st.mv === 'on' ? 'off' : 'on'; commit(); savePlaceSoon(); engine && (engine.t = 0); scheduleRebuild(0); });
   bindSetting('colorChips', 'color');
   bindSetting('preChips', 'pre');

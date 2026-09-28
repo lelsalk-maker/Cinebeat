@@ -7,7 +7,7 @@
  * Liefert { retimed, hero } für die Erklärung der Regie.
  */
 function cutterPolish(clips, ctx) {
-  const { an, win, byId, beatDur, ov = {} } = ctx;
+  const { an, win, byId, beatDur, ov = {}, us = false } = ctx;
   const beats = Array.from(an.beats || []).map((b) => b - win.start);
   const bars = Array.from(an.barStart || []).map((b) => b - win.start);
   const onBar = (t) => bars.some((b) => Math.abs(b - t) < 0.04);
@@ -30,7 +30,8 @@ function cutterPolish(clips, ctx) {
   const weight = (c, first, prev) => {
     const m = img(c), size = shotSize(m);
     const q = sHi > sLo ? ((m.score || 0.5) - sLo) / (sHi - sLo) : 0.5;
-    return (size === 0 ? 1.45 : size === 2 ? 0.72 : 1) * (0.85 + 0.3 * q) * (first && prev && (prev.burst || prev.rush || prev.miniRew) ? 1.2 : 1);
+    // Wir-Vorrang: eure Aufnahmen stehen länger
+    return (size === 0 ? 1.45 : size === 2 ? 0.72 : 1) * (0.85 + 0.3 * q) * (first && prev && (prev.burst || prev.rush || prev.miniRew) ? 1.2 : 1) * (us && isUs(m) ? 1.35 : 1);
   };
   for (let i = 0; i < clips.length;) {
     if (!plain(clips[i])) { i++; continue; }
@@ -72,17 +73,21 @@ function cutterPolish(clips, ctx) {
     const c = clips[k];
     return (c.sectionChange && (c.label === 'drop' || c.label === 'chorus')) || k === clips.length - 1 - (clips[clips.length - 1] && clips[clips.length - 1].loop ? 1 : 0);
   });
+  const lastK = keys.length ? keys[keys.length - 1] : -1;
   for (const k of keys) {
     const c = clips[k];
     if (!plain(c) || own(c) || c.role === 'hook') continue;
     const m = img(c);
-    let bestK = -1, bestS = (m.score || 0.5) + 0.08;
+    // Wir-Vorrang: auf dem Drop Natur und Dinge (dort ist es schnell), als Schlussbild ihr
+    const isEnd = k === lastK && !c.sectionChange;
+    const val = (x) => (x.score || 0.5) + (us ? (isEnd ? 0.35 : -0.35) * (isUs(x) ? 1 : 0) : 0);
+    let bestK = -1, bestS = val(m) + 0.08;
     for (let d = -2; d <= 2; d++) {
       const n = clips[k + d];
       if (!d || !plain(n) || own(n) || n.role === 'hook' || keys.includes(k + d)) continue;
       const nm = img(n);
       if (Math.abs((nm.time || 0) - (m.time || 0)) > 3 * 60 * 1000) continue;
-      if ((nm.score || 0) > bestS) { bestS = nm.score; bestK = k + d; }
+      if (val(nm) > bestS) { bestS = val(nm); bestK = k + d; }
     }
     if (bestK >= 0) { const o = clips[bestK]; [c.mediaId, o.mediaId] = [o.mediaId, c.mediaId]; hero++; }
   }

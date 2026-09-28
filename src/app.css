@@ -488,3 +488,5 @@ body.comparing { overflow: hidden; }
 body.comparing .mini, body.comparing .mini-bar { display: none !important; }
 .bench-note { display: none; }
 .app[data-level="bench"] .bench-note { display: block; color: var(--beige-2); }
+.tile .flag.us { right: auto; left: 4px; color: var(--beige-ink); background: rgba(228, 213, 183, 0.72); letter-spacing: 0.06em; font-size: 9px; }
+.tile .flag.us.set { background: var(--beige); }
