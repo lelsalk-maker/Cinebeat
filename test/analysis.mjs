@@ -108,6 +108,16 @@ const res = await p.evaluate(async (b64) => {
   out.mic = { normal: micCase(3.22, 0.08, false), schnell: micCase(3.03, -0.06, false), spaet: micCase(3.9, 0.12, false), frueh: micCase(3.2, 0, true) };
   for (const k of ['normal', 'schnell', 'spaet']) if (out.mic[k].err == null || Math.abs(out.mic[k].err) > 15) fails.push(`Mithören-Einsatz ${k}: ${out.mic[k].err} ms`);
   if (!out.mic.frueh.early) fails.push('zu früh gestarteter Song nicht erkannt');
+  // Song zuerst: Empfehlung (ideale Länge, Fotos, Videos) je Ziel und Suche nach dem besten Schnitt
+  const adv = (st) => { const t0 = performance.now(); const a = songAdvice(an, { ...set0, ...st }); return { len: +a.length.toFixed(1), img: a.images, vid: a.videos, ms: Math.round(performance.now() - t0) }; };
+  out.advice = { story: adv({ format: '9:16', target: 'story' }), reel: adv({ format: '9:16', target: 'reel' }), post: adv({ format: '4:5' }), film: adv({ format: '16:9' }), songLen: +(an.lastSound - an.firstSound).toFixed(1) };
+  const A = out.advice;
+  if (!(A.story.img[0] >= 4 && A.story.img[1] <= 60 && A.story.vid[1] >= 1)) fails.push('Empfehlung Story unplausibel');
+  if (!(A.reel.len >= A.story.len - 0.5 && A.film.len >= A.reel.len - 0.5)) fails.push('Empfehlung: Längen nicht Story ≤ Reel ≤ Film');
+  if (A.story.len > 60.5) fails.push('Story-Empfehlung länger als 60 s');
+  const bc = await bestCut({ an, media, settings: set0, overrides: { texts: [], stickers: [] } }, 6);
+  out.bestCut = { seed: bc.seed, score: bc.score, tried: bc.tried.map((x) => x.score) };
+  if (!(bc.score >= bc.tried[0].score) || !bc.plan || !bc.plan.clips.length) fails.push('Bestschnitt-Suche falsch');
   return { out, fails };
 }, wav);
 console.log(JSON.stringify(res.out, null, 1));

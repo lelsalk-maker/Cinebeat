@@ -32,6 +32,11 @@ await page.click('#fSave');
 await page.waitForSelector('#emptyStage:not([hidden])', { timeout: 30000 });
 console.log('Leerer Flug:', await page.textContent('#esTitle'));
 await page.setInputFiles('#fileMedia2', paths);
+// Song zuerst: Beispiel-Beat wählen, dann schneiden
+await page.waitForSelector('#flowStage [data-flow="demo"]', { timeout: 90000 });
+await page.click('#flowStage [data-flow="demo"]');
+await page.waitForSelector('#flowStage [data-flow="cut"]', { timeout: 90000 });
+await page.click('#flowStage [data-flow="cut"]');
 await page.waitForFunction(() => CineBeat.S.plan && CineBeat.S.plan.clips.some((c) => c.flightAnim) && document.getElementById('busy').hidden, null, { timeout: 90000 });
 const EXTRA = JSON.parse(process.env.SET || '{}');
 await page.evaluate(async ([f, x]) => { Object.assign(CineBeat.S.ctx.rec.settings, { format: f }, x); await CineBeat.rebuild(); }, [FMT, EXTRA]);

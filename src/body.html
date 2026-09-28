@@ -89,6 +89,7 @@
             <input class="vh" type="file" id="fileMedia2" accept="image/*,video/*" multiple>
             <p class="es-hint" id="esHint">Den Rest erledigt die Auto-Regie: Länge, Songausschnitt, Schnitt, Look.</p>
           </div>
+          <div class="flow-stage" id="flowStage" hidden></div>
           <div class="busy" id="busy" hidden>
             <span class="spinner" aria-hidden="true"></span>
             <span id="busyText">Einen Moment …</span>
@@ -379,6 +380,7 @@
               <button class="btn small" id="micSong" type="button">Mithören</button>
             </div>
           </div>
+          <p class="song-advice" id="songAdvice"></p>
           <p class="hint small">Kein Song als Datei? Tippe auf <b>Mithören</b> und spiel ihn auf einem zweiten Gerät ab. Die App erkennt Takt und Aufbau direkt auf dem Handy; die Aufnahme bleibt nur im Zwischenspeicher auf deinem Gerät.</p>
           <div class="song-map-wrap">
             <canvas id="songMap" aria-label="Aufbau des Songs, tippen um den Start zu setzen"></canvas>

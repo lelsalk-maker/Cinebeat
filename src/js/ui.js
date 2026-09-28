@@ -292,10 +292,13 @@ async function useSong(song) {
   busy(null);
   commit();
   savePlaceSoon();
+  if (S.ctx.rec.flow === 'song') S.ctx.rec.flow = 'advice';
   renderMusic();
   engine.t = 0;
-  await rebuild({ fresh: true });
-  toast(`Songaufbau erkannt: ${song.an.sections.length} Abschnitte, ${Math.round(song.an.bpm)} BPM.`);
+  if (flowPending(S.ctx)) { await rebuild({ fresh: true }); return; }
+  // neuer Song für einen fertigen Film: gleich bestmöglich neu schneiden
+  await cutFilm();
+  toast(`Songaufbau erkannt: ${song.an.sections.length} Abschnitte, ${Math.round(song.an.bpm)} BPM. Film neu geschnitten.`);
 }
 
 async function importSong(file) {
@@ -896,7 +899,7 @@ async function importTrip(fileList) {
     let rec = st.pos ? S.places.find((p) => p.pos && haversineKm(p.pos, st.pos) < 25) : null;
     if (!rec) {
       rec = {
-        id: uid('p'), name: st.name || `Stopp ${S.places.length + 1}`, sub: dateRangeLabel(st.from, st.to), created: Date.now(), songId: 'demo',
+        id: uid('p'), name: st.name || `Stopp ${S.places.length + 1}`, sub: dateRangeLabel(st.from, st.to), created: Date.now(), songId: 'demo', flow: 'song',
         settings: baseSettings(DEFAULT_SETTINGS), overrides: { clips: {}, texts: [], stickers: [] }, hookId: null, fps: [], flags: {},
         autoName: !st.name,
       };
@@ -994,7 +997,7 @@ function openFlightSheet(rec) {
     <button class="btn primary big" id="fSave" type="button">${rec ? 'Speichern' : 'Weiter zu den Videos'}</button>`);
   body.querySelector('#fSave').addEventListener('click', async () => {
     const r = rec || {
-      id: uid('f'), kind: 'flight', created: Date.now(), songId: 'demo', settings: baseSettings(DEFAULT_SETTINGS),
+      id: uid('f'), kind: 'flight', created: Date.now(), songId: 'demo', flow: 'song', settings: baseSettings(DEFAULT_SETTINGS),
       overrides: { clips: {}, texts: [], stickers: [] }, hookId: null, flags: {}, fps: [], flight: {},
     };
     r.flight = { ...(r.flight || {}), fromName: body.querySelector('#fFrom').value.trim(), toName: body.querySelector('#fTo').value.trim() };
@@ -1111,7 +1114,7 @@ async function openBestof() {
   showView('edit');
   closeContext();
   const trip = S.trip;
-  if (!trip.bestof) trip.bestof = { id: 'bestof', settings: { ...baseSettings(BESTOF_DEFAULTS), seed: 11 }, overrides: { clips: {}, texts: [], stickers: [] }, songId: 'demo', include: {} };
+  if (!trip.bestof) trip.bestof = { id: 'bestof', settings: { ...baseSettings(BESTOF_DEFAULTS), seed: 11 }, overrides: { clips: {}, texts: [], stickers: [] }, songId: 'demo', include: {}, flow: 'song' };
   const rec = trip.bestof;
   rec.settings = normalizeSettings(rec.settings, BESTOF_DEFAULTS);
   rec.overrides = { clips: {}, texts: [], stickers: [], ...(rec.overrides || {}) };
@@ -1231,12 +1234,13 @@ async function rebuild(opts = {}) {
   const pendingVoice = media.filter((m) => m.sound > 0 && !m.audio && !m.noAudio);
   if (pendingVoice.length) { busy('Lese Originalton …'); await Promise.all(pendingVoice.map(ensureVoice)); busy(null); if (S.ctx !== ctx) return; }
   const s = ctx.rec.settings;
-  const settings = { ...s, title: ctxTitle(), subtitle: ctxSub(), hookId: ctx.rec.hookId };
-  let chapters = null;
-  if (ctx.kind === 'bestof') chapters = ctx.chapters.map((c) => ({ title: c.title, media: c.media.filter((m) => !m.bad) }));
+  // Song zuerst: solange der Song nicht feststeht, wird nichts geschnitten – die Bühne zeigt die Schritte
+  if (flowPending(ctx)) { showFlow(media); return; }
+  $('flowStage').hidden = true;
+  $('regie').hidden = false;
   let plan;
   try {
-    plan = buildPlan({ an: ctx.song.an, media, settings, overrides: ctx.rec.overrides, chapters, trip: tripContext(), flight: ctx.kind === 'place' && isFlight(ctx.rec) ? flightData(ctx.rec) : null });
+    plan = buildPlan(planOpts(ctx, media));
   } catch (e) {
     console.error(e);
     toast('Der Schnitt konnte nicht berechnet werden: ' + e.message, true);
@@ -1278,6 +1282,113 @@ async function rebuild(opts = {}) {
   if (wasPlaying) engine.play(engine.t);
   else if (opts.fresh || engine.t < 0.05) await showPoster();
   else { await engine.renderStill(engine.t); updateTime(engine.t); }
+}
+
+/** Eingaben für den Planer (Neuberechnung und Suche nach dem besten Schnitt nutzen dieselben). */
+function planOpts(ctx, media) {
+  const settings = { ...ctx.rec.settings, title: ctxTitle(), subtitle: ctxSub(), hookId: ctx.rec.hookId };
+  const chapters = ctx.kind === 'bestof' ? ctx.chapters.map((c) => ({ title: c.title, media: c.media.filter((m) => !m.bad) })) : null;
+  return { an: ctx.song.an, media, settings, overrides: ctx.rec.overrides, chapters, trip: tripContext(), flight: ctx.kind === 'place' && isFlight(ctx.rec) ? flightData(ctx.rec) : null };
+}
+
+/* ---------- Song zuerst: Song wählen → Songprofil und Empfehlung → bester Schnitt ---------- */
+const flowPending = (ctx) => !!ctx && (ctx.rec.flow === 'song' || ctx.rec.flow === 'advice');
+const FLOW_TARGETS = [['story', 'Story', { format: '9:16', target: 'story' }], ['reel', 'Reel', { format: '9:16', target: 'reel' }], ['post', 'Beitrag', { format: '4:5' }], ['film', 'Film', { format: '16:9' }]];
+const flowTarget = (st) => (st.format === '16:9' || st.format === '2.39' ? 'film' : st.format === '4:5' ? 'post' : st.target === 'reel' ? 'reel' : 'story');
+
+function showFlow(media) {
+  const ctx = S.ctx;
+  S.plan = null;
+  engine.pause();
+  const stage = $('flowStage');
+  renderRegie();
+  $('regie').hidden = true;
+  const empty = ctx.kind === 'place' && !media.length;
+  $('emptyStage').hidden = !empty;
+  $('monitor').classList.toggle('empty', empty);
+  $('exportBtn').disabled = true;
+  $('durLabel').textContent = '–';
+  $('cutInfo').textContent = empty ? 'Noch kein Material. Füge Fotos oder Videos hinzu.' : ctx.rec.flow === 'song' ? 'Noch kein Film: zuerst der Song' : 'Song steht – bereit zum Schneiden';
+  buildStripBase(); drawStrip(0);
+  if (S.tab === 'material') renderMaterial();
+  if (S.tab === 'music') renderMusic();
+  busy(null);
+  if (empty) { stage.hidden = true; return; }
+  const nI = media.filter((m) => m.kind === 'image').length, nV = media.length - nI;
+  const matLine = `${nI} ${nI === 1 ? 'Foto' : 'Fotos'}${nV ? ` und ${nV} ${nV === 1 ? 'Video' : 'Videos'}` : ''}`;
+  if (ctx.rec.flow === 'song') {
+    stage.innerHTML = `<div class="fs-inner">
+      <p class="fs-step">Schritt 2 von 3 · Song</p>
+      <h3 class="fs-title">Welcher Song soll es werden?</h3>
+      <p class="fs-text">${matLine} sind bereit. Geschnitten wird erst, wenn der Song feststeht: Dann analysiert die App Takt, Aufbau und Höhepunkte in Ruhe, sagt dir, wie viele Aufnahmen ideal sind, und legt jeden Schnitt auf die Musik.</p>
+      <div class="fs-actions">
+        <label class="btn primary" for="fileMusic">Song-Datei wählen</label>
+        <button class="btn" type="button" data-flow="mic">Mithören</button>
+        <button class="btn ghost" type="button" data-flow="demo">Beispiel-Beat nehmen</button>
+      </div>
+    </div>`;
+  } else {
+    const an = ctx.song.an, st = ctx.rec.settings;
+    const adv = songAdvice(an, st);
+    S.advice = adv;
+    const tg = flowTarget(st);
+    const peak = (an.sections || []).find((x) => x.label === 'drop' || x.label === 'chorus');
+    const songLen = Math.max(0, Math.min(an.duration, an.lastSound + 0.2) - Math.max(0, an.firstSound));
+    const bar = (an.sections || []).map((x) => `<i style="flex:${Math.max(0.001, x.end - x.start).toFixed(2)};background:${SECTION_COLOR[x.label] || '#34507a'}" title="${SECTION_DE[x.label] || ''}"></i>`).join('');
+    const [a, b] = adv.images, [va, vb] = adv.videos;
+    const vTxt = vb ? (va ? `${va}–${vb} Videos` : `bis ${vb} ${vb === 1 ? 'Video' : 'Videos'}`) : 'keine Videos nötig';
+    const allOn = st.allMedia !== 'off' && ctx.kind === 'place' && !isFlight(ctx.rec);
+    const why = { story: 'kurzer Aufbau und der erste Höhepunkt ganz', reel: 'Aufbau und die Höhepunkte, bis 90 s', post: 'kurzer Aufbau und der erste Höhepunkt', film: 'der ganze Song' }[tg];
+    let verdict;
+    if (ctx.kind === 'bestof') verdict = 'Der Gesamtfilm nimmt aus jedem Ort die stärksten Momente, in Kapiteln.';
+    else if (isFlight(ctx.rec)) verdict = 'Abflug, Flugroute und Landung ordnet die Regie selbst.';
+    else if (nI > b) verdict = allOn ? `Mehr als ideal: Alle ${nI} kommen hinein. Die Regie verlängert den Film, wenn der Song es hergibt, und verdichtet sonst im Refrain (Split-Screens, Foto-Serien); ruhige Teile bleiben ruhig. Lieber luftiger? Unter „Look“ auf „Beste Auswahl“: dann nimmt sie die stärksten ${adv.ideal.images}.` : `Mehr als ideal: Die Regie nimmt die stärksten ${adv.ideal.images} (Einstellung „Beste Auswahl“).`;
+    else if (nI < a) verdict = `Etwas weniger als ideal: Jedes Bild steht länger, der Film wird entsprechend kürzer. Für den vollen Bogen fehlen etwa ${a - nI} Aufnahmen – oder du nimmst sie so, auch das wird rund.`;
+    else verdict = 'Passt ideal zu diesem Song.';
+    stage.innerHTML = `<div class="fs-inner">
+      <p class="fs-step">Schritt 3 von 3 · Songprofil</p>
+      <h3 class="fs-title">${esc(ctx.song.name || 'Song')}</h3>
+      <p class="fs-meta">${Math.round(an.bpm)} BPM · ${fmtClock(songLen)}${peak ? ` · Höhepunkt ab ${fmtClock(peak.start)}` : ''}</p>
+      <div class="fs-bar" aria-hidden="true">${bar}</div>
+      <div class="chips fs-targets" role="radiogroup" aria-label="Wofür">${FLOW_TARGETS.map(([k, l]) => `<button type="button" role="radio" data-target="${k}" aria-checked="${k === tg}">${l}</button>`).join('')}</div>
+      <div class="fs-advice">
+        <span class="fs-label">Ideal für diesen Song</span>
+        <b>${a}–${b} Fotos · ${vTxt}</b>
+        <span>Film ca. ${fmtClock(adv.length)} – ${why}</span>
+      </div>
+      <p class="fs-text"><b>Du hast ${matLine}.</b> ${verdict}</p>
+      <div class="fs-actions">
+        <button class="btn primary" type="button" data-flow="cut">Film schneiden</button>
+        ${ctx.kind === 'place' ? '<label class="btn" for="fileMedia">Aufnahmen hinzufügen</label>' : ''}
+        <button class="btn ghost" type="button" data-flow="resong">Anderen Song wählen</button>
+      </div>
+    </div>`;
+  }
+  stage.hidden = false;
+}
+
+/** Bester Schnitt: mehrere vollständige Varianten planen, bewerten, die beste behalten. */
+async function cutFilm(n = 8) {
+  const ctx = S.ctx;
+  if (!ctx || !ctx.song) return;
+  const media = ctx.media.filter((m) => !m.loading && !m.bad);
+  if (!media.length) return;
+  engine.pause();
+  busy(`Suche den besten Schnitt … Variante 1 von ${n}`);
+  let res;
+  try {
+    res = await bestCut(planOpts(ctx, media), n, (k, N) => busy(`Suche den besten Schnitt … Variante ${Math.min(N, k + 1)} von ${N}`));
+  } catch (e) { console.error(e); busy(null); toast('Der Schnitt konnte nicht berechnet werden: ' + e.message, true); return; }
+  busy(null);
+  if (S.ctx !== ctx) return;
+  ctx.rec.settings.seed = res.seed;
+  if (ctx.rec.flow) ctx.rec.flow = 'done';
+  commit();
+  savePlaceSoon();
+  $('flowStage').hidden = true;
+  engine.t = 0;
+  await rebuild({ fresh: true });
+  toast(`Fertig: der beste von ${n} Schnitten.`);
 }
 
 async function showPoster() {
@@ -1501,7 +1612,7 @@ async function renderTrip() {
         <span class="place-text">
           <strong>${esc(p.name || 'Ohne Namen')}</strong>
           <span class="meta">${fl ? esc(meta) : meta}</span>
-          ${missing ? '<span class="pill warn">Fotos erneut wählen</span>' : p.demo ? '<span class="pill demo">Beispiel</span>' : p.exported ? '<span class="pill ok">Exportiert</span>' : ''}
+          ${missing ? '<span class="pill warn">Fotos erneut wählen</span>' : p.demo ? '<span class="pill demo">Beispiel</span>' : p.flow === 'song' && present ? '<span class="pill demo">Song wählen</span>' : p.flow === 'advice' ? '<span class="pill demo">Bereit zum Schneiden</span>' : p.exported ? '<span class="pill ok">Exportiert</span>' : ''}
         </span>
         <button class="icon-btn place-more" type="button" data-more="${esc(p.id)}" aria-label="Optionen für ${esc(p.name)}">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="19" cy="12" r="1.8" fill="currentColor"/></svg>
@@ -1523,7 +1634,7 @@ async function renderTrip() {
 
 async function newPlace() {
   const rec = {
-    id: uid('p'), name: 'Neuer Ort', sub: '', created: Date.now(), songId: 'demo',
+    id: uid('p'), name: 'Neuer Ort', sub: '', created: Date.now(), songId: 'demo', flow: 'song',
     settings: baseSettings(DEFAULT_SETTINGS),
     overrides: { clips: {}, texts: [], stickers: [] }, hookId: null, fps: [], flags: {},
   };
@@ -1809,6 +1920,10 @@ function renderMusic() {
   const counts = {};
   for (const s of an.sections) counts[s.label] = (counts[s.label] || 0) + 1;
   $('songMeta').textContent = `${ctx.song.mic ? 'mitgehört ab ' + fmtClock(ctx.song.offset || 0) : fmtClock(an.duration)} · ${Math.round(an.bpm)} BPM · ${an.sections.length} Abschnitte`;
+  {
+    const a = songAdvice(an, ctx.rec.settings), [va, vb] = a.videos, lbl = FLOW_TARGETS.find((x) => x[0] === flowTarget(ctx.rec.settings))[1];
+    $('songAdvice').textContent = `Ideal für diesen Song als ${lbl}: ${a.images[0]}–${a.images[1]} Fotos · ${vb ? (va ? `${va}–${vb}` : `bis ${vb}`) + ' Videos' : 'ohne Videos'} · Film ca. ${fmtClock(a.length)}.`;
+  }
   const st = ctx.rec.settings;
   setRadio($('startChips'), typeof st.songStart === 'number' ? '' : st.songStart);
   setRadio($('lenChips'), String(st.length));
@@ -2751,6 +2866,22 @@ async function init() {
   });
   for (const id of ['fileMedia', 'fileMedia2']) $(id).addEventListener('change', (e) => { const fl = Array.from(e.target.files || []); e.target.value = ''; addFiles(fl); });
   $('micSong').addEventListener('click', openMicSheet);
+  $('flowStage').addEventListener('click', async (e) => {
+    const t = e.target.closest('[data-flow],[data-target]');
+    if (!t || !S.ctx) return;
+    if (t.dataset.target) {
+      const tg = FLOW_TARGETS.find((x) => x[0] === t.dataset.target);
+      Object.assign(S.ctx.rec.settings, tg[2]);
+      commit(); savePlaceSoon();
+      await rebuild({ fresh: true });
+      return;
+    }
+    const a = t.dataset.flow;
+    if (a === 'mic') openMicSheet();
+    else if (a === 'demo') { busy('Analysiere Songaufbau …'); await useSong(await getSong('demo')); }
+    else if (a === 'cut') await cutFilm();
+    else if (a === 'resong') { S.ctx.rec.flow = 'song'; commit(); savePlaceSoon(); await rebuild({ fresh: true }); }
+  });
   $('fileMusic').addEventListener('change', async (e) => {
     const f = e.target.files && e.target.files[0];
     e.target.value = '';

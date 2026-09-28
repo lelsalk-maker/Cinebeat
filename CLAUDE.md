@@ -25,6 +25,7 @@ beat-synchrone Filme macht. Läuft komplett auf dem Gerät (iPhone ist Hauptziel
 | `plan/chrono.js` | `layoutChrono`: Aufnahmen streng chronologisch auf die Schnitte (Split, Serie, Stapel, Videoplätze) |
 | `plan/plan.js` | `planOnce`: Einstiege, Stil-Mittel, Zuteilung, Übergänge, Bewegung, Effekte, Overlays, Kapazität |
 | `plan/timeline.js` | `layersAt`, `clipIndexAt` |
+| `plan/advice.js` | Song zuerst: `idealLength`, `songAdvice` (ideale Menge per Testschnitt), `planQuality` (Bewertung), `bestCut` (beste von n Varianten) |
 | `director.js` | Auto-Regie: Varianten (`VARIANTS`), Musikvideo (`withMusicVideo`), Aussortieren (`autoOut`), Länge, Songausschnitt, Tempo, Look, Einstieg/Ende, Stil-Budget (`rs.*`) |
 | `renderer.js` | WebGL-Shader (zwei Ebenen A/B, Grading, Übergänge, Film-Schwarzweiß `filmBW`, Farbmomente, Mehrfachbelichtung 21/22, Spiegel, Farbversatz) |
 | `overlay.js` | Titel, Kapitel, Flug- und Etappenkarte (`drawRouteMap`), Countdown usw. (Canvas 2D, ungegradet) |
@@ -35,6 +36,7 @@ beat-synchrone Filme macht. Läuft komplett auf dem Gerät (iPhone ist Hauptziel
 `analyzeAudio` → `an` · Medien mit Scores → `buildPlan({ an, media, settings, overrides, chapters, trip, flight })` → `plan`
 (`overrides`: `clips[i]` = {mediaId, trans, speed, srcOffset, again}, `moves` = [{id, before}] aus der Zeitleiste, `texts`, `stickers`)
 (`clips[]` mit `start/end/visStart/visEnd`, `mediaIndex`, `motion`, `tin/tout`, Flags wie `split/grid/stack/burst/vid/rush`; `fx[]`, `overlays[]`, `capacity`, `notes`, `resolved`)
+Ablauf je Ort (`rec.flow`): `song` (Song wählen) → `advice` (Songprofil + Empfehlung) → `done` (geschnitten; alte Orte ohne `flow` gelten als fertig). Vorher baut `rebuild` keinen Plan, sondern zeigt `#flowStage`.
 → `Engine.setProject` → `drawAt(t)` je Bild → Renderer. **`clip.i` muss dem Index in `plan.clips` entsprechen.**
 
 ## Regeln, die gelten müssen

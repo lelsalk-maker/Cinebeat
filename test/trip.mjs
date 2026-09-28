@@ -57,6 +57,9 @@ console.log('Hinweis:', await page.textContent('#sheetBody .hint'));
 await page.screenshot({ path: `${OUT}/trip_summary.png` });
 await page.click('#sheetBody [data-act="done"]');
 await page.waitForTimeout(400);
+// neue Orte starten im Song-Schritt; dieser Test prüft Orte, Karten und Einstiege: Beispiel-Beat, Film gilt als geschnitten
+console.log('Song-Schritt:', await page.evaluate(() => CineBeat.S.places.filter((p) => !p.demo).map((p) => p.flow).join(',')));
+await page.evaluate(() => { for (const p of CineBeat.S.places) p.flow = 'done'; });
 console.log('Reise:', await page.textContent('#tripStats'));
 await page.screenshot({ path: `${OUT}/trip_view.png`, fullPage: true });
 // Gespeichert? Nur leichte Daten
@@ -80,6 +83,7 @@ console.log('Erneut gewählt:', await page.evaluate(() => ({ sheet: document.que
 async function introShots(tag, set, open, times) {
   await page.evaluate(async ([set, open]) => {
     if (open === 'bestof') await CineBeat.openBestof(); else await CineBeat.openPlace(CineBeat.S.places.find((p) => p.name.startsWith(open)).id);
+    CineBeat.S.ctx.rec.flow = 'done';
     Object.assign(CineBeat.S.ctx.rec.settings, set); await CineBeat.rebuild();
   }, [set, open]);
   await page.waitForFunction(() => CineBeat.S.plan && document.getElementById('busy').hidden, null, { timeout: 90000 });
