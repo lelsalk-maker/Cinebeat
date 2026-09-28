@@ -1691,7 +1691,8 @@ function drawStrip(t) {
   const tt = t == null ? (engine ? engine.t : 0) : t;
   const px = (tt / S.plan.duration) * c.width;
   const dpr = Math.min(2, window.devicePixelRatio || 1);
-  x.fillStyle = '#e4d5b7';
+  // Abspielmarke in warmem Kinolicht (--tungsten): „läuft gerade“ hebt sich vom beigen Bedienelement ab
+  x.fillStyle = '#f2c98a';
   x.fillRect(Math.round(px - dpr), 0, 2 * dpr, c.height);
   c.setAttribute('aria-valuenow', String(Math.round((tt / S.plan.duration) * 100)));
 }

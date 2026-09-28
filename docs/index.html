@@ -34,6 +34,7 @@
   --beige: #e4d5b7;
   --beige-2: #c7b48f;
   --beige-ink: #16120b;
+  --tungsten: #f2c98a;   /* warmes Kinolicht: nur für „läuft gerade“ (Abspielmarke, laufende Einstellung, Fortschritt) */
   --blue: #6e93c9;
   --danger: #e27a6e;
   --radius: 14px;
@@ -69,8 +70,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .btn svg { width: 18px; height: 18px; flex: none; }
 .btn.small { min-height: 38px; padding: 0 13px; font-size: 13.5px; border-radius: 10px; }
 .btn.ghost { background: transparent; }
-.btn.primary { background: var(--beige); border-color: var(--beige); color: var(--beige-ink); }
-.btn.primary:hover { background: #ecdfc4; }
+.btn.primary { background: linear-gradient(180deg, #ecdfc3 0%, var(--beige) 45%, #d9c7a2 100%); border-color: #e8d9bb; color: var(--beige-ink); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 10px 26px -14px rgba(228, 213, 183, 0.55); }
+.btn.primary:hover { background: linear-gradient(180deg, #f1e6cf 0%, #e9dbbf 45%, #dccaa6 100%); }
+.btn.primary:active { background: #d6c39d; box-shadow: inset 0 1px 3px rgba(22, 18, 11, 0.25); }
 .btn.primary-outline { border-color: rgba(228, 213, 183, 0.45); color: var(--beige); background: rgba(228, 213, 183, 0.06); }
 .btn.danger { color: #f0a79d; border-color: rgba(226, 122, 110, 0.45); background: rgba(226, 122, 110, 0.07); }
 .btn.big { min-height: 54px; font-size: 16px; width: 100%; border-radius: 14px; }
@@ -142,7 +144,7 @@ textarea.text-in { resize: vertical; min-height: 70px; }
 .mini { display: flex; align-items: center; gap: 8px; animation: miniIn 0.22s ease-out; }
 .mini-thumb { height: 44px; width: 25px; padding: 0; border-radius: 7px; overflow: hidden; border: 1px solid var(--line-2); background: #000; cursor: pointer; flex: none; }
 .mini-thumb canvas { display: block; width: 100%; height: 100%; }
-.mini-bar { position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--beige); transform-origin: left center; transform: scaleX(0); opacity: 0.85; pointer-events: none; }
+.mini-bar { position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--tungsten); transform-origin: left center; transform: scaleX(0); opacity: 0.85; pointer-events: none; }
 @keyframes miniIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 @media (min-width: 960px) { .mini, .mini-bar { display: none !important; } }
 @media (prefers-reduced-motion: reduce) { .mini { animation: none; } }
@@ -183,7 +185,7 @@ textarea.text-in { resize: vertical; min-height: 70px; }
 .sec { display: flex; align-items: center; gap: 6px; }
 .sec i { width: 6px; height: 6px; border-radius: 50%; background: var(--blue); opacity: 0.35; transition: opacity 0.12s linear; }
 .sec i.on { opacity: 1; transition: none; }
-.sec i.down { background: var(--beige); }
+.sec i.down { background: var(--tungsten); }
 .sample-chip { position: absolute; left: 8px; bottom: 8px; font: 600 10.5px/1 var(--f-sans); letter-spacing: 0.12em; text-transform: uppercase; padding: 6px 8px; border-radius: 6px; background: rgba(228, 213, 183, 0.92); color: var(--beige-ink); pointer-events: none; z-index: 2; }
 .bigplay { position: absolute; left: 50%; top: 50%; width: 58px; height: 58px; margin: -29px 0 0 -29px; border-radius: 50%; border: 1px solid rgba(236, 234, 228, 0.32); background: rgba(5, 6, 8, 0.32); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); color: var(--text); display: grid; place-items: center; cursor: pointer; z-index: 3; transition: opacity 0.25s ease, transform 0.25s ease; }
 .bigplay svg { width: 22px; height: 22px; margin-left: 3px; }
@@ -485,8 +487,8 @@ details.more[open] { display: grid; gap: 16px; }
 .bench-dock .cliprow-wrap { margin-top: 2px; }
 .bench-dock .cliprow { min-height: 64px; }
 .bench-dock .clip { height: 64px; }
-.clip.now::after { content: ""; position: absolute; inset: auto 0 0 0; height: 3px; background: var(--beige); }
-.clip.now { box-shadow: 0 0 0 1px var(--beige-2); }
+.clip.now::after { content: ""; position: absolute; inset: auto 0 0 0; height: 3px; background: var(--tungsten); }
+.clip.now { box-shadow: 0 0 0 1.5px var(--tungsten); }
 .regie-head { flex-wrap: wrap; }
 .regie-head h2 { margin-right: auto; }
 
@@ -12234,7 +12236,8 @@ function drawStrip(t) {
   const tt = t == null ? (engine ? engine.t : 0) : t;
   const px = (tt / S.plan.duration) * c.width;
   const dpr = Math.min(2, window.devicePixelRatio || 1);
-  x.fillStyle = '#e4d5b7';
+  // Abspielmarke in warmem Kinolicht (--tungsten): „läuft gerade“ hebt sich vom beigen Bedienelement ab
+  x.fillStyle = '#f2c98a';
   x.fillRect(Math.round(px - dpr), 0, 2 * dpr, c.height);
   c.setAttribute('aria-valuenow', String(Math.round((tt / S.plan.duration) * 100)));
 }
