@@ -840,6 +840,15 @@ function planOnce(opts) {
   // Bester Moment eines Videos auf einen Schlag: Versatz so wählen, dass er auf einen Beat im Clip fällt,
   // bevorzugt auf eine Eins; nur wenn das den Ausschnitt kaum verschiebt
   const barsRelV = (an.barStart || []).map((b) => b - win.start);
+  // Aktionsmomente der Videos auf Schlag, Snare und Bassdrum (wie ein Cutter, der Bewegung auf die Musik schneidet)
+  const grid = hitGrid(an, win);
+  let vSynced = 0, vHits = 0;
+  const trySync = (m, c, tIn, off0, hi, rate, best) => {
+    if (c.rp || !m.hits || !m.hits.length) return null;
+    const r = syncVideoOffset(m, c, { tIn, off0, hi, rate, grid, best });
+    if (r) { vSynced++; vHits += r.hits; }
+    return r;
+  };
   const onBeatOffset = (h, off0, hi, c, rate) => {
     let bestOff = off0, bestCost = Infinity;
     for (const b of bts0) {
@@ -964,7 +973,9 @@ function planOnce(opts) {
         const hl = (m.highlights || []).map((h) => h.t - tIn).filter((t) => t >= 0 && t <= vd);
         const best = hl.length ? hl[0] : vd * 0.4;
         off = Math.min(Math.max(0, best - needS * 0.4), Math.max(0, vd - needS));
-        if (!c.rp && hl.length) off = onBeatOffset(best, off, Math.max(0, vd - needS), c, rate);
+        const sy = trySync(m, c, tIn, off, Math.max(0, vd - needS), rate, hl.length ? best : null);
+        if (sy) off = sy.off;
+        else if (!c.rp && hl.length) off = onBeatOffset(best, off, Math.max(0, vd - needS), c, rate);
       }
       else if (c.role === 'takeoff') off = vd - needS - Math.min(1, vd * 0.05); // Abheben liegt meist gegen Ende
       else if (c.role === 'landing') off = Math.min(0.5, vd * 0.05);
@@ -974,7 +985,9 @@ function planOnce(opts) {
         const hlIn = hl.map((t) => t - tIn).filter((t) => t >= 0 && t <= vd);
         const center = hlIn.length ? hlIn[used % hlIn.length] : vd * 0.4;
         off = center - needS / 2;
-        if (!c.rp && hlIn.length) off = onBeatOffset(center, Math.max(0, Math.min(off, Math.max(0, vd - needS))), Math.max(0, vd - needS), c, rate);
+        const sy = trySync(m, c, tIn, Math.max(0, Math.min(off, Math.max(0, vd - needS))), Math.max(0, vd - needS), rate, hlIn.length ? center : null);
+        if (sy) off = sy.off;
+        else if (!c.rp && hlIn.length) off = onBeatOffset(center, Math.max(0, Math.min(off, Math.max(0, vd - needS))), Math.max(0, vd - needS), c, rate);
         videoCursor.set(m.id, used + 1);
       }
       c.srcOffset = tIn + Math.max(0, Math.min(off, Math.max(0, vd - needS)));
@@ -1072,6 +1085,7 @@ function planOnce(opts) {
     // Drift: gleitet in die Richtung weiter, in die die Kamera schon fährt
     if (c.tout && c.tout.type === TR.DRIFT && c.motion) { const dx = c.motion.to.x - c.motion.from.x; c.tout.dirSign = Math.abs(dx) > 0.02 ? Math.sign(dx) : c.dir === 'left' ? -1 : 1; }
   }
+  if (vSynced) dir.notes.push(`Video auf den Takt: in ${vSynced} ${vSynced === 1 ? 'Einstellung' : 'Einstellungen'} landen ${vHits} Bewegungsmomente (Sprung, Welle, Schwenk) genau auf Schlag, Snare oder Bassdrum; kein Schnitt reißt eine Bewegung ab.`);
   // nach dem Raster-Zoom: gleiches Bild, gleicher (zentrierter) Ausschnitt, dann sanfte Fahrt
   for (const c of clips) {
     if (!c.afterGrid || !c.motion) continue;

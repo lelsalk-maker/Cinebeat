@@ -344,3 +344,33 @@ async function probeVideoFast(file) {
     fr.close();
   }
 }
+
+/**
+ * Feinanalyse fürs Schneiden auf den Takt (läuft nach dem Einlesen im Hintergrund): dichte Bewegungskurve und
+ * Aktionsmomente auf das Einzelbild genau. Dekodiert das ganze Video (bzw. den gewählten Ausschnitt) einmal.
+ * Liefert { hits, act } oder null (Format passt nicht).
+ */
+async function analyzeVideoAction(file, from = 0, to = Infinity) {
+  if (typeof VideoDecoder === 'undefined' || !/\.(mp4|mov|m4v)$/i.test(file.name || '') && !/mp4|quicktime/.test(file.type || '')) return null;
+  let track = null;
+  try { track = await demuxVideo(file); } catch (e) { return null; }
+  if (!track || track.samples.length < 2) return null;
+  const fr = await FrameReader.open(track, SCORE_SIZE, true);
+  if (!fr) return null;
+  try {
+    const duration = trackDuration(track);
+    const a = Math.max(0, from), b = Math.min(duration, to), len = b - a;
+    // sehr lange Stücke gröber, ab 3 min nicht (der Nutzen im Schnitt ist dort gering)
+    const hz = len <= 60 ? 8 : len <= 180 ? 4 : 0;
+    if (!hz) return { hits: [], act: null };
+    const c = fr.canvas;
+    const grab = async (t) => fr.canvasAt(Math.max(0, Math.min(duration - 0.02, a + t)));
+    const act = await actionCurve(grab, c.width, c.height, len, hz);
+    if (!act) return { hits: [], act: null };
+    return { hits: act.hits.map(([t, st]) => [+(t + a).toFixed(3), st]), act: { hz: act.hz, from: a, v: act.v } };
+  } catch (e) {
+    return null;
+  } finally {
+    fr.close();
+  }
+}

@@ -671,6 +671,31 @@ function scoreInWorker(item) {
   });
 }
 
+/* Feinanalyse der Videos im Hintergrund: Bewegungskurve und Aktionsmomente auf das Einzelbild (für den Schnitt auf
+ * den Takt). Läuft nach dem Einlesen still weiter, pausiert während eines Exports; „Film schneiden“ wartet darauf. */
+const vAct = { queue: [], running: null };
+function queueVideoAction(items) {
+  for (const m of items || []) if (m.kind === 'video' && m.file && !m.hits && !m.bad && !m.loading && !vAct.queue.includes(m)) vAct.queue.push(m);
+  if (!vAct.running && vAct.queue.length) vAct.running = runVideoAction();
+}
+async function runVideoAction() {
+  let n = 0;
+  const t0 = performance.now();
+  while (vAct.queue.length) {
+    const m = vAct.queue.shift();
+    while (S.exporting) await new Promise((r) => setTimeout(r, 500));
+    let r = null;
+    try { r = await analyzeVideoAction(m.file); } catch (e) { r = null; }
+    m.hits = r ? r.hits : [];
+    if (r && r.act) m.act = r.act;
+    n++;
+    saveWork(m);
+  }
+  perfLog.add('action', { videos: n, ms: Math.round(performance.now() - t0) });
+  vAct.running = null;
+}
+function videoActionPending(media) { return !!vAct.running && (vAct.queue.some((m) => media.includes(m)) || media.some((m) => m.kind === 'video' && m.file && !m.hits)); }
+
 /** Bildmaße (mit EXIF-Drehung) aus dem Dateikopf, ohne das Bild zu dekodieren; null, wenn nicht lesbar. */
 async function imageDims(url) {
   const img = new Image();
@@ -823,6 +848,7 @@ async function ingestFiles(fileList, onProgress) {
     it.loading = false;
     if (!it.bad) saveWork(it);
   }
+  queueVideoAction(fresh);
   if (fresh.length) {
     const nImg = fresh.filter((i) => i.kind === 'image').length, ms = performance.now() - tStart;
     perfLog.add('import', { files: fresh.length, images: nImg, videos: fresh.length - nImg, ms: Math.round(ms), perItem: Math.round(ms / fresh.length), bad, worker: scoreWorkers.used });
@@ -1171,6 +1197,7 @@ async function openPlace(placeId) {
   rec.settings = normalizeSettings(rec.settings, DEFAULT_SETTINGS);
   rec.overrides = { clips: {}, texts: [], stickers: [], ...(rec.overrides || {}) };
   S.ctx = { kind: 'place', rec, media: placeMedia(rec), song: null };
+  queueVideoAction(S.ctx.media);
   await attachSong(rec.songId || 'demo');
   startHistory();
   renderEditor();
@@ -1198,6 +1225,7 @@ async function openBestof() {
     media.push(...items);
   }
   S.ctx = { kind: 'bestof', rec, media, chapters, song: null };
+  queueVideoAction(media);
   await attachSong(rec.songId || 'demo');
   startHistory();
   renderEditor();
@@ -1451,6 +1479,8 @@ async function cutFilm(n = 8) {
   const media = ctx.media.filter((m) => !m.loading && !m.bad);
   if (!media.length) return;
   engine.pause();
+  // Schnitt auf den Takt braucht die Bewegungsmomente der Videos: kurz auf die Feinanalyse warten
+  if (videoActionPending(media)) { busy('Analysiere die Bewegungen in deinen Videos …'); await vAct.running; }
   busy(`Suche den besten Schnitt … Variante 1 von ${n}`);
   let res;
   const tp = performance.now();
@@ -1818,12 +1848,13 @@ function placeMenu(id) {
 }
 
 /* ---------- Leistungsprotokoll ---------- */
-const PERF_DE = { import: 'Einlesen', plan: 'Planen', export: 'Export', preview: 'Vorschau' };
+const PERF_DE = { import: 'Einlesen', plan: 'Planen', export: 'Export', preview: 'Vorschau', action: 'Bewegung' };
 function perfLine(e) {
   const s = (ms) => (ms >= 1000 ? (ms / 1000).toFixed(1).replace('.', ',') + ' s' : ms + ' ms');
   if (e.kind === 'import') return `${e.files} Aufnahmen (${e.images} Fotos, ${e.videos} Videos) in ${s(e.ms)} · ${s(e.perItem)} je Aufnahme${e.worker ? ' · im Hintergrund-Thread' : ''}${e.bad ? ` · ${e.bad} nicht lesbar` : ''}`;
   if (e.kind === 'plan') return `${e.what}: ${s(e.ms)}${e.tried ? ` · ${e.tried} Varianten geprüft` : ''} · ${e.media} Aufnahmen`;
   if (e.kind === 'export') return `${e.size} · ${e.fps} fps · ${String(e.secs).replace('.', ',')} s Film in ${s(e.totalMs)} (${String(e.speed).replace('.', ',')}× Echtzeit) · je Bild: Laden ${e.prepMs} ms, Zeichnen ${e.drawMs} ms, Encoder ${e.waitMs} ms${e.heat ? ` · Wärmeschutz ${e.heat}× (${s(e.coolMs)} Pause)` : ''}${e.resumes ? ` · ${e.resumes}× fortgesetzt` : ''} · ${String(e.mb).replace('.', ',')} MB`;
+  if (e.kind === 'action') return `Feinanalyse von ${e.videos} ${e.videos === 1 ? 'Video' : 'Videos'} im Hintergrund: ${s(e.ms)}`;
   if (e.kind === 'preview') return `${e.fps} Bilder/s · ${e.costMs} ms je Bild · Auflösung ${Math.round(e.scale * 100)} %${e.fps60 ? ' · Flüssig-Modus' : ''}`;
   return JSON.stringify(e);
 }

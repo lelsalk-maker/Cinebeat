@@ -924,7 +924,7 @@ details.more[open] { display: grid; gap: 16px; }
 <script>
 (function () {
 'use strict';
-const SCORE_WORKER_SRC = "'use strict';\n/* ============================================================\n * Bildbewertung: Schärfe, Belichtung, Farbigkeit, Duplikate,\n * spannendste Stelle in Videos\n * ============================================================ */\n\nconst SCORE_SIZE = 160;\nlet scoreCanvas = null;\n\nfunction scoreCtx(w, h) {\n  if (!scoreCanvas) scoreCanvas = typeof document !== 'undefined' ? document.createElement('canvas') : new OffscreenCanvas(w, h);\n  scoreCanvas.width = w;\n  scoreCanvas.height = h;\n  return scoreCanvas.getContext('2d', { willReadFrequently: true });\n}\n\n/** Grauwerte + Farbe in kleiner Auflösung */\nfunction samplePixels(src, sw, sh) {\n  const s = SCORE_SIZE / Math.max(sw, sh);\n  const w = Math.max(8, Math.round(sw * s)), h = Math.max(8, Math.round(sh * s));\n  const ctx = scoreCtx(w, h);\n  ctx.drawImage(src, 0, 0, w, h);\n  return { w, h, data: ctx.getImageData(0, 0, w, h).data };\n}\n\nfunction imageMetrics(px) {\n  const { w, h, data } = px;\n  const n = w * h;\n  const g = new Float32Array(n);\n  let sumL = 0, clip = 0, mrg = 0, myb = 0, qrg = 0, qyb = 0;\n  for (let i = 0; i < n; i++) {\n    const r = data[i * 4], gg = data[i * 4 + 1], b = data[i * 4 + 2];\n    const l = 0.2126 * r + 0.7152 * gg + 0.0722 * b;\n    g[i] = l;\n    sumL += l;\n    if (l < 6 || l > 250) clip++;\n    const rg = r - gg, yb = 0.5 * (r + gg) - b;\n    mrg += rg; myb += yb; qrg += rg * rg; qyb += yb * yb;\n  }\n  mrg /= n; myb /= n;\n  const srg = Math.sqrt(Math.max(0, qrg / n - mrg * mrg)), syb = Math.sqrt(Math.max(0, qyb / n - myb * myb));\n  const colorful = Math.sqrt(srg * srg + syb * syb) + 0.3 * Math.sqrt(mrg * mrg + myb * myb);\n  // Laplace-Varianz (Schärfe)\n  let lm = 0, lq = 0, lc = 0;\n  for (let y = 1; y < h - 1; y++) {\n    for (let x = 1; x < w - 1; x++) {\n      const i = y * w + x;\n      const v = 4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w];\n      lm += v; lq += v * v; lc++;\n    }\n  }\n  lm /= Math.max(1, lc);\n  // Bildschwerpunkt (einfache Saliency): Kanten + Farbabweichung, leicht zur Mitte gewichtet\n  let fxs = 0, fys = 0, fw = 0;\n  for (let y = 2; y < h - 2; y += 1) {\n    for (let x = 2; x < w - 2; x += 1) {\n      const i = y * w + x;\n      const lap = Math.abs(4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w]);\n      const r = data[i * 4], gg = data[i * 4 + 1], b = data[i * 4 + 2];\n      const sat = Math.max(r, gg, b) - Math.min(r, gg, b);\n      const cx = x / w - 0.5, cy = y / h - 0.45;\n      const center = Math.exp(-(cx * cx + cy * cy) / 0.18);\n      const wgt = (lap + 0.35 * sat) * (0.35 + center);\n      fxs += wgt * (x / w); fys += wgt * (y / h); fw += wgt;\n    }\n  }\n  let focus = fw > 0 ? [fxs / fw, fys / fw] : [0.5, 0.45];\n  const scene = sceneMetrics(data, g, w, h, focus);\n  // Menschen sind das Motiv: der Schwerpunkt rückt zur Haut-Region (Gesicht/Person)\n  if (scene.people > 0.25) focus = [0.4 * focus[0] + 0.6 * scene.skin[0], 0.4 * focus[1] + 0.6 * scene.skin[1]];\n  const lapVar = Math.max(0, lq / Math.max(1, lc) - lm * lm);\n  const meanL = sumL / n / 255;\n  const sharpN = Math.max(0, Math.min(1, (Math.log10(lapVar + 1) - 1.2) / 1.6));\n  const expoN = Math.max(0, 1 - Math.abs(meanL - 0.48) * 1.8 - (clip / n) * 2.5);\n  const colorN = Math.max(0, Math.min(1, colorful / 85));\n  let ar = 0, ag = 0, ab = 0;\n  for (let i = 0; i < n; i++) { ar += data[i * 4]; ag += data[i * 4 + 1]; ab += data[i * 4 + 2]; }\n  return { sharp: sharpN, expo: expoN, color: colorN, luma: meanL, focus, scene, gray: g, w, h, avg: [Math.round(ar / n), Math.round(ag / n), Math.round(ab / n)] };\n}\n\n/** 64-Bit-Differenzhash (9x8) als zwei 32-Bit-Zahlen */\nfunction dHash(src, sw, sh) {\n  const ctx = scoreCtx(9, 8);\n  ctx.drawImage(src, 0, 0, sw, sh, 0, 0, 9, 8);\n  const d = ctx.getImageData(0, 0, 9, 8).data;\n  let hi = 0, lo = 0, bit = 0;\n  for (let y = 0; y < 8; y++) {\n    for (let x = 0; x < 8; x++) {\n      const i = (y * 9 + x) * 4, j = i + 4;\n      const a = d[i] + d[i + 1] + d[i + 2], b = d[j] + d[j + 1] + d[j + 2];\n      const v = a > b ? 1 : 0;\n      if (bit < 32) hi = (hi << 1) | v; else lo = (lo << 1) | v;\n      bit++;\n    }\n  }\n  return [hi >>> 0, lo >>> 0];\n}\n\nfunction hamming(a, b) {\n  let x = (a[0] ^ b[0]) >>> 0, y = (a[1] ^ b[1]) >>> 0, c = 0;\n  while (x) { x &= x - 1; c++; }\n  while (y) { y &= y - 1; c++; }\n  return c;\n}\n\n/**\n * Bildinhalt ohne KI-Modell, lokal und schnell (auf 160 px):\n * Horizont (stärkste durchgehende waagerechte Kante), Himmelsanteil, Haut-Regionen (Menschen)\n * und der Motivbereich (gewichtete Ausdehnung der auffälligen Bildteile).\n */\nfunction sceneMetrics(data, g, w, h, focus) {\n  // Horizont: Zeile mit der stärksten, über die Breite gleichmäßigen Helligkeitskante\n  const rowGrad = new Float32Array(h);\n  for (let y = 2; y < h; y++) {\n    let sgn = 0, sum = 0;\n    for (let x = 0; x < w; x++) { const d = g[y * w + x] - g[(y - 2) * w + x]; sum += Math.abs(d); sgn += d; }\n    rowGrad[y] = (sum / w) * (0.4 + 0.6 * Math.min(1, Math.abs(sgn) / Math.max(1, sum)));\n  }\n  let hy = -1, hv = 0;\n  const sorted = Array.from(rowGrad).sort((a, b) => a - b), med = sorted[Math.floor(h / 2)] || 1;\n  for (let y = Math.floor(h * 0.18); y < Math.floor(h * 0.82); y++) {\n    const v = (rowGrad[y - 1] + rowGrad[y] * 2 + rowGrad[y + 1]) / 4;\n    if (v > hv) { hv = v; hy = y; }\n  }\n  const horizon = hv > med * 2.2 && hv > 6 ? +(hy / h).toFixed(3) : null;\n  // Himmel: helle, blaue oder sehr gleichmäßige Flächen im oberen Bilddrittel\n  let sky = 0, skinN = 0, sx = 0, sy = 0;\n  const top = Math.floor(h * 0.4);\n  for (let y = 0; y < h; y++) {\n    for (let x = 0; x < w; x++) {\n      const i = (y * w + x) * 4, r = data[i], gg = data[i + 1], b = data[i + 2];\n      if (y < top && ((b > r + 12 && b > gg - 10 && b > 90) || (r > 205 && gg > 205 && b > 205))) sky++;\n      // Haut (YCbCr-Bereich), unabhängig vom Hautton\n      const cb = 128 - 0.1687 * r - 0.3313 * gg + 0.5 * b, cr = 128 + 0.5 * r - 0.4187 * gg - 0.0813 * b, yy = 0.299 * r + 0.587 * gg + 0.114 * b;\n      if (yy > 45 && cb > 77 && cb < 127 && cr > 135 && cr < 175) { skinN++; sx += x; sy += y; }\n    }\n  }\n  const skinFrac = skinN / (w * h);\n  // Menschen: zusammenhängende Haut in mittlerem Umfang (nicht Sand, nicht Holz: dann ist sie meist großflächig)\n  const people = skinFrac > 0.008 && skinFrac < 0.3 ? Math.min(1, skinFrac * 18) : 0;\n  const skin = skinN ? [sx / skinN / w, sy / skinN / h] : focus;\n  // Motivbereich: um den Schwerpunkt, so weit, dass die auffälligen Teile hineinpassen\n  let vx = 0, vy = 0, wv = 0;\n  for (let y = 2; y < h - 2; y += 2) {\n    for (let x = 2; x < w - 2; x += 2) {\n      const i = y * w + x;\n      const lap = Math.abs(4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w]);\n      if (lap < 18) continue;\n      const dx = x / w - focus[0], dy = y / h - focus[1];\n      vx += lap * dx * dx; vy += lap * dy * dy; wv += lap;\n    }\n  }\n  const sw = wv ? Math.min(0.9, Math.max(0.2, 2.4 * Math.sqrt(vx / wv))) : 0.5, sh = wv ? Math.min(0.9, Math.max(0.2, 2.4 * Math.sqrt(vy / wv))) : 0.5;\n  // Freistellung: Detailreichtum im Motivbereich gegenüber dem Rest (hoch bei Nahaufnahmen mit unscharfem Hintergrund)\n  let eIn = 0, nIn = 0, eOut = 0, nOut = 0;\n  const bx0 = focus[0] - sw / 2, bx1 = focus[0] + sw / 2, by0 = focus[1] - sh / 2, by1 = focus[1] + sh / 2;\n  for (let y = 2; y < h - 2; y += 2) {\n    for (let x = 2; x < w - 2; x += 2) {\n      const i = y * w + x;\n      const lap = Math.abs(4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w]);\n      const u = x / w, v = y / h;\n      if (u > bx0 && u < bx1 && v > by0 && v < by1) { eIn += lap; nIn++; } else { eOut += lap; nOut++; }\n    }\n  }\n  const iso = nIn && nOut ? +Math.min(9, (eIn / nIn + 0.5) / (eOut / nOut + 0.5)).toFixed(2) : 1;\n  return { horizon, sky: +(sky / (w * top)).toFixed(3), people: +people.toFixed(2), skin: skin.map((v) => +v.toFixed(3)), skinFrac: +skinFrac.toFixed(3), iso, subject: [+focus[0].toFixed(3), +focus[1].toFixed(3), +sw.toFixed(3), +sh.toFixed(3)] };\n}\n\n/**\n * Kameraschwenk zwischen zwei Graubildern (Block-Matching über die Bildmitte, ±5 px auf 160 px).\n * Liefert die Verschiebung des Inhalts als Anteil der Bildbreite/-höhe.\n */\nfunction panShift(a, b, w, h) {\n  let best = [0, 0], bs = Infinity;\n  const R = 5, x0 = Math.floor(w * 0.2), x1 = Math.floor(w * 0.8), y0 = Math.floor(h * 0.2), y1 = Math.floor(h * 0.8);\n  for (let dy = -R; dy <= R; dy++) {\n    for (let dx = -R; dx <= R; dx++) {\n      let sad = 0;\n      for (let y = y0; y < y1; y += 2) for (let x = x0; x < x1; x += 2) sad += Math.abs(a[y * w + x] - b[(y + dy) * w + x + dx]);\n      if (sad < bs) { bs = sad; best = [dx, dy]; }\n    }\n  }\n  return [best[0] / w, best[1] / h];\n}\n\nfunction combineScore(m) {\n  return 0.42 * m.sharp + 0.3 * m.expo + 0.28 * m.color;\n}\n\nfunction scoreImage(src, sw, sh) {\n  const m = imageMetrics(samplePixels(src, sw, sh));\n  return { score: combineScore(m), sharp: m.sharp, expo: m.expo, color: m.color, avg: m.avg, luma: +m.luma.toFixed(3), focus: m.focus.map((v) => +v.toFixed(3)), hash: dHash(src, sw, sh), layout: layoutSig(m), ...sceneFields(m.scene) };\n}\n\n/** Motiv-Felder für die Aufnahme (werden mit gespeichert). */\nfunction sceneFields(sc) {\n  return sc ? { horizon: sc.horizon, sky: sc.sky, people: sc.people, subject: sc.subject, iso: sc.iso, skinFrac: sc.skinFrac } : {};\n}\n\n/**\n * Bildaufbau als 6 × 6 Helligkeitsraster (0–15, normiert) plus Kantenrichtung.\n * Grundlage für Match-Cuts: ähnlich aufgebaute Bilder schneiden unsichtbar ineinander.\n */\nfunction layoutSig(m) {\n  const { gray: g, w, h } = m;\n  const N = 6, cells = new Float32Array(N * N), cnt = new Float32Array(N * N);\n  let gx = 0, gy = 0;\n  for (let y = 1; y < h - 1; y++) {\n    for (let x = 1; x < w - 1; x++) {\n      const i = y * w + x;\n      const k = Math.min(N - 1, Math.floor((y / h) * N)) * N + Math.min(N - 1, Math.floor((x / w) * N));\n      cells[k] += g[i]; cnt[k]++;\n      gx += Math.abs(g[i + 1] - g[i - 1]); gy += Math.abs(g[i + w] - g[i - w]);\n    }\n  }\n  let lo = 255, hi = 0;\n  for (let k = 0; k < cells.length; k++) { cells[k] /= Math.max(1, cnt[k]); lo = Math.min(lo, cells[k]); hi = Math.max(hi, cells[k]); }\n  const span = Math.max(12, hi - lo);\n  let str = '';\n  for (let k = 0; k < cells.length; k++) str += Math.round(((cells[k] - lo) / span) * 15).toString(16);\n  // Anteil waagrechter Strukturen (Horizont, Straßen) gegenüber senkrechten (Häuser, Bäume)\n  const dir = gx + gy > 0 ? +(gy / (gx + gy)).toFixed(2) : 0.5;\n  return { g: str, dir };\n}\n\n/** Ähnlichkeit zweier Bildaufbauten (0 … 1). */\nfunction layoutSim(a, b) {\n  if (!a || !b || !a.g || !b.g || a.g.length !== b.g.length) return 0;\n  let d = 0;\n  for (let i = 0; i < a.g.length; i++) d += Math.abs(parseInt(a.g[i], 16) - parseInt(b.g[i], 16));\n  const grid = 1 - d / (a.g.length * 7.5);\n  return Math.max(0, grid - Math.abs(a.dir - b.dir) * 0.8);\n}\n\n/**\n * Tastet ein Video an mehreren Stellen ab und bewertet Bildqualität und Bewegung.\n * Liefert {score, hash, highlights:[{t, score}]} (Zeit = Mitte der besten Stelle).\n */\nasync function scoreVideo(v, duration) {\n  const grab = async (t) => { await seekVideo(v, t); return v.readyState >= 2 ? v : null; };\n  return scoreFrames(grab, v.videoWidth, v.videoHeight, duration);\n}\n\n/** Bewertet ein Video über grab(t) → Bildquelle (Videoelement oder dekodiertes Bild). */\nasync function scoreFrames(grab, W, H, duration) {\n  const K = Math.max(3, Math.min(8, Math.round(duration / 1.5)));\n  const pts = [];\n  for (let k = 0; k < K; k++) pts.push(Math.min(duration - 0.3, ((k + 0.5) / K) * duration));\n  const res = [];\n  let hash = null, avg = null, luma = 0.45, layout = null;\n  for (const t of pts) {\n    if (!(t >= 0)) continue;\n    let src = await grab(t);\n    if (!src) continue;\n    const a = imageMetrics(samplePixels(src, W, H));\n    if (!hash) { hash = dHash(src, W, H); avg = a.avg; luma = a.luma; }\n    src = await grab(Math.min(duration - 0.05, t + 0.2));\n    let motion = 0, pan = [0, 0];\n    if (src) {\n      const g2 = imageMetrics(samplePixels(src, W, H)).gray;\n      let s = 0;\n      for (let i = 0; i < g2.length; i++) s += Math.abs(g2[i] - a.gray[i]);\n      motion = s / g2.length / 255;\n      // Kameraschwenk (Inhalt wandert um pan je 0,2 s): Richtung für Anschlüsse an Fotos und Übergänge\n      pan = panShift(a.gray, g2, a.w, a.h);\n    }\n    // Moderate Bewegung ist spannend, extremes Wackeln nicht\n    const motionN = Math.max(0, Math.min(1, motion / 0.06)) * (motion > 0.2 ? 0.5 : 1);\n    res.push({ t, score: 0.7 * combineScore(a) + 0.3 * motionN, motion, pan, a });\n  }\n  res.sort((x, y) => y.score - x.score);\n  if (res.length) layout = layoutSig(res[0].a);\n  const top = res[0] && res[0].a;\n  // Bewegung im Video (Durchschnitt): entscheidet, ob es eher in ruhige Songteile oder in den Drop passt\n  const motion = res.length ? +(res.reduce((a, r) => a + r.motion, 0) / res.length).toFixed(4) : 0;\n  // Schwenk über die Zeit (in Aufnahme-Reihenfolge): Inhalt bewegt sich je Sekunde um diesen Bildanteil\n  const byT = res.slice().sort((x, y) => x.t - y.t);\n  const pans = byT.map((r) => ({ t: r.t, x: +(r.pan[0] * 5).toFixed(3), y: +(r.pan[1] * 5).toFixed(3) }));\n  return { pans, ...sceneFields(top && top.scene), motion, score: res.length ? res[0].score : 0.3, hash: hash || [0, 0], avg, luma: +luma.toFixed(3), focus: top ? top.focus.map((v, i) => +(0.5 * v + 0.5 * [0.5, 0.45][i]).toFixed(3)) : undefined, layout, highlights: res.map((r) => ({ t: r.t, score: r.score })) };\n}\n\n/** Markiert Beinahe-Duplikate (nur das beste Bild einer Serie bleibt aktiv). */\nfunction markDuplicates(items) {\n  const list = items.filter((m) => m.hash && !m.bad);\n  for (const m of list) { m.dupOf = null; m.dupD = m.dupDt = undefined; }\n  const sorted = list.slice().sort((a, b) => (b.score || 0) - (a.score || 0));\n  const kept = [];\n  for (const m of sorted) {\n    const sameColor = (a, b) => !a.avg || !b.avg || Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) < 40;\n    const twin = kept.find((k) => k.kind === m.kind && hamming(k.hash, m.hash) <= 6 && sameColor(k, m) && Math.abs((k.time || 0) - (m.time || 0)) < 10 * 60 * 1000);\n    if (twin) { m.dupOf = twin.id; m.dupD = hamming(twin.hash, m.hash); m.dupDt = Math.abs((twin.time || 0) - (m.time || 0)); } else kept.push(m);\n  }\n}\n\n/* Hintergrund-Thread fürs Einlesen: Foto klein dekodieren, bewerten (score.js) und Vorschaubild erzeugen.\n * Wird von build.mjs zusammen mit score.js als eigener Code eingebettet (SCORE_WORKER_SRC). */\nself.onmessage = async (e) => {\n  const { id, file, w, h, max } = e.data;\n  try {\n    const sc = Math.min(1, max / Math.max(w, h));\n    const bw = Math.max(1, Math.round(w * sc)), bh = Math.max(1, Math.round(h * sc));\n    let bmp;\n    try { bmp = await createImageBitmap(file, { resizeWidth: bw, resizeQuality: 'high', imageOrientation: 'from-image' }); } catch (err) {\n      if (!(err && err.name === 'TypeError')) throw err;\n      bmp = await createImageBitmap(file, { resizeWidth: bw, resizeQuality: 'high' });\n    }\n    // dreht dieser Browser hier nicht nach EXIF, übernimmt der sichere Weg im Hauptthread\n    if (Math.abs(bmp.height - bh) > Math.max(2, bh * 0.01)) { bmp.close(); self.postMessage({ id, fallback: true }); return; }\n    const res = scoreImage(bmp, bmp.width, bmp.height);\n    const size = 160, c = new OffscreenCanvas(size, size), x = c.getContext('2d');\n    const s = Math.max(size / bmp.width, size / bmp.height);\n    x.drawImage(bmp, (size - bmp.width * s) / 2, (size - bmp.height * s) / 2, bmp.width * s, bmp.height * s);\n    const thumb = new FileReaderSync().readAsDataURL(await c.convertToBlob({ type: 'image/jpeg', quality: 0.75 }));\n    self.postMessage({ id, res, thumb, bmp }, [bmp]);\n  } catch (err) {\n    self.postMessage({ id, error: String((err && err.message) || err) });\n  }\n};\n";
+const SCORE_WORKER_SRC = "'use strict';\n/* ============================================================\n * Bildbewertung: Schärfe, Belichtung, Farbigkeit, Duplikate,\n * spannendste Stelle in Videos\n * ============================================================ */\n\nconst SCORE_SIZE = 160;\nlet scoreCanvas = null;\n\nfunction scoreCtx(w, h) {\n  if (!scoreCanvas) scoreCanvas = typeof document !== 'undefined' ? document.createElement('canvas') : new OffscreenCanvas(w, h);\n  scoreCanvas.width = w;\n  scoreCanvas.height = h;\n  return scoreCanvas.getContext('2d', { willReadFrequently: true });\n}\n\n/** Grauwerte + Farbe in kleiner Auflösung */\nfunction samplePixels(src, sw, sh) {\n  const s = SCORE_SIZE / Math.max(sw, sh);\n  const w = Math.max(8, Math.round(sw * s)), h = Math.max(8, Math.round(sh * s));\n  const ctx = scoreCtx(w, h);\n  ctx.drawImage(src, 0, 0, w, h);\n  return { w, h, data: ctx.getImageData(0, 0, w, h).data };\n}\n\nfunction imageMetrics(px) {\n  const { w, h, data } = px;\n  const n = w * h;\n  const g = new Float32Array(n);\n  let sumL = 0, clip = 0, mrg = 0, myb = 0, qrg = 0, qyb = 0;\n  for (let i = 0; i < n; i++) {\n    const r = data[i * 4], gg = data[i * 4 + 1], b = data[i * 4 + 2];\n    const l = 0.2126 * r + 0.7152 * gg + 0.0722 * b;\n    g[i] = l;\n    sumL += l;\n    if (l < 6 || l > 250) clip++;\n    const rg = r - gg, yb = 0.5 * (r + gg) - b;\n    mrg += rg; myb += yb; qrg += rg * rg; qyb += yb * yb;\n  }\n  mrg /= n; myb /= n;\n  const srg = Math.sqrt(Math.max(0, qrg / n - mrg * mrg)), syb = Math.sqrt(Math.max(0, qyb / n - myb * myb));\n  const colorful = Math.sqrt(srg * srg + syb * syb) + 0.3 * Math.sqrt(mrg * mrg + myb * myb);\n  // Laplace-Varianz (Schärfe)\n  let lm = 0, lq = 0, lc = 0;\n  for (let y = 1; y < h - 1; y++) {\n    for (let x = 1; x < w - 1; x++) {\n      const i = y * w + x;\n      const v = 4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w];\n      lm += v; lq += v * v; lc++;\n    }\n  }\n  lm /= Math.max(1, lc);\n  // Bildschwerpunkt (einfache Saliency): Kanten + Farbabweichung, leicht zur Mitte gewichtet\n  let fxs = 0, fys = 0, fw = 0;\n  for (let y = 2; y < h - 2; y += 1) {\n    for (let x = 2; x < w - 2; x += 1) {\n      const i = y * w + x;\n      const lap = Math.abs(4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w]);\n      const r = data[i * 4], gg = data[i * 4 + 1], b = data[i * 4 + 2];\n      const sat = Math.max(r, gg, b) - Math.min(r, gg, b);\n      const cx = x / w - 0.5, cy = y / h - 0.45;\n      const center = Math.exp(-(cx * cx + cy * cy) / 0.18);\n      const wgt = (lap + 0.35 * sat) * (0.35 + center);\n      fxs += wgt * (x / w); fys += wgt * (y / h); fw += wgt;\n    }\n  }\n  let focus = fw > 0 ? [fxs / fw, fys / fw] : [0.5, 0.45];\n  const scene = sceneMetrics(data, g, w, h, focus);\n  // Menschen sind das Motiv: der Schwerpunkt rückt zur Haut-Region (Gesicht/Person)\n  if (scene.people > 0.25) focus = [0.4 * focus[0] + 0.6 * scene.skin[0], 0.4 * focus[1] + 0.6 * scene.skin[1]];\n  const lapVar = Math.max(0, lq / Math.max(1, lc) - lm * lm);\n  const meanL = sumL / n / 255;\n  const sharpN = Math.max(0, Math.min(1, (Math.log10(lapVar + 1) - 1.2) / 1.6));\n  const expoN = Math.max(0, 1 - Math.abs(meanL - 0.48) * 1.8 - (clip / n) * 2.5);\n  const colorN = Math.max(0, Math.min(1, colorful / 85));\n  let ar = 0, ag = 0, ab = 0;\n  for (let i = 0; i < n; i++) { ar += data[i * 4]; ag += data[i * 4 + 1]; ab += data[i * 4 + 2]; }\n  return { sharp: sharpN, expo: expoN, color: colorN, luma: meanL, focus, scene, gray: g, w, h, avg: [Math.round(ar / n), Math.round(ag / n), Math.round(ab / n)] };\n}\n\n/** 64-Bit-Differenzhash (9x8) als zwei 32-Bit-Zahlen */\nfunction dHash(src, sw, sh) {\n  const ctx = scoreCtx(9, 8);\n  ctx.drawImage(src, 0, 0, sw, sh, 0, 0, 9, 8);\n  const d = ctx.getImageData(0, 0, 9, 8).data;\n  let hi = 0, lo = 0, bit = 0;\n  for (let y = 0; y < 8; y++) {\n    for (let x = 0; x < 8; x++) {\n      const i = (y * 9 + x) * 4, j = i + 4;\n      const a = d[i] + d[i + 1] + d[i + 2], b = d[j] + d[j + 1] + d[j + 2];\n      const v = a > b ? 1 : 0;\n      if (bit < 32) hi = (hi << 1) | v; else lo = (lo << 1) | v;\n      bit++;\n    }\n  }\n  return [hi >>> 0, lo >>> 0];\n}\n\nfunction hamming(a, b) {\n  let x = (a[0] ^ b[0]) >>> 0, y = (a[1] ^ b[1]) >>> 0, c = 0;\n  while (x) { x &= x - 1; c++; }\n  while (y) { y &= y - 1; c++; }\n  return c;\n}\n\n/**\n * Bildinhalt ohne KI-Modell, lokal und schnell (auf 160 px):\n * Horizont (stärkste durchgehende waagerechte Kante), Himmelsanteil, Haut-Regionen (Menschen)\n * und der Motivbereich (gewichtete Ausdehnung der auffälligen Bildteile).\n */\nfunction sceneMetrics(data, g, w, h, focus) {\n  // Horizont: Zeile mit der stärksten, über die Breite gleichmäßigen Helligkeitskante\n  const rowGrad = new Float32Array(h);\n  for (let y = 2; y < h; y++) {\n    let sgn = 0, sum = 0;\n    for (let x = 0; x < w; x++) { const d = g[y * w + x] - g[(y - 2) * w + x]; sum += Math.abs(d); sgn += d; }\n    rowGrad[y] = (sum / w) * (0.4 + 0.6 * Math.min(1, Math.abs(sgn) / Math.max(1, sum)));\n  }\n  let hy = -1, hv = 0;\n  const sorted = Array.from(rowGrad).sort((a, b) => a - b), med = sorted[Math.floor(h / 2)] || 1;\n  for (let y = Math.floor(h * 0.18); y < Math.floor(h * 0.82); y++) {\n    const v = (rowGrad[y - 1] + rowGrad[y] * 2 + rowGrad[y + 1]) / 4;\n    if (v > hv) { hv = v; hy = y; }\n  }\n  const horizon = hv > med * 2.2 && hv > 6 ? +(hy / h).toFixed(3) : null;\n  // Himmel: helle, blaue oder sehr gleichmäßige Flächen im oberen Bilddrittel\n  let sky = 0, skinN = 0, sx = 0, sy = 0;\n  const top = Math.floor(h * 0.4);\n  for (let y = 0; y < h; y++) {\n    for (let x = 0; x < w; x++) {\n      const i = (y * w + x) * 4, r = data[i], gg = data[i + 1], b = data[i + 2];\n      if (y < top && ((b > r + 12 && b > gg - 10 && b > 90) || (r > 205 && gg > 205 && b > 205))) sky++;\n      // Haut (YCbCr-Bereich), unabhängig vom Hautton\n      const cb = 128 - 0.1687 * r - 0.3313 * gg + 0.5 * b, cr = 128 + 0.5 * r - 0.4187 * gg - 0.0813 * b, yy = 0.299 * r + 0.587 * gg + 0.114 * b;\n      if (yy > 45 && cb > 77 && cb < 127 && cr > 135 && cr < 175) { skinN++; sx += x; sy += y; }\n    }\n  }\n  const skinFrac = skinN / (w * h);\n  // Menschen: zusammenhängende Haut in mittlerem Umfang (nicht Sand, nicht Holz: dann ist sie meist großflächig)\n  const people = skinFrac > 0.008 && skinFrac < 0.3 ? Math.min(1, skinFrac * 18) : 0;\n  const skin = skinN ? [sx / skinN / w, sy / skinN / h] : focus;\n  // Motivbereich: um den Schwerpunkt, so weit, dass die auffälligen Teile hineinpassen\n  let vx = 0, vy = 0, wv = 0;\n  for (let y = 2; y < h - 2; y += 2) {\n    for (let x = 2; x < w - 2; x += 2) {\n      const i = y * w + x;\n      const lap = Math.abs(4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w]);\n      if (lap < 18) continue;\n      const dx = x / w - focus[0], dy = y / h - focus[1];\n      vx += lap * dx * dx; vy += lap * dy * dy; wv += lap;\n    }\n  }\n  const sw = wv ? Math.min(0.9, Math.max(0.2, 2.4 * Math.sqrt(vx / wv))) : 0.5, sh = wv ? Math.min(0.9, Math.max(0.2, 2.4 * Math.sqrt(vy / wv))) : 0.5;\n  // Freistellung: Detailreichtum im Motivbereich gegenüber dem Rest (hoch bei Nahaufnahmen mit unscharfem Hintergrund)\n  let eIn = 0, nIn = 0, eOut = 0, nOut = 0;\n  const bx0 = focus[0] - sw / 2, bx1 = focus[0] + sw / 2, by0 = focus[1] - sh / 2, by1 = focus[1] + sh / 2;\n  for (let y = 2; y < h - 2; y += 2) {\n    for (let x = 2; x < w - 2; x += 2) {\n      const i = y * w + x;\n      const lap = Math.abs(4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w]);\n      const u = x / w, v = y / h;\n      if (u > bx0 && u < bx1 && v > by0 && v < by1) { eIn += lap; nIn++; } else { eOut += lap; nOut++; }\n    }\n  }\n  const iso = nIn && nOut ? +Math.min(9, (eIn / nIn + 0.5) / (eOut / nOut + 0.5)).toFixed(2) : 1;\n  return { horizon, sky: +(sky / (w * top)).toFixed(3), people: +people.toFixed(2), skin: skin.map((v) => +v.toFixed(3)), skinFrac: +skinFrac.toFixed(3), iso, subject: [+focus[0].toFixed(3), +focus[1].toFixed(3), +sw.toFixed(3), +sh.toFixed(3)] };\n}\n\n/**\n * Kameraschwenk zwischen zwei Graubildern (Block-Matching über die Bildmitte, ±5 px auf 160 px).\n * Liefert die Verschiebung des Inhalts als Anteil der Bildbreite/-höhe.\n */\nfunction panShift(a, b, w, h) {\n  let best = [0, 0], bs = Infinity;\n  const R = 5, x0 = Math.floor(w * 0.2), x1 = Math.floor(w * 0.8), y0 = Math.floor(h * 0.2), y1 = Math.floor(h * 0.8);\n  for (let dy = -R; dy <= R; dy++) {\n    for (let dx = -R; dx <= R; dx++) {\n      let sad = 0;\n      for (let y = y0; y < y1; y += 2) for (let x = x0; x < x1; x += 2) sad += Math.abs(a[y * w + x] - b[(y + dy) * w + x + dx]);\n      if (sad < bs) { bs = sad; best = [dx, dy]; }\n    }\n  }\n  return [best[0] / w, best[1] / h];\n}\n\nfunction combineScore(m) {\n  return 0.42 * m.sharp + 0.3 * m.expo + 0.28 * m.color;\n}\n\nfunction scoreImage(src, sw, sh) {\n  const m = imageMetrics(samplePixels(src, sw, sh));\n  return { score: combineScore(m), sharp: m.sharp, expo: m.expo, color: m.color, avg: m.avg, luma: +m.luma.toFixed(3), focus: m.focus.map((v) => +v.toFixed(3)), hash: dHash(src, sw, sh), layout: layoutSig(m), ...sceneFields(m.scene) };\n}\n\n/** Motiv-Felder für die Aufnahme (werden mit gespeichert). */\nfunction sceneFields(sc) {\n  return sc ? { horizon: sc.horizon, sky: sc.sky, people: sc.people, subject: sc.subject, iso: sc.iso, skinFrac: sc.skinFrac } : {};\n}\n\n/**\n * Bildaufbau als 6 × 6 Helligkeitsraster (0–15, normiert) plus Kantenrichtung.\n * Grundlage für Match-Cuts: ähnlich aufgebaute Bilder schneiden unsichtbar ineinander.\n */\nfunction layoutSig(m) {\n  const { gray: g, w, h } = m;\n  const N = 6, cells = new Float32Array(N * N), cnt = new Float32Array(N * N);\n  let gx = 0, gy = 0;\n  for (let y = 1; y < h - 1; y++) {\n    for (let x = 1; x < w - 1; x++) {\n      const i = y * w + x;\n      const k = Math.min(N - 1, Math.floor((y / h) * N)) * N + Math.min(N - 1, Math.floor((x / w) * N));\n      cells[k] += g[i]; cnt[k]++;\n      gx += Math.abs(g[i + 1] - g[i - 1]); gy += Math.abs(g[i + w] - g[i - w]);\n    }\n  }\n  let lo = 255, hi = 0;\n  for (let k = 0; k < cells.length; k++) { cells[k] /= Math.max(1, cnt[k]); lo = Math.min(lo, cells[k]); hi = Math.max(hi, cells[k]); }\n  const span = Math.max(12, hi - lo);\n  let str = '';\n  for (let k = 0; k < cells.length; k++) str += Math.round(((cells[k] - lo) / span) * 15).toString(16);\n  // Anteil waagrechter Strukturen (Horizont, Straßen) gegenüber senkrechten (Häuser, Bäume)\n  const dir = gx + gy > 0 ? +(gy / (gx + gy)).toFixed(2) : 0.5;\n  return { g: str, dir };\n}\n\n/** Ähnlichkeit zweier Bildaufbauten (0 … 1). */\nfunction layoutSim(a, b) {\n  if (!a || !b || !a.g || !b.g || a.g.length !== b.g.length) return 0;\n  let d = 0;\n  for (let i = 0; i < a.g.length; i++) d += Math.abs(parseInt(a.g[i], 16) - parseInt(b.g[i], 16));\n  const grid = 1 - d / (a.g.length * 7.5);\n  return Math.max(0, grid - Math.abs(a.dir - b.dir) * 0.8);\n}\n\n/**\n * Tastet ein Video an mehreren Stellen ab und bewertet Bildqualität und Bewegung.\n * Liefert {score, hash, highlights:[{t, score}]} (Zeit = Mitte der besten Stelle).\n */\nasync function scoreVideo(v, duration) {\n  const grab = async (t) => { await seekVideo(v, t); return v.readyState >= 2 ? v : null; };\n  return scoreFrames(grab, v.videoWidth, v.videoHeight, duration);\n}\n\n/** Bewertet ein Video über grab(t) → Bildquelle (Videoelement oder dekodiertes Bild). */\nasync function scoreFrames(grab, W, H, duration) {\n  const K = Math.max(3, Math.min(8, Math.round(duration / 1.5)));\n  const pts = [];\n  for (let k = 0; k < K; k++) pts.push(Math.min(duration - 0.3, ((k + 0.5) / K) * duration));\n  const res = [];\n  let hash = null, avg = null, luma = 0.45, layout = null;\n  for (const t of pts) {\n    if (!(t >= 0)) continue;\n    let src = await grab(t);\n    if (!src) continue;\n    const a = imageMetrics(samplePixels(src, W, H));\n    if (!hash) { hash = dHash(src, W, H); avg = a.avg; luma = a.luma; }\n    src = await grab(Math.min(duration - 0.05, t + 0.2));\n    let motion = 0, pan = [0, 0];\n    if (src) {\n      const g2 = imageMetrics(samplePixels(src, W, H)).gray;\n      let s = 0;\n      for (let i = 0; i < g2.length; i++) s += Math.abs(g2[i] - a.gray[i]);\n      motion = s / g2.length / 255;\n      // Kameraschwenk (Inhalt wandert um pan je 0,2 s): Richtung für Anschlüsse an Fotos und Übergänge\n      pan = panShift(a.gray, g2, a.w, a.h);\n    }\n    // Moderate Bewegung ist spannend, extremes Wackeln nicht\n    const motionN = Math.max(0, Math.min(1, motion / 0.06)) * (motion > 0.2 ? 0.5 : 1);\n    res.push({ t, score: 0.7 * combineScore(a) + 0.3 * motionN, motion, pan, a });\n  }\n  res.sort((x, y) => y.score - x.score);\n  if (res.length) layout = layoutSig(res[0].a);\n  const top = res[0] && res[0].a;\n  // Bewegung im Video (Durchschnitt): entscheidet, ob es eher in ruhige Songteile oder in den Drop passt\n  const motion = res.length ? +(res.reduce((a, r) => a + r.motion, 0) / res.length).toFixed(4) : 0;\n  // Schwenk über die Zeit (in Aufnahme-Reihenfolge): Inhalt bewegt sich je Sekunde um diesen Bildanteil\n  const byT = res.slice().sort((x, y) => x.t - y.t);\n  const pans = byT.map((r) => ({ t: r.t, x: +(r.pan[0] * 5).toFixed(3), y: +(r.pan[1] * 5).toFixed(3) }));\n  return { pans, ...sceneFields(top && top.scene), motion, score: res.length ? res[0].score : 0.3, hash: hash || [0, 0], avg, luma: +luma.toFixed(3), focus: top ? top.focus.map((v, i) => +(0.5 * v + 0.5 * [0.5, 0.45][i]).toFixed(3)) : undefined, layout, highlights: res.map((r) => ({ t: r.t, score: r.score })) };\n}\n\n/** Markiert Beinahe-Duplikate (nur das beste Bild einer Serie bleibt aktiv). */\nfunction markDuplicates(items) {\n  const list = items.filter((m) => m.hash && !m.bad);\n  for (const m of list) { m.dupOf = null; m.dupD = m.dupDt = undefined; }\n  const sorted = list.slice().sort((a, b) => (b.score || 0) - (a.score || 0));\n  const kept = [];\n  for (const m of sorted) {\n    const sameColor = (a, b) => !a.avg || !b.avg || Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) < 40;\n    const twin = kept.find((k) => k.kind === m.kind && hamming(k.hash, m.hash) <= 6 && sameColor(k, m) && Math.abs((k.time || 0) - (m.time || 0)) < 10 * 60 * 1000);\n    if (twin) { m.dupOf = twin.id; m.dupD = hamming(twin.hash, m.hash); m.dupDt = Math.abs((twin.time || 0) - (m.time || 0)); } else kept.push(m);\n  }\n}\n\n/**\n * Bewegungskurve eines Videos (hz Werte je Sekunde, 0–255) und Aktionsmomente daraus: Stellen, an denen Bewegung\n * plötzlich einsetzt oder sich sprunghaft ändert (Sprung, Welle, Wurf, Schwenk-Stopp). Wie Onsets im Ton –\n * die Planung legt sie auf starke Schläge. grab(t) liefert ein kleines Bild (ab 0 aufsteigend, für den Dekoder günstig).\n */\nasync function actionCurve(grab, W, H, duration, hz = 8) {\n  const n = Math.max(0, Math.floor(duration * hz));\n  if (n < 4) return null;\n  const S = 48, sc = S / Math.max(W, H);\n  const w = Math.max(8, Math.round(W * sc)), h = Math.max(8, Math.round(H * sc));\n  const v = new Array(n).fill(0);\n  let prev = null;\n  for (let k = 0; k < n; k++) {\n    const src = await grab(k / hz);\n    if (!src) break;\n    const ctx = scoreCtx(w, h);\n    ctx.drawImage(src, 0, 0, w, h);\n    const d = ctx.getImageData(0, 0, w, h).data;\n    const g = new Float32Array(w * h);\n    for (let i = 0; i < g.length; i++) g[i] = 0.2126 * d[i * 4] + 0.7152 * d[i * 4 + 1] + 0.0722 * d[i * 4 + 2];\n    if (prev) { let s = 0; for (let i = 0; i < g.length; i++) s += Math.abs(g[i] - prev[i]); v[k] = Math.min(255, Math.round((s / g.length / 255 / 0.12) * 255)); }\n    prev = g;\n  }\n  if (n > 1) v[0] = v[1];\n  const hits = motionHits(v, hz);\n  // auf das Einzelbild genau: im Fenster vor dem groben Treffer das Bild suchen, ab dem die Bewegung sichtbar einsetzt\n  // (Fenster aufsteigend, damit der Dekoder nur vorwärts läuft)\n  const step = 1 / 30;\n  for (const hit of hits) {\n    const t0 = Math.max(0, hit[0] - 2 / hz), t1 = Math.min(duration - 0.02, hit[0] + 0.5 / hz);\n    let pg = null, bestD = 0;\n    const ds = [];\n    for (let t = t0; t <= t1 + 1e-6; t += step) {\n      const src = await grab(t);\n      if (!src) break;\n      const ctx = scoreCtx(w, h);\n      ctx.drawImage(src, 0, 0, w, h);\n      const d = ctx.getImageData(0, 0, w, h).data;\n      const g = new Float32Array(w * h);\n      for (let i = 0; i < g.length; i++) g[i] = 0.2126 * d[i * 4] + 0.7152 * d[i * 4 + 1] + 0.0722 * d[i * 4 + 2];\n      if (pg) { let sd = 0; for (let i = 0; i < g.length; i++) sd += Math.abs(g[i] - pg[i]); ds.push([t, sd]); bestD = Math.max(bestD, sd); }\n      pg = g;\n    }\n    const on = ds.find(([, sd]) => sd >= bestD * 0.5);\n    if (on) hit[0] = +on[0].toFixed(3);\n  }\n  return { hz, v, hits };\n}\n\n/** Aktionsmomente aus der Bewegungskurve: [[t, Stärke 0–1], …], mindestens 0,45 s auseinander. */\nfunction motionHits(v, hz) {\n  const n = v.length;\n  if (n < 5) return [];\n  const s = v.map((x, i) => (v[Math.max(0, i - 1)] + 2 * x + v[Math.min(n - 1, i + 1)]) / 4);\n  const d = s.map((x, i) => (i ? Math.max(0, x - s[i - 1]) : 0));\n  const med = (a) => { const b = a.slice().sort((x, y) => x - y); return b[b.length >> 1]; };\n  const md = med(d), mad = med(d.map((x) => Math.abs(x - md))) || 1, ms = med(s);\n  const thr = Math.max(6, md + 3 * mad);\n  const cand = [];\n  for (let i = 1; i < n - 1; i++) {\n    if (d[i] < thr || d[i] < d[i - 1] || d[i] < d[i + 1] || s[i + 1] < ms * 1.15) continue;\n    cand.push([i / hz, Math.min(1, d[i] / (thr * 3))]);\n  }\n  cand.sort((a, b) => b[1] - a[1]);\n  const out = [];\n  for (const c of cand) if (out.every((o) => Math.abs(o[0] - c[0]) >= 0.45)) out.push(c);\n  return out.slice(0, 24).sort((a, b) => a[0] - b[0]).map(([t, st]) => [+t.toFixed(3), +st.toFixed(2)]);\n}\n\n/* Hintergrund-Thread fürs Einlesen: Foto klein dekodieren, bewerten (score.js) und Vorschaubild erzeugen.\n * Wird von build.mjs zusammen mit score.js als eigener Code eingebettet (SCORE_WORKER_SRC). */\nself.onmessage = async (e) => {\n  const { id, file, w, h, max } = e.data;\n  try {\n    const sc = Math.min(1, max / Math.max(w, h));\n    const bw = Math.max(1, Math.round(w * sc)), bh = Math.max(1, Math.round(h * sc));\n    let bmp;\n    try { bmp = await createImageBitmap(file, { resizeWidth: bw, resizeQuality: 'high', imageOrientation: 'from-image' }); } catch (err) {\n      if (!(err && err.name === 'TypeError')) throw err;\n      bmp = await createImageBitmap(file, { resizeWidth: bw, resizeQuality: 'high' });\n    }\n    // dreht dieser Browser hier nicht nach EXIF, übernimmt der sichere Weg im Hauptthread\n    if (Math.abs(bmp.height - bh) > Math.max(2, bh * 0.01)) { bmp.close(); self.postMessage({ id, fallback: true }); return; }\n    const res = scoreImage(bmp, bmp.width, bmp.height);\n    const size = 160, c = new OffscreenCanvas(size, size), x = c.getContext('2d');\n    const s = Math.max(size / bmp.width, size / bmp.height);\n    x.drawImage(bmp, (size - bmp.width * s) / 2, (size - bmp.height * s) / 2, bmp.width * s, bmp.height * s);\n    const thumb = new FileReaderSync().readAsDataURL(await c.convertToBlob({ type: 'image/jpeg', quality: 0.75 }));\n    self.postMessage({ id, res, thumb, bmp }, [bmp]);\n  } catch (err) {\n    self.postMessage({ id, error: String((err && err.message) || err) });\n  }\n};\n";
 /* ============================================================
  * Medien-Ein-/Ausgabe: Bilder dekodieren, Video-Elemente, WebM-Fix
  * ============================================================ */
@@ -2789,6 +2789,75 @@ function markDuplicates(items) {
     const twin = kept.find((k) => k.kind === m.kind && hamming(k.hash, m.hash) <= 6 && sameColor(k, m) && Math.abs((k.time || 0) - (m.time || 0)) < 10 * 60 * 1000);
     if (twin) { m.dupOf = twin.id; m.dupD = hamming(twin.hash, m.hash); m.dupDt = Math.abs((twin.time || 0) - (m.time || 0)); } else kept.push(m);
   }
+}
+
+/**
+ * Bewegungskurve eines Videos (hz Werte je Sekunde, 0–255) und Aktionsmomente daraus: Stellen, an denen Bewegung
+ * plötzlich einsetzt oder sich sprunghaft ändert (Sprung, Welle, Wurf, Schwenk-Stopp). Wie Onsets im Ton –
+ * die Planung legt sie auf starke Schläge. grab(t) liefert ein kleines Bild (ab 0 aufsteigend, für den Dekoder günstig).
+ */
+async function actionCurve(grab, W, H, duration, hz = 8) {
+  const n = Math.max(0, Math.floor(duration * hz));
+  if (n < 4) return null;
+  const S = 48, sc = S / Math.max(W, H);
+  const w = Math.max(8, Math.round(W * sc)), h = Math.max(8, Math.round(H * sc));
+  const v = new Array(n).fill(0);
+  let prev = null;
+  for (let k = 0; k < n; k++) {
+    const src = await grab(k / hz);
+    if (!src) break;
+    const ctx = scoreCtx(w, h);
+    ctx.drawImage(src, 0, 0, w, h);
+    const d = ctx.getImageData(0, 0, w, h).data;
+    const g = new Float32Array(w * h);
+    for (let i = 0; i < g.length; i++) g[i] = 0.2126 * d[i * 4] + 0.7152 * d[i * 4 + 1] + 0.0722 * d[i * 4 + 2];
+    if (prev) { let s = 0; for (let i = 0; i < g.length; i++) s += Math.abs(g[i] - prev[i]); v[k] = Math.min(255, Math.round((s / g.length / 255 / 0.12) * 255)); }
+    prev = g;
+  }
+  if (n > 1) v[0] = v[1];
+  const hits = motionHits(v, hz);
+  // auf das Einzelbild genau: im Fenster vor dem groben Treffer das Bild suchen, ab dem die Bewegung sichtbar einsetzt
+  // (Fenster aufsteigend, damit der Dekoder nur vorwärts läuft)
+  const step = 1 / 30;
+  for (const hit of hits) {
+    const t0 = Math.max(0, hit[0] - 2 / hz), t1 = Math.min(duration - 0.02, hit[0] + 0.5 / hz);
+    let pg = null, bestD = 0;
+    const ds = [];
+    for (let t = t0; t <= t1 + 1e-6; t += step) {
+      const src = await grab(t);
+      if (!src) break;
+      const ctx = scoreCtx(w, h);
+      ctx.drawImage(src, 0, 0, w, h);
+      const d = ctx.getImageData(0, 0, w, h).data;
+      const g = new Float32Array(w * h);
+      for (let i = 0; i < g.length; i++) g[i] = 0.2126 * d[i * 4] + 0.7152 * d[i * 4 + 1] + 0.0722 * d[i * 4 + 2];
+      if (pg) { let sd = 0; for (let i = 0; i < g.length; i++) sd += Math.abs(g[i] - pg[i]); ds.push([t, sd]); bestD = Math.max(bestD, sd); }
+      pg = g;
+    }
+    const on = ds.find(([, sd]) => sd >= bestD * 0.5);
+    if (on) hit[0] = +on[0].toFixed(3);
+  }
+  return { hz, v, hits };
+}
+
+/** Aktionsmomente aus der Bewegungskurve: [[t, Stärke 0–1], …], mindestens 0,45 s auseinander. */
+function motionHits(v, hz) {
+  const n = v.length;
+  if (n < 5) return [];
+  const s = v.map((x, i) => (v[Math.max(0, i - 1)] + 2 * x + v[Math.min(n - 1, i + 1)]) / 4);
+  const d = s.map((x, i) => (i ? Math.max(0, x - s[i - 1]) : 0));
+  const med = (a) => { const b = a.slice().sort((x, y) => x - y); return b[b.length >> 1]; };
+  const md = med(d), mad = med(d.map((x) => Math.abs(x - md))) || 1, ms = med(s);
+  const thr = Math.max(6, md + 3 * mad);
+  const cand = [];
+  for (let i = 1; i < n - 1; i++) {
+    if (d[i] < thr || d[i] < d[i - 1] || d[i] < d[i + 1] || s[i + 1] < ms * 1.15) continue;
+    cand.push([i / hz, Math.min(1, d[i] / (thr * 3))]);
+  }
+  cand.sort((a, b) => b[1] - a[1]);
+  const out = [];
+  for (const c of cand) if (out.every((o) => Math.abs(o[0] - c[0]) >= 0.45)) out.push(c);
+  return out.slice(0, 24).sort((a, b) => a[0] - b[0]).map(([t, st]) => [+t.toFixed(3), +st.toFixed(2)]);
 }
 
 /* Planer · Grundlagen: Zufall, Looks, Formate, Übergangs-Typen, Takt- und Abschnittshilfen, Songausschnitt */
@@ -4663,6 +4732,15 @@ function planOnce(opts) {
   // Bester Moment eines Videos auf einen Schlag: Versatz so wählen, dass er auf einen Beat im Clip fällt,
   // bevorzugt auf eine Eins; nur wenn das den Ausschnitt kaum verschiebt
   const barsRelV = (an.barStart || []).map((b) => b - win.start);
+  // Aktionsmomente der Videos auf Schlag, Snare und Bassdrum (wie ein Cutter, der Bewegung auf die Musik schneidet)
+  const grid = hitGrid(an, win);
+  let vSynced = 0, vHits = 0;
+  const trySync = (m, c, tIn, off0, hi, rate, best) => {
+    if (c.rp || !m.hits || !m.hits.length) return null;
+    const r = syncVideoOffset(m, c, { tIn, off0, hi, rate, grid, best });
+    if (r) { vSynced++; vHits += r.hits; }
+    return r;
+  };
   const onBeatOffset = (h, off0, hi, c, rate) => {
     let bestOff = off0, bestCost = Infinity;
     for (const b of bts0) {
@@ -4787,7 +4865,9 @@ function planOnce(opts) {
         const hl = (m.highlights || []).map((h) => h.t - tIn).filter((t) => t >= 0 && t <= vd);
         const best = hl.length ? hl[0] : vd * 0.4;
         off = Math.min(Math.max(0, best - needS * 0.4), Math.max(0, vd - needS));
-        if (!c.rp && hl.length) off = onBeatOffset(best, off, Math.max(0, vd - needS), c, rate);
+        const sy = trySync(m, c, tIn, off, Math.max(0, vd - needS), rate, hl.length ? best : null);
+        if (sy) off = sy.off;
+        else if (!c.rp && hl.length) off = onBeatOffset(best, off, Math.max(0, vd - needS), c, rate);
       }
       else if (c.role === 'takeoff') off = vd - needS - Math.min(1, vd * 0.05); // Abheben liegt meist gegen Ende
       else if (c.role === 'landing') off = Math.min(0.5, vd * 0.05);
@@ -4797,7 +4877,9 @@ function planOnce(opts) {
         const hlIn = hl.map((t) => t - tIn).filter((t) => t >= 0 && t <= vd);
         const center = hlIn.length ? hlIn[used % hlIn.length] : vd * 0.4;
         off = center - needS / 2;
-        if (!c.rp && hlIn.length) off = onBeatOffset(center, Math.max(0, Math.min(off, Math.max(0, vd - needS))), Math.max(0, vd - needS), c, rate);
+        const sy = trySync(m, c, tIn, Math.max(0, Math.min(off, Math.max(0, vd - needS))), Math.max(0, vd - needS), rate, hlIn.length ? center : null);
+        if (sy) off = sy.off;
+        else if (!c.rp && hlIn.length) off = onBeatOffset(center, Math.max(0, Math.min(off, Math.max(0, vd - needS))), Math.max(0, vd - needS), c, rate);
         videoCursor.set(m.id, used + 1);
       }
       c.srcOffset = tIn + Math.max(0, Math.min(off, Math.max(0, vd - needS)));
@@ -4895,6 +4977,7 @@ function planOnce(opts) {
     // Drift: gleitet in die Richtung weiter, in die die Kamera schon fährt
     if (c.tout && c.tout.type === TR.DRIFT && c.motion) { const dx = c.motion.to.x - c.motion.from.x; c.tout.dirSign = Math.abs(dx) > 0.02 ? Math.sign(dx) : c.dir === 'left' ? -1 : 1; }
   }
+  if (vSynced) dir.notes.push(`Video auf den Takt: in ${vSynced} ${vSynced === 1 ? 'Einstellung' : 'Einstellungen'} landen ${vHits} Bewegungsmomente (Sprung, Welle, Schwenk) genau auf Schlag, Snare oder Bassdrum; kein Schnitt reißt eine Bewegung ab.`);
   // nach dem Raster-Zoom: gleiches Bild, gleicher (zentrierter) Ausschnitt, dann sanfte Fahrt
   for (const c of clips) {
     if (!c.afterGrid || !c.motion) continue;
@@ -5482,6 +5565,61 @@ function cutterPolish(clips, ctx) {
     if (bestK >= 0) { const o = clips[bestK]; [c.mediaId, o.mediaId] = [o.mediaId, c.mediaId]; hero++; }
   }
   return { retimed, hero };
+}
+
+/* Planer · Videoschnitt wie ein Cutter: Aktionsmomente eines Videos (Sprung, Welle, Schwenk-Stopp) auf starke Schläge */
+
+/**
+ * Raster der Stellen, auf denen eine Bewegung „sitzen“ soll, mit Gewicht: Eins eines Takts, Snare, Bassdrum, Halbtakt, übrige Beats.
+ * Zeiten relativ zum Songausschnitt.
+ */
+function hitGrid(an, win) {
+  const rel = (a) => Array.from(a || []).map((t) => t - win.start);
+  const bars = rel(an.barStart), beats = rel(an.beats);
+  const out = [];
+  const add = (t, w) => { const o = out.find((x) => Math.abs(x.t - t) < 0.03); if (o) o.w = Math.max(o.w, w); else out.push({ t, w }); };
+  for (const t of beats) add(t, 0.5);
+  bars.forEach((b, k) => { add(b, 1); const nb = bars[k + 1]; if (nb != null) add((b + nb) / 2, 0.75); });
+  for (const t of rel(an.snares)) add(t, 0.8);
+  for (const t of rel(an.kicks)) add(t, 0.7);
+  return out.sort((a, b) => a.t - b.t);
+}
+
+/**
+ * Versatz (Quellzeit ab Ausschnitt-Beginn) so, dass möglichst viele und starke Aktionsmomente genau auf dem Raster landen,
+ * keiner knapp vor dem Schnitt abreißt und der beste Moment im Bild bleibt. Sucht in der Nähe des bisherigen Versatzes.
+ * Liefert { off, hits } oder null, wenn nichts überzeugend passt (dann gilt die bisherige Regel).
+ */
+function syncVideoOffset(m, c, { tIn = 0, off0, hi, rate = 1, grid, best }) {
+  const hs = (m.hits || []).map(([t, st]) => [t - tIn, st]).filter(([t]) => t >= 0);
+  if (!hs.length || !(hi >= 0)) return null;
+  const len = c.visEnd - c.visStart, span = len * rate;
+  const g = grid.filter((x) => x.t > c.start - 0.1 && x.t < c.end + 0.1);
+  if (!g.length) return null;
+  const aff = (tl) => { let a = 0; for (const x of g) { const dt = tl - x.t; if (Math.abs(dt) < 0.12) a = Math.max(a, x.w * Math.exp(-(dt * dt) / (2 * 0.028 * 0.028))); } return a; };
+  const lo = Math.max(0, off0 - span * 0.6), up = Math.min(hi, off0 + span * 0.6);
+  let bestOff = off0, bestScore = -Infinity, bestN = 0, base = null;
+  const evalOff = (off) => {
+    let sc = 0, n = 0;
+    for (const [h, st] of hs) {
+      const tl = c.visStart + (h - off) / rate;
+      if (tl < c.start + 0.06 || tl > c.end + 0.02) continue;
+      // Bewegung setzt kurz vor dem Schnitt ein: wird abgeschnitten
+      if (tl > c.end - 0.14) { sc -= 0.35 * st; continue; }
+      const a = aff(tl);
+      sc += st * a; if (a > 0.5) n++;
+    }
+    sc -= 0.3 * Math.abs(off - off0) / Math.max(0.5, span);
+    if (best != null && (best < off || best > off + span)) sc -= 0.4;
+    return [sc, n];
+  };
+  for (let off = lo; off <= up + 1e-6; off += 1 / 120) {
+    const [sc, n] = evalOff(off);
+    if (sc > bestScore) { bestScore = sc; bestOff = off; bestN = n; }
+  }
+  base = evalOff(Math.max(0, Math.min(hi, off0)))[0];
+  if (bestN < 1 || bestScore < 0.35 || bestScore < base + 0.05) return null;
+  return { off: Math.max(0, Math.min(hi, bestOff)), hits: bestN };
 }
 
 /* Planer · Song zuerst: ideale Menge an Aufnahmen, Bewertung eines Schnitts, Suche nach dem besten Schnitt */
@@ -8308,6 +8446,36 @@ async function probeVideoFast(file) {
   }
 }
 
+/**
+ * Feinanalyse fürs Schneiden auf den Takt (läuft nach dem Einlesen im Hintergrund): dichte Bewegungskurve und
+ * Aktionsmomente auf das Einzelbild genau. Dekodiert das ganze Video (bzw. den gewählten Ausschnitt) einmal.
+ * Liefert { hits, act } oder null (Format passt nicht).
+ */
+async function analyzeVideoAction(file, from = 0, to = Infinity) {
+  if (typeof VideoDecoder === 'undefined' || !/\.(mp4|mov|m4v)$/i.test(file.name || '') && !/mp4|quicktime/.test(file.type || '')) return null;
+  let track = null;
+  try { track = await demuxVideo(file); } catch (e) { return null; }
+  if (!track || track.samples.length < 2) return null;
+  const fr = await FrameReader.open(track, SCORE_SIZE, true);
+  if (!fr) return null;
+  try {
+    const duration = trackDuration(track);
+    const a = Math.max(0, from), b = Math.min(duration, to), len = b - a;
+    // sehr lange Stücke gröber, ab 3 min nicht (der Nutzen im Schnitt ist dort gering)
+    const hz = len <= 60 ? 8 : len <= 180 ? 4 : 0;
+    if (!hz) return { hits: [], act: null };
+    const c = fr.canvas;
+    const grab = async (t) => fr.canvasAt(Math.max(0, Math.min(duration - 0.02, a + t)));
+    const act = await actionCurve(grab, c.width, c.height, len, hz);
+    if (!act) return { hits: [], act: null };
+    return { hits: act.hits.map(([t, st]) => [+(t + a).toFixed(3), st]), act: { hz: act.hz, from: a, v: act.v } };
+  } catch (e) {
+    return null;
+  } finally {
+    fr.close();
+  }
+}
+
 /* Leistungsprotokoll: misst auf dem Gerät, wo beim Einlesen, Planen, Abspielen und Exportieren die Zeit bleibt.
  * Bleibt lokal (nur dieses Gerät, letzte 40 Einträge), nichts wird gesendet. */
 
@@ -10969,6 +11137,31 @@ function scoreInWorker(item) {
   });
 }
 
+/* Feinanalyse der Videos im Hintergrund: Bewegungskurve und Aktionsmomente auf das Einzelbild (für den Schnitt auf
+ * den Takt). Läuft nach dem Einlesen still weiter, pausiert während eines Exports; „Film schneiden“ wartet darauf. */
+const vAct = { queue: [], running: null };
+function queueVideoAction(items) {
+  for (const m of items || []) if (m.kind === 'video' && m.file && !m.hits && !m.bad && !m.loading && !vAct.queue.includes(m)) vAct.queue.push(m);
+  if (!vAct.running && vAct.queue.length) vAct.running = runVideoAction();
+}
+async function runVideoAction() {
+  let n = 0;
+  const t0 = performance.now();
+  while (vAct.queue.length) {
+    const m = vAct.queue.shift();
+    while (S.exporting) await new Promise((r) => setTimeout(r, 500));
+    let r = null;
+    try { r = await analyzeVideoAction(m.file); } catch (e) { r = null; }
+    m.hits = r ? r.hits : [];
+    if (r && r.act) m.act = r.act;
+    n++;
+    saveWork(m);
+  }
+  perfLog.add('action', { videos: n, ms: Math.round(performance.now() - t0) });
+  vAct.running = null;
+}
+function videoActionPending(media) { return !!vAct.running && (vAct.queue.some((m) => media.includes(m)) || media.some((m) => m.kind === 'video' && m.file && !m.hits)); }
+
 /** Bildmaße (mit EXIF-Drehung) aus dem Dateikopf, ohne das Bild zu dekodieren; null, wenn nicht lesbar. */
 async function imageDims(url) {
   const img = new Image();
@@ -11121,6 +11314,7 @@ async function ingestFiles(fileList, onProgress) {
     it.loading = false;
     if (!it.bad) saveWork(it);
   }
+  queueVideoAction(fresh);
   if (fresh.length) {
     const nImg = fresh.filter((i) => i.kind === 'image').length, ms = performance.now() - tStart;
     perfLog.add('import', { files: fresh.length, images: nImg, videos: fresh.length - nImg, ms: Math.round(ms), perItem: Math.round(ms / fresh.length), bad, worker: scoreWorkers.used });
@@ -11469,6 +11663,7 @@ async function openPlace(placeId) {
   rec.settings = normalizeSettings(rec.settings, DEFAULT_SETTINGS);
   rec.overrides = { clips: {}, texts: [], stickers: [], ...(rec.overrides || {}) };
   S.ctx = { kind: 'place', rec, media: placeMedia(rec), song: null };
+  queueVideoAction(S.ctx.media);
   await attachSong(rec.songId || 'demo');
   startHistory();
   renderEditor();
@@ -11496,6 +11691,7 @@ async function openBestof() {
     media.push(...items);
   }
   S.ctx = { kind: 'bestof', rec, media, chapters, song: null };
+  queueVideoAction(media);
   await attachSong(rec.songId || 'demo');
   startHistory();
   renderEditor();
@@ -11749,6 +11945,8 @@ async function cutFilm(n = 8) {
   const media = ctx.media.filter((m) => !m.loading && !m.bad);
   if (!media.length) return;
   engine.pause();
+  // Schnitt auf den Takt braucht die Bewegungsmomente der Videos: kurz auf die Feinanalyse warten
+  if (videoActionPending(media)) { busy('Analysiere die Bewegungen in deinen Videos …'); await vAct.running; }
   busy(`Suche den besten Schnitt … Variante 1 von ${n}`);
   let res;
   const tp = performance.now();
@@ -12116,12 +12314,13 @@ function placeMenu(id) {
 }
 
 /* ---------- Leistungsprotokoll ---------- */
-const PERF_DE = { import: 'Einlesen', plan: 'Planen', export: 'Export', preview: 'Vorschau' };
+const PERF_DE = { import: 'Einlesen', plan: 'Planen', export: 'Export', preview: 'Vorschau', action: 'Bewegung' };
 function perfLine(e) {
   const s = (ms) => (ms >= 1000 ? (ms / 1000).toFixed(1).replace('.', ',') + ' s' : ms + ' ms');
   if (e.kind === 'import') return `${e.files} Aufnahmen (${e.images} Fotos, ${e.videos} Videos) in ${s(e.ms)} · ${s(e.perItem)} je Aufnahme${e.worker ? ' · im Hintergrund-Thread' : ''}${e.bad ? ` · ${e.bad} nicht lesbar` : ''}`;
   if (e.kind === 'plan') return `${e.what}: ${s(e.ms)}${e.tried ? ` · ${e.tried} Varianten geprüft` : ''} · ${e.media} Aufnahmen`;
   if (e.kind === 'export') return `${e.size} · ${e.fps} fps · ${String(e.secs).replace('.', ',')} s Film in ${s(e.totalMs)} (${String(e.speed).replace('.', ',')}× Echtzeit) · je Bild: Laden ${e.prepMs} ms, Zeichnen ${e.drawMs} ms, Encoder ${e.waitMs} ms${e.heat ? ` · Wärmeschutz ${e.heat}× (${s(e.coolMs)} Pause)` : ''}${e.resumes ? ` · ${e.resumes}× fortgesetzt` : ''} · ${String(e.mb).replace('.', ',')} MB`;
+  if (e.kind === 'action') return `Feinanalyse von ${e.videos} ${e.videos === 1 ? 'Video' : 'Videos'} im Hintergrund: ${s(e.ms)}`;
   if (e.kind === 'preview') return `${e.fps} Bilder/s · ${e.costMs} ms je Bild · Auflösung ${Math.round(e.scale * 100)} %${e.fps60 ? ' · Flüssig-Modus' : ''}`;
   return JSON.stringify(e);
 }

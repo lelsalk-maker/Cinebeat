@@ -290,3 +290,72 @@ function markDuplicates(items) {
     if (twin) { m.dupOf = twin.id; m.dupD = hamming(twin.hash, m.hash); m.dupDt = Math.abs((twin.time || 0) - (m.time || 0)); } else kept.push(m);
   }
 }
+
+/**
+ * Bewegungskurve eines Videos (hz Werte je Sekunde, 0–255) und Aktionsmomente daraus: Stellen, an denen Bewegung
+ * plötzlich einsetzt oder sich sprunghaft ändert (Sprung, Welle, Wurf, Schwenk-Stopp). Wie Onsets im Ton –
+ * die Planung legt sie auf starke Schläge. grab(t) liefert ein kleines Bild (ab 0 aufsteigend, für den Dekoder günstig).
+ */
+async function actionCurve(grab, W, H, duration, hz = 8) {
+  const n = Math.max(0, Math.floor(duration * hz));
+  if (n < 4) return null;
+  const S = 48, sc = S / Math.max(W, H);
+  const w = Math.max(8, Math.round(W * sc)), h = Math.max(8, Math.round(H * sc));
+  const v = new Array(n).fill(0);
+  let prev = null;
+  for (let k = 0; k < n; k++) {
+    const src = await grab(k / hz);
+    if (!src) break;
+    const ctx = scoreCtx(w, h);
+    ctx.drawImage(src, 0, 0, w, h);
+    const d = ctx.getImageData(0, 0, w, h).data;
+    const g = new Float32Array(w * h);
+    for (let i = 0; i < g.length; i++) g[i] = 0.2126 * d[i * 4] + 0.7152 * d[i * 4 + 1] + 0.0722 * d[i * 4 + 2];
+    if (prev) { let s = 0; for (let i = 0; i < g.length; i++) s += Math.abs(g[i] - prev[i]); v[k] = Math.min(255, Math.round((s / g.length / 255 / 0.12) * 255)); }
+    prev = g;
+  }
+  if (n > 1) v[0] = v[1];
+  const hits = motionHits(v, hz);
+  // auf das Einzelbild genau: im Fenster vor dem groben Treffer das Bild suchen, ab dem die Bewegung sichtbar einsetzt
+  // (Fenster aufsteigend, damit der Dekoder nur vorwärts läuft)
+  const step = 1 / 30;
+  for (const hit of hits) {
+    const t0 = Math.max(0, hit[0] - 2 / hz), t1 = Math.min(duration - 0.02, hit[0] + 0.5 / hz);
+    let pg = null, bestD = 0;
+    const ds = [];
+    for (let t = t0; t <= t1 + 1e-6; t += step) {
+      const src = await grab(t);
+      if (!src) break;
+      const ctx = scoreCtx(w, h);
+      ctx.drawImage(src, 0, 0, w, h);
+      const d = ctx.getImageData(0, 0, w, h).data;
+      const g = new Float32Array(w * h);
+      for (let i = 0; i < g.length; i++) g[i] = 0.2126 * d[i * 4] + 0.7152 * d[i * 4 + 1] + 0.0722 * d[i * 4 + 2];
+      if (pg) { let sd = 0; for (let i = 0; i < g.length; i++) sd += Math.abs(g[i] - pg[i]); ds.push([t, sd]); bestD = Math.max(bestD, sd); }
+      pg = g;
+    }
+    const on = ds.find(([, sd]) => sd >= bestD * 0.5);
+    if (on) hit[0] = +on[0].toFixed(3);
+  }
+  return { hz, v, hits };
+}
+
+/** Aktionsmomente aus der Bewegungskurve: [[t, Stärke 0–1], …], mindestens 0,45 s auseinander. */
+function motionHits(v, hz) {
+  const n = v.length;
+  if (n < 5) return [];
+  const s = v.map((x, i) => (v[Math.max(0, i - 1)] + 2 * x + v[Math.min(n - 1, i + 1)]) / 4);
+  const d = s.map((x, i) => (i ? Math.max(0, x - s[i - 1]) : 0));
+  const med = (a) => { const b = a.slice().sort((x, y) => x - y); return b[b.length >> 1]; };
+  const md = med(d), mad = med(d.map((x) => Math.abs(x - md))) || 1, ms = med(s);
+  const thr = Math.max(6, md + 3 * mad);
+  const cand = [];
+  for (let i = 1; i < n - 1; i++) {
+    if (d[i] < thr || d[i] < d[i - 1] || d[i] < d[i + 1] || s[i + 1] < ms * 1.15) continue;
+    cand.push([i / hz, Math.min(1, d[i] / (thr * 3))]);
+  }
+  cand.sort((a, b) => b[1] - a[1]);
+  const out = [];
+  for (const c of cand) if (out.every((o) => Math.abs(o[0] - c[0]) >= 0.45)) out.push(c);
+  return out.slice(0, 24).sort((a, b) => a[0] - b[0]).map(([t, st]) => [+t.toFixed(3), +st.toFixed(2)]);
+}
