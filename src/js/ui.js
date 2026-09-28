@@ -569,7 +569,7 @@ async function restoreWork() {
     for (const fp of p.fps || []) use(fp, t);
     use(p.songId, t);
   }
-  if (S.trip.bestof) use(S.trip.bestof.songId, S.trip.edited || S.trip.created);
+  for (const tr of S.trips || [S.trip]) if (tr.bestof) use(tr.bestof.songId, tr.edited || tr.created);
   for (const r of recs) {
     const last = lastUse.get(r.id);
     if (!last || now - Math.max(last, r.savedAt || 0) > maxAge) { try { await S.store.del('work', r.id); } catch (e) { /* egal */ } continue; }
@@ -585,7 +585,7 @@ async function restoreWork() {
 async function dropUnusedWork(ids) {
   const used = new Set();
   for (const p of S.places) { for (const fp of p.fps || []) used.add(fp); used.add(p.songId); }
-  if (S.trip.bestof) used.add(S.trip.bestof.songId);
+  for (const tr of S.trips || [S.trip]) if (tr.bestof) used.add(tr.bestof.songId);
   for (const id of ids) {
     if (!id || used.has(id) || id === 'demo') continue;
     try { await S.store.del('work', id); } catch (e) { /* egal */ }
@@ -990,12 +990,15 @@ async function importTrip(fileList) {
   for (const p of S.places) for (const fp of p.fps || []) owner.set(fp, p);
   const newItems = items.filter((m) => !owner.has(m.id));
   const stops = clusterStops(newItems);
-  const touched = [];
+  const touched = [], madeTrips = [];
+  const byTrip = new Map();
   for (const st of stops) {
-    let rec = st.pos ? S.places.find((p) => p.pos && haversineKm(p.pos, st.pos) < 25) : null;
+    // jede Etappe in die passende Reise: nach Datum, sonst eine neue Reise
+    const tr = tripForStop(st, madeTrips);
+    let rec = st.pos ? S.places.find((p) => !p.demo && tripOf(p) === tr.id && p.pos && haversineKm(p.pos, st.pos) < 25) : null;
     if (!rec) {
       rec = {
-        id: uid('p'), name: st.name || `Stopp ${S.places.length + 1}`, sub: dateRangeLabel(st.from, st.to), created: Date.now(), songId: 'demo', flow: 'song',
+        id: uid('p'), tripId: tr.id, name: st.name || `Stopp ${S.places.filter((p) => tripOf(p) === tr.id).length + 1}`, sub: dateRangeLabel(st.from, st.to), created: Date.now(), songId: 'demo', flow: 'song',
         settings: baseSettings(DEFAULT_SETTINGS), overrides: { clips: {}, texts: [], stickers: [] }, hookId: null, fps: [], flags: {},
         autoName: !st.name,
       };
@@ -1004,9 +1007,18 @@ async function importTrip(fileList) {
     for (const m of st.items) if (!rec.fps.includes(m.id)) rec.fps.push(m.id);
     updatePlaceMeta(rec, placeMedia(rec));
     touched.push(rec);
+    byTrip.set(tr, (byTrip.get(tr) || 0) + st.items.length);
   }
   const known = items.length - newItems.length;
   for (const p of S.places) await S.store.put('places', p);
+  for (const t of madeTrips) { t.name = autoTripName(t); await S.store.put('trip', t); }
+  // die Reise mit den meisten neuen Aufnahmen wird angezeigt
+  const main = Array.from(byTrip.entries()).sort((a, b) => b[1] - a[1])[0];
+  if (main && main[0] !== S.trip) await switchTrip(main[0].id, false);
+  if (byTrip.size > 1 || madeTrips.length) {
+    const names = Array.from(byTrip.keys()).map((t) => `„${t.name}“`);
+    toast(madeTrips.length ? `Nach Datum eingeordnet: ${names.join(', ')}${madeTrips.length ? ` (${madeTrips.length} neu angelegt)` : ''}.` : `Eingeordnet in ${names.join(', ')}.`);
+  }
   renderTrip();
   if (!touched.length) {
     closeSheet();
@@ -1017,7 +1029,96 @@ async function importTrip(fileList) {
 }
 
 function tripStops() {
-  return S.places.filter((p) => !p.demo && p.from && !isFlight(p)).sort((a, b) => a.from - b.from);
+  return S.places.filter((p) => !p.demo && p.from && !isFlight(p) && tripOf(p) === S.trip.id).sort((a, b) => a.from - b.from);
+}
+
+/* ---------- Mehrere Reisen: jede Etappe gehört zu genau einer Reise, eingeordnet nach Datum ---------- */
+const tripOf = (p) => p.tripId || 'main';
+const inTrip = (p) => p.demo || tripOf(p) === S.trip.id;
+function tripPlacesOf(id) { return S.places.filter((p) => !p.demo && tripOf(p) === id); }
+function tripRange(id) {
+  let from = Infinity, to = -Infinity;
+  for (const p of tripPlacesOf(id)) { if (p.from) from = Math.min(from, p.from); if (p.to || p.from) to = Math.max(to, p.to || p.from); }
+  return from <= to ? { from, to } : null;
+}
+/** Reise für eine Etappe: liegt sie zeitlich in (oder bis 2 Tage neben) einer Reise, dorthin; sonst eine neue Reise. */
+function tripForStop(st, made) {
+  const DAY = 864e5;
+  if (!st.from) return S.trip;
+  const near = (id, gap) => { const r = tripRange(id); return r && st.from <= r.to + gap && (st.to || st.from) >= r.from - gap; };
+  const hit = S.trips.find((t) => near(t.id, 2 * DAY));
+  if (hit) return hit;
+  // leere aktuelle Reise (erste Auswahl) nimmt alles, was nicht woanders hingehört
+  if (!tripPlacesOf(S.trip.id).length && !made.length) return S.trip;
+  // innerhalb dieses Imports: Etappen bis 3 Tage auseinander bilden eine Reise
+  const own = made.find((t) => near(t.id, 3 * DAY));
+  if (own) return own;
+  const t = { id: uid('t'), name: 'Neue Reise', created: Date.now(), opened: Date.now() };
+  S.trips.push(t);
+  made.push(t);
+  return t;
+}
+function autoTripName(t) {
+  const ps = tripPlacesOf(t.id).filter((p) => !isFlight(p)).sort((a, b) => (a.from || 0) - (b.from || 0));
+  const r = tripRange(t.id);
+  const names = ps.map((p) => p.name).filter((n) => n && !/^Stopp \d+$/.test(n));
+  const head = names.length ? (names.length > 2 ? `${names[0]} bis ${names[names.length - 1]}` : names.join(' & ')) : 'Reise';
+  return r ? `${head} · ${new Date(r.from).toLocaleDateString('de-DE', { month: 'long', year: 'numeric' })}` : head;
+}
+async function switchTrip(id, render = true) {
+  const t = S.trips.find((x) => x.id === id);
+  if (!t) return;
+  S.trip = t;
+  t.opened = Date.now();
+  await S.store.put('trip', t);
+  if (render) renderTrip();
+}
+async function newTrip() {
+  const t = { id: uid('t'), name: 'Neue Reise', created: Date.now(), opened: Date.now() };
+  S.trips.push(t);
+  await switchTrip(t.id);
+  closeSheet();
+  setTimeout(() => { const el = $('tripName'); el.focus(); el.select(); }, 60);
+}
+function openTripsSheet() {
+  const DAYF = { day: 'numeric', month: 'short', year: 'numeric' };
+  const rows = S.trips.slice().sort((a, b) => ((tripRange(b.id) || {}).from || b.created) - ((tripRange(a.id) || {}).from || a.created)).map((t) => {
+    const ps = tripPlacesOf(t.id), r = tripRange(t.id), cov = ps.map(placeCover).find(Boolean);
+    const nAuf = ps.reduce((a, p) => a + (p.fps || []).length, 0);
+    return `<div class="trip-row${t === S.trip ? ' on' : ''}" role="button" tabindex="0" data-trip="${esc(t.id)}">
+      <span class="trip-cov">${cov ? `<img src="${cov}" alt="">` : `<span class="mono">${esc((t.name || '?').slice(0, 1).toUpperCase())}</span>`}</span>
+      <span class="trip-txt"><strong>${esc(t.name || 'Reise')}</strong><span class="meta">${r ? `${new Date(r.from).toLocaleDateString('de-DE', DAYF)} – ${new Date(r.to).toLocaleDateString('de-DE', DAYF)} · ` : ''}${ps.length} ${ps.length === 1 ? 'Ort' : 'Orte'} · ${nAuf} Aufnahmen</span></span>
+      ${S.trips.length > 1 ? `<button class="icon-btn" type="button" data-deltrip="${esc(t.id)}" aria-label="Reise löschen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>` : ''}
+    </div>`;
+  }).join('');
+  const body = openSheet(`
+    <h3 id="sheetTitle">Deine Reisen</h3>
+    <p class="hint small">Neue Aufnahmen ordnet die App nach Datum selbst der passenden Reise zu; liegen sie außerhalb aller Reisen, legt sie eine neue an.</p>
+    <div class="trip-rows">${rows}</div>
+    <div class="sheet-actions"><button class="btn primary" data-act="new" type="button">Neue Reise</button><button class="btn ghost" data-act="close" type="button">Schließen</button></div>`);
+  body.addEventListener('click', async (e) => {
+    const del = e.target.closest('[data-deltrip]');
+    if (del) {
+      e.stopPropagation();
+      const id = del.dataset.deltrip;
+      if (del.dataset.sure !== '1') { del.dataset.sure = '1'; del.classList.add('danger'); del.setAttribute('aria-label', 'Wirklich löschen? Nochmals tippen'); toast('Nochmals tippen, um die Reise mit ihren Orten zu löschen.'); return; }
+      const gone = tripPlacesOf(id);
+      for (const p of gone) await S.store.del('places', p.id);
+      S.places = S.places.filter((p) => !gone.includes(p));
+      S.trips = S.trips.filter((t) => t.id !== id);
+      await S.store.del('trip', id);
+      dropUnusedWork(gone.flatMap((p) => [...(p.fps || []), p.songId]));
+      if (S.trip.id === id) await switchTrip(S.trips.slice().sort((a, b) => (b.opened || 0) - (a.opened || 0))[0].id, false);
+      closeSheet(); renderTrip(); toast('Reise gelöscht.');
+      return;
+    }
+    const row = e.target.closest('[data-trip]');
+    if (row) { await switchTrip(row.dataset.trip); closeSheet(); return; }
+    const a = e.target.closest('[data-act]');
+    if (!a) return;
+    if (a.dataset.act === 'new') { await newTrip(); return; }
+    closeSheet();
+  });
 }
 
 /* ---------- Flüge ---------- */
@@ -1100,7 +1201,7 @@ function openFlightSheet(rec) {
     delete r.flight.fromPos; delete r.flight.toPos; delete r.flight.depT; delete r.flight.arrT;
     r.name = flightName(r.flight);
     if (!r.from) { r.from = Date.now(); r.to = r.from; r.sub = ''; }
-    if (!rec) S.places.push(r);
+    if (!rec) { r.tripId = S.trip.id; S.places.push(r); }
     await S.store.put('places', r);
     closeSheet();
     if (S.ctx && S.ctx.rec === r) { $('placeName').value = r.name; await rebuild(); } else { renderTrip(); openPlace(r.id); }
@@ -1119,7 +1220,7 @@ function tripContext() {
   if (ctx.kind === 'place' && isFlight(ctx.rec)) return null;
   const places = ctx.kind === 'bestof' ? ctx.chapters.map((c) => ({ name: c.title, pos: c.pos, from: c.from, id: c.placeId })) : tripStops().map((p) => ({ name: p.name, pos: p.pos, from: p.from, id: p.id }));
   if (!places.length) return null;
-  const flights = S.places.filter(isFlight).map((p) => ({ toPos: cityPos((p.flight || {}).toName), depT: p.from })).filter((f) => f.toPos);
+  const flights = S.places.filter((p) => isFlight(p) && inTrip(p)).map((p) => ({ toPos: cityPos((p.flight || {}).toName), depT: p.from })).filter((f) => f.toPos);
   const flownTo = (p) => p.pos && flights.some((f) => haversineKm(f.toPos, p.pos) < 150 && (!f.depT || !p.from || f.depT <= p.from + 864e5));
   let prev = null, total = 0;
   const stops = places.map((p, i) => {
@@ -1742,11 +1843,106 @@ function placeCover(p) {
   return hook.thumb;
 }
 
+/* ---------- Reisekarte: Land als Punkteraster, Route in Beige, Etappen zum Antippen ---------- */
+const tripMapState = { pts: [] };
+function drawTripMap() {
+  const box = $('tripMap'), cv = $('tripMapCanvas');
+  const stops = tripStops().filter((p) => p.pos);
+  if (!stops.length || $('viewTrip').hidden) { box.hidden = !stops.length; tripMapState.pts = []; return; }
+  box.hidden = false;
+  const css = getComputedStyle(document.documentElement);
+  const col = (n, d) => (css.getPropertyValue(n) || d).trim();
+  const W = Math.max(200, Math.round(box.clientWidth || 358)), H = Math.round(Math.min(300, Math.max(190, W * 0.62)));
+  const d = Math.min(2.5, window.devicePixelRatio || 1);
+  cv.width = Math.round(W * d); cv.height = Math.round(H * d); cv.style.height = H + 'px';
+  const x = cv.getContext('2d');
+  x.setTransform(d, 0, 0, d, 0, 0);
+  const rad = Math.PI / 180;
+  let la0 = 90, la1 = -90, lo0 = 180, lo1 = -180;
+  for (const p of stops) { la0 = Math.min(la0, p.pos[0]); la1 = Math.max(la1, p.pos[0]); lo0 = Math.min(lo0, p.pos[1]); lo1 = Math.max(lo1, p.pos[1]); }
+  // mindestens ~60 km Ausschnitt, damit ein einzelner Ort nicht riesig wirkt
+  const minSpan = 0.6;
+  if (la1 - la0 < minSpan) { const m = (la0 + la1) / 2; la0 = m - minSpan / 2; la1 = m + minSpan / 2; }
+  if (lo1 - lo0 < minSpan) { const m = (lo0 + lo1) / 2; lo0 = m - minSpan / 2; lo1 = m + minSpan / 2; }
+  const cf = Math.cos(((la0 + la1) / 2) * rad), pad = 0.18;
+  const sc = Math.min((W * (1 - 2 * pad)) / ((lo1 - lo0) * cf), (H * (1 - 2 * pad)) / (la1 - la0));
+  const mx = (lo0 + lo1) / 2, my = (la0 + la1) / 2;
+  const oy = -10; // Platz für die Legende unten
+  const pr = (la, lo) => [W / 2 + (lo - mx) * cf * sc, H / 2 + oy - (la - my) * sc];
+  const g = x.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, col('--night', '#0a101b')); g.addColorStop(1, col('--black', '#050608'));
+  x.fillStyle = g; x.fillRect(0, 0, W, H);
+  // Land: feines Punkteraster (gleiche Weltkarte wie die Etappenkarte im Film); die Küste wird zwischen den
+  // Rasterzellen weich interpoliert, damit sie auch bei starkem Zoom rund statt blockig wirkt
+  const cell = (la, lo) => (isLand(Math.floor(la / LAND_RES) * LAND_RES + LAND_RES / 2, Math.floor(lo / LAND_RES) * LAND_RES + LAND_RES / 2) ? 1 : 0);
+  const landAt = (la, lo) => {
+    const a = la / LAND_RES - 0.5, b = lo / LAND_RES - 0.5, i = Math.floor(a), j = Math.floor(b), fa = a - i, fb = b - j;
+    const v = (ii, jj) => cell((ii + 0.5) * LAND_RES, (jj + 0.5) * LAND_RES);
+    return (v(i, j) * (1 - fb) + v(i, j + 1) * fb) * (1 - fa) + (v(i + 1, j) * (1 - fb) + v(i + 1, j + 1) * fb) * fa;
+  };
+  const gap = 6, r = 0.95;
+  x.fillStyle = col('--line-2', '#2a3a57');
+  for (let py = gap / 2; py < H; py += gap) {
+    for (let px = gap / 2; px < W; px += gap) {
+      const la = my - (py - H / 2 - oy) / sc, lo = mx + (px - W / 2) / (sc * cf);
+      if (landAt(la, lo) < 0.5) continue;
+      x.fillRect(px - r, py - r, r * 2, r * 2);
+    }
+  }
+  const P = stops.map((p) => pr(p.pos[0], p.pos[1]));
+  // nah beieinander liegende Etappen leicht auseinanderrücken, damit jede Nummer lesbar bleibt
+  for (let it = 0; it < 12; it++) {
+    for (let i = 0; i < P.length; i++) for (let k = i + 1; k < P.length; k++) {
+      const dx = P[k][0] - P[i][0], dy = P[k][1] - P[i][1], dd = Math.hypot(dx, dy);
+      if (dd >= 20) continue;
+      const ux = dd > 0.01 ? dx / dd : 1, uy = dd > 0.01 ? dy / dd : 0, push = (20 - dd) / 2;
+      P[i][0] -= ux * push; P[i][1] -= uy * push; P[k][0] += ux * push; P[k][1] += uy * push;
+    }
+  }
+  const beige = col('--beige', '#e4d5b7');
+  // Route: sanfte Bögen zwischen den Etappen
+  x.lineCap = 'round'; x.lineJoin = 'round'; x.strokeStyle = beige; x.lineWidth = 1.6; x.globalAlpha = 0.85;
+  x.beginPath();
+  P.forEach((q, i) => {
+    if (!i) { x.moveTo(q[0], q[1]); return; }
+    const a = P[i - 1], dx = q[0] - a[0], dy = q[1] - a[1];
+    x.quadraticCurveTo((a[0] + q[0]) / 2 - dy * 0.18, (a[1] + q[1]) / 2 + dx * 0.18, q[0], q[1]);
+  });
+  x.stroke();
+  x.globalAlpha = 1;
+  // Etappen: nummeriert, Namen dort, wo Platz ist
+  x.font = `600 10px ${css.getPropertyValue('--f-mono') || 'monospace'}`; x.textAlign = 'center'; x.textBaseline = 'middle';
+  const labels = [];
+  P.forEach((q, i) => {
+    x.fillStyle = col('--black', '#050608'); x.beginPath(); x.arc(q[0], q[1], 9, 0, Math.PI * 2); x.fill();
+    x.strokeStyle = beige; x.lineWidth = 1.4; x.stroke();
+    x.fillStyle = beige; x.fillText(String(i + 1), q[0], q[1] + 0.5);
+    labels.push(q);
+  });
+  x.font = `400 13px ${(css.getPropertyValue('--f-serif') || 'Georgia, serif').trim()}`; x.textAlign = 'left';
+  const placed = [];
+  P.forEach((q, i) => {
+    const name = stops[i].name || '';
+    const w = x.measureText(name).width;
+    let lx = q[0] + 13, ly = q[1];
+    if (lx + w > W - 8) lx = q[0] - 13 - w;
+    const rect = [lx - 2, ly - 9, w + 4, 18];
+    const clash = placed.some((b) => rect[0] < b[0] + b[2] && rect[0] + rect[2] > b[0] && rect[1] < b[1] + b[3] && rect[1] + rect[3] > b[1]) || labels.some((p, k) => k !== i && Math.abs(p[0] - (lx + w / 2)) < w / 2 + 10 && Math.abs(p[1] - ly) < 12);
+    if (clash) return;
+    placed.push(rect);
+    x.fillStyle = col('--text', '#eceae4'); x.globalAlpha = 0.92; x.fillText(name, lx, ly); x.globalAlpha = 1;
+  });
+  tripMapState.pts = P.map((q, i) => ({ x: q[0], y: q[1], id: stops[i].id }));
+  const km = tripKm(stops);
+  $('tripMapInfo').textContent = `${stops.length} ${stops.length === 1 ? 'Etappe' : 'Etappen'}${km > 1 ? ` · ${Math.round(km).toLocaleString('de-DE')} km` : ''} · antippen zum Öffnen`;
+}
+
 async function renderTrip() {
   $('tripName').value = S.trip.name || 'Meine Reise';
   const list = $('placeList');
-  const places = S.places.slice().sort((a, b) => (a.from || a.created) - (b.from || b.created));
+  const places = S.places.filter(inTrip).sort((a, b) => (a.from || a.created) - (b.from || b.created));
   const stops = tripStops();
+  $('tripSwitch').textContent = S.trips.length > 1 ? `Reise ${S.trips.slice().sort((a, b) => a.created - b.created).indexOf(S.trip) + 1} von ${S.trips.length}` : 'Deine Reise';
   const km = tripKm(stops);
   const total = places.reduce((a, p) => a + (p.fps || []).length, 0);
   const nPl = places.filter((p) => !isFlight(p)).length, nFl = places.length - nPl;
@@ -1754,6 +1950,7 @@ async function renderTrip() {
   if (km > 1) parts.push(`ca. ${Math.round(km).toLocaleString('de-DE')} km`);
   if (stops.length) { const days = Math.max(1, Math.round((stops[stops.length - 1].to - stops[0].from) / 86400000) + 1); parts.push(`${days} ${days === 1 ? 'Tag' : 'Tage'}`); }
   $('tripStats').textContent = parts.join(' · ');
+  requestAnimationFrame(drawTripMap);
   // Beispielort mit echtem Titelbild statt Anfangsbuchstabe (die Beispielbilder werden einmal gemalt)
   const demoP = places.find((p) => p.demo);
   if (demoP && !placeCover(demoP) && !renderTrip._demoCover) { renderTrip._demoCover = true; setTimeout(() => ensureDemoMedia(demoP).then(() => { if (!$('viewTrip').hidden) renderTrip(); }), 30); }
@@ -1801,7 +1998,7 @@ async function newPlace() {
   const rec = {
     id: uid('p'), name: 'Neuer Ort', sub: '', created: Date.now(), songId: 'demo', flow: 'song',
     settings: baseSettings(DEFAULT_SETTINGS),
-    overrides: { clips: {}, texts: [], stickers: [] }, hookId: null, fps: [], flags: {},
+    overrides: { clips: {}, texts: [], stickers: [] }, hookId: null, fps: [], flags: {}, tripId: S.trip.id,
   };
   S.places.push(rec);
   await S.store.put('places', rec);
@@ -1913,6 +2110,7 @@ function confirmWipe() {
     await S.store.wipe();
     await S.store.open();
     S.trip = { id: 'main', name: 'Meine Reise', created: Date.now() };
+    S.trips = [S.trip];
     S.places = [createDemoPlace()];
     await S.store.put('trip', S.trip);
     closeSheet();
@@ -3024,7 +3222,10 @@ async function init() {
   engine.onEnded = () => { if (!S.exporting) { engine.t = 0; showPoster(); } };
 
   await S.store.open();
-  S.trip = (await S.store.get('trip', 'main')) || { id: 'main', name: 'Meine Reise', created: Date.now() };
+  S.trips = (await S.store.all('trip')).filter((t) => t && t.id);
+  if (!S.trips.some((t) => t.id === 'main') && !S.trips.length) S.trips.push({ id: 'main', name: 'Meine Reise', created: Date.now() });
+  // zuletzt geöffnete Reise
+  S.trip = S.trips.slice().sort((a, b) => (b.opened || 0) - (a.opened || 0))[0];
   S.places = (await S.store.all('places')).filter((p) => !p.demo);
   for (const p of S.places) { if (!p.fps) { p.fps = []; p.flags = {}; } delete p.cover; }
   // Beispiel nur, solange es keine eigenen Orte gibt (wird nicht gespeichert)
@@ -3035,6 +3236,14 @@ async function init() {
   // Reise
   $('tripName').addEventListener('input', (e) => { S.trip.name = e.target.value; clearTimeout(saveTimer); saveTimer = setTimeout(() => S.store.put('trip', S.trip), 400); });
   $('addPlace').addEventListener('click', newPlace);
+  $('tripSwitch').addEventListener('click', openTripsSheet);
+  $('tripMapCanvas').addEventListener('click', (e) => {
+    const r = e.currentTarget.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
+    let best = null, bd = 26;
+    for (const p of tripMapState.pts) { const dd = Math.hypot(p.x - px, p.y - py); if (dd < bd) { bd = dd; best = p; } }
+    if (best) openPlace(best.id);
+  });
+  window.addEventListener('resize', () => { if (!$('viewTrip').hidden) drawTripMap(); });
   $('addFlight').addEventListener('click', () => openFlightSheet(null));
   $('tripFiles').addEventListener('change', (e) => { const fl = Array.from(e.target.files || []); e.target.value = ''; if (fl.length) importTrip(fl); });
   $('storageHint').addEventListener('click', (e) => { if (e.target.closest('#wipeBtn')) confirmWipe(); if (e.target.closest('#clearWorkBtn')) confirmClearWork(); if (e.target.closest('#perfBtn')) openPerf(); });
@@ -3239,7 +3448,7 @@ async function init() {
 window.CineBeat = {
   get S() { return S; },
   get engine() { return engine; },
-  openPlace, openBestof, addFiles, ingestFiles, scoreWorkers, perfLog, rebuild, newPlace, importSong,
+  openPlace, openBestof, addFiles, ingestFiles, scoreWorkers, perfLog, _trips: { tripForStop, tripRange, autoTripName, switchTrip, renderTrip }, rebuild, newPlace, importSong,
 };
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

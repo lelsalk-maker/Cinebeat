@@ -9,7 +9,7 @@
       <span class="privacy" title="Alles bleibt auf diesem Gerät"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 3v5c0 4.4-3 8.3-7 10-4-1.7-7-5.6-7-10V6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Offline &amp; privat</span>
     </header>
     <div class="trip-head">
-      <label class="eyebrow" for="tripName">Deine Reise</label>
+      <button class="eyebrow trip-switch" id="tripSwitch" type="button" aria-label="Reise wechseln oder neue Reise anlegen">Deine Reise</button>
       <input class="trip-name" id="tripName" type="text" maxlength="40" autocomplete="off" spellcheck="false">
       <p class="trip-stats" id="tripStats"></p>
     </div>
@@ -21,6 +21,10 @@
       <input class="vh" type="file" id="tripFiles" accept="image/*,video/*" multiple>
       <p class="hint small">Wähle einfach alle Aufnahmen der Reise. Die App liest Zeit und Ort direkt auf deinem Gerät aus und legt die Orte selbst an.</p>
     </div>
+    <figure class="tripmap" id="tripMap" hidden>
+      <canvas id="tripMapCanvas" aria-label="Karte der Reise: tippe auf eine Etappe, um sie zu öffnen" role="img"></canvas>
+      <figcaption class="tm-info" id="tripMapInfo"></figcaption>
+    </figure>
     <button class="bestof" id="openBestof" type="button">
       <span class="bestof-art" id="bestofArt" aria-hidden="true"></span>
       <span class="bestof-text">
