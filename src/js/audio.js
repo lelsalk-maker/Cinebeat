@@ -55,6 +55,65 @@ function percentile(arr, p) {
 /** Version der Analyse: gespeicherte Songs mit älterer Version werden einmal neu analysiert. */
 const AN_VER = 4;
 
+/**
+ * Mithören: findet in der Mikrofonaufnahme den genauen Einsatz des Songs nach dem Startsignal.
+ * 1. Den hohen Startton (beepHz) in der Aufnahme suchen: so zählt die echte Zeit, nicht die geschätzte (Latenzen).
+ * 2. Für den Einsatz nur tiefe Frequenzen betrachten (Tiefpass): der Piepton stört dann nicht, Bass und Schlagzeug schon.
+ * 3. Rauschpegel aus der Pause vor dem Signal, dann der erste deutlich und anhaltend lautere Moment, auf ms zurückverfolgt.
+ * Liefert { at (Sample), go (Sample des Starttons), found, early (Song lief schon vorher) }.
+ */
+function findSongStart(d, sr, goEst, beepHz = 1976) {
+  const hop = Math.max(1, Math.round(sr * 0.005)), win = Math.max(hop, Math.round(sr * 0.01));
+  // Startton per Goertzel suchen (±0,5 s um die Schätzung)
+  let go = goEst, best = 0, sum = 0, cnt = 0;
+  const w = 2 * Math.cos((2 * Math.PI * beepHz) / sr);
+  for (let i = Math.max(0, goEst - Math.round(sr * 0.5)); i < Math.min(d.length - win, goEst + Math.round(sr * 0.5)); i += hop) {
+    let s0 = 0, s1 = 0, s2 = 0, e = 0;
+    for (let k = i; k < i + win; k++) { s0 = d[k] + w * s1 - s2; s2 = s1; s1 = s0; e += d[k] * d[k]; }
+    const pw = (s1 * s1 + s2 * s2 - w * s1 * s2) / win / Math.max(1e-9, e);
+    sum += pw; cnt++;
+    if (pw > best) { best = pw; go = i; }
+  }
+  const beepFound = cnt && best > (sum / cnt) * 6 && best > 0.2;
+  if (!beepFound) go = goEst;
+  else go += Math.round(sr * 0.012);
+  // schmaler Kerbfilter genau auf dem Startton (zweimal): der Piepton verschwindet, die Musik bleibt vollständig
+  const lp = Float32Array.from(d);
+  const w0 = (2 * Math.PI * beepHz) / sr, al = Math.sin(w0) / (2 * 6), cw = Math.cos(w0);
+  const b0 = 1 / (1 + al), b1 = (-2 * cw) / (1 + al), a1 = b1, a2 = (1 - al) / (1 + al);
+  for (let pass = 0; pass < 2; pass++) {
+    let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    for (let i = 0; i < lp.length; i++) { const x = lp[i], y = b0 * x + b1 * x1 + b0 * x2 - a1 * y1 - a2 * y2; x2 = x1; x1 = x; y2 = y1; y1 = y; lp[i] = y; }
+  }
+  const rms = (i) => { let s = 0, n = 0; for (let k = Math.max(0, i); k < Math.min(lp.length, i + win); k++) { s += lp[k] * lp[k]; n++; } return n ? Math.sqrt(s / n) : 0; };
+  const nA = Math.max(0, go - Math.round(sr * 0.85)), nB = Math.max(nA + hop, go - Math.round(sr * 0.12));
+  const nf = [];
+  for (let i = nA; i < nB; i += hop) nf.push(rms(i));
+  nf.sort((x, y) => x - y);
+  const noise = nf.length ? nf[Math.floor(nf.length * 0.5)] : 0;
+  const quiet = nf.length ? nf[Math.floor(nf.length * 0.2)] : 0;
+  const a = go - Math.round(sr * 0.03), z = Math.min(lp.length - win, go + Math.round(sr * 5));
+  let peak = 0;
+  for (let i = a; i < Math.min(z, a + Math.round(sr * 3)); i += hop) peak = Math.max(peak, rms(i));
+  if (peak <= 1e-6) return { at: go, go, found: false, early: false, beep: beepFound };
+  const early0 = quiet > peak * 0.1;
+  if (early0) return { at: go, go, found: false, early: true, beep: beepFound };
+  const early = false;
+  const thr = Math.max(noise * 4, peak * 0.08, 1e-5);
+  for (let i = a; i < z; i += hop) {
+    if (rms(i) <= thr) continue;
+    let m = 0;
+    for (let k = 1; k <= 10; k++) m += rms(i + k * hop);
+    if (m / 10 < thr * 0.7) continue;
+    let j = i;
+    const lo = Math.max(noise * 1.8, thr * 0.25);
+    for (let s2 = 0; s2 < 8 && j - hop > a && rms(j - hop) > lo; s2++) j -= hop;
+    // das Messfenster reicht 10 ms nach vorn: der Einsatz liegt etwa in seiner Mitte
+    return { at: j + Math.round(win * 0.6), go, found: true, early, beep: beepFound };
+  }
+  return { at: go, go, found: false, early, beep: beepFound };
+}
+
 async function analyzeAudio(buffer, onProgress) {
   const sr0 = buffer.sampleRate;
   const factor = Math.max(1, Math.round(sr0 / 22050));

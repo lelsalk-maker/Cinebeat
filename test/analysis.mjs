@@ -90,6 +90,21 @@ const res = await p.evaluate(async (b64) => {
   const sf = stp.colorFx[0];
   out.strobe = sf ? sf.steps.map((x) => +(sf.hit - x).toFixed(2)) : null;
   if (!sf || sf.steps.length < 6 || sf.steps.length % 2 || sf.steps.some((x) => x >= sf.hit)) fails.push('Stroboskop falsch');
+  // Mithören: Einsatz nach dem Startton auf wenige Millisekunden, egal wie schnell gedrückt wurde und wie groß die Latenz ist
+  const micCase = (songAt, goErr, early) => {
+    const sr = 44100, N = sr * 8, d = new Float32Array(N);
+    let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647 - 0.5);
+    for (let i = 0; i < N; i++) d[i] = rnd() * 0.006;
+    const tone = (t, f) => { const a = Math.round(t * sr); for (let k = 0; k < sr * 0.1; k++) d[a + k] += 0.35 * Math.sin((2 * Math.PI * f * k) / sr) * Math.min(1, k / 300) * Math.exp(-k / (sr * 0.04)); };
+    tone(1, 1480); tone(2, 1480); tone(3, 1976);
+    const s0 = Math.round((early ? 0.4 : songAt) * sr);
+    for (let i = s0; i < N; i++) { const t = (i - s0) / sr, bt = t % 0.5; d[i] += 0.25 * Math.sin(2 * Math.PI * 55 * t) * Math.exp(-bt / 0.12) + 0.08 * Math.sin(2 * Math.PI * 220 * t); }
+    const r = findSongStart(d, sr, Math.round((3 + goErr) * sr), 1976);
+    return { err: r.found ? +((r.at / sr - songAt) * 1000).toFixed(1) : null, early: r.early, beep: r.beep };
+  };
+  out.mic = { normal: micCase(3.22, 0.08, false), schnell: micCase(3.03, -0.06, false), spaet: micCase(3.9, 0.12, false), frueh: micCase(3.2, 0, true) };
+  for (const k of ['normal', 'schnell', 'spaet']) if (out.mic[k].err == null || Math.abs(out.mic[k].err) > 15) fails.push(`Mithören-Einsatz ${k}: ${out.mic[k].err} ms`);
+  if (!out.mic.frueh.early) fails.push('zu früh gestarteter Song nicht erkannt');
   return { out, fails };
 }, wav);
 console.log(JSON.stringify(res.out, null, 1));

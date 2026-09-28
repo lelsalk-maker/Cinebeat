@@ -259,6 +259,12 @@ details.more[open] { display: grid; gap: 16px; }
 .song-text strong { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .song-text span { font: 11.5px/1.4 var(--f-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
 #micTime { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+.mic-count { display: grid; justify-items: center; gap: 6px; padding: 18px 12px; border-radius: 14px; background: var(--navy); border: 1px solid var(--line-2); text-align: center; }
+.mic-count b { font: 400 64px/1 var(--f-serif); color: var(--text); transition: transform 0.12s ease; }
+.mic-count span { font-size: 14px; color: var(--muted); }
+.mic-count.pulse b { transform: scale(1.12); }
+.mic-count.go { border-color: var(--beige); background: rgba(228, 213, 183, 0.1); }
+.mic-count.go b { color: var(--beige); }
 .mic-meter { height: 6px; border-radius: 3px; background: var(--navy); overflow: hidden; }
 .mic-meter span { display: block; height: 100%; background: var(--beige); transform-origin: left; transform: scaleX(0); transition: transform 80ms linear; }
 .song-map-wrap { display: grid; gap: 7px; }
