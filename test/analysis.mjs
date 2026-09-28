@@ -118,6 +118,16 @@ const res = await p.evaluate(async (b64) => {
   const bc = await bestCut({ an, media, settings: set0, overrides: { texts: [], stickers: [] } }, 6);
   out.bestCut = { seed: bc.seed, score: bc.score, tried: bc.tried.map((x) => x.score) };
   if (!(bc.score >= bc.tried[0].score) || !bc.plan || !bc.plan.clips.length) fails.push('Bestschnitt-Suche falsch');
+  // Cutter-Feinschliff: Totalen stehen länger als Details; auf dem Drop-Einsatz ein starkes Bild aus der Nähe
+  const cutM = [];
+  for (let k = 0; k < 28; k++) cutM.push({ ...mkS('c' + k, k % 3 === 0 ? 0 : k % 3 === 1 ? 2 : 1, k * 3), score: 0.35 + ((k * 37) % 50) / 100, w: 3000, h: 4000 });
+  const avgBy = (pl, want) => { const d = pl.clips.filter((c) => !c.split && !c.burst && !c.rush && !c.grid && !c.reveal && c.mediaId && c.mediaId[0] === 'c').map((c) => [shotSize(cutM.find((m) => m.id === c.mediaId)), c.end - c.start]).filter((x) => x[0] === want).map((x) => x[1]); return d.length ? d.reduce((a, b) => a + b, 0) / d.length : 0; };
+  const pOff = buildPlan({ an, media: cutM, settings: { ...set0, cutter: 'off' }, overrides: { texts: [], stickers: [] } });
+  const pOn = buildPlan({ an, media: cutM, settings: set0, overrides: { texts: [], stickers: [] } });
+  out.cutter = { ohne: [+avgBy(pOff, 0).toFixed(2), +avgBy(pOff, 2).toFixed(2)], mit: [+avgBy(pOn, 0).toFixed(2), +avgBy(pOn, 2).toFixed(2)], note: (pOn.notes.find((n) => n.startsWith('Feinschliff')) || '').slice(0, 90) };
+  if (!(out.cutter.mit[0] / Math.max(0.01, out.cutter.mit[1]) > out.cutter.ohne[0] / Math.max(0.01, out.cutter.ohne[1]))) fails.push('Feinschliff: Totalen nicht länger als vorher');
+  const dropC = pOn.clips.find((c) => c.sectionChange && (c.label === 'drop' || c.label === 'chorus') && c.mediaId && c.mediaId[0] === 'c' && !c.split && !c.burst);
+  if (dropC) { const i = pOn.clips.indexOf(dropC), sc = (c) => (c && c.mediaId && cutM.find((m) => m.id === c.mediaId) || {}).score || 0; out.cutter.drop = [sc(pOn.clips[i - 1]), sc(dropC), sc(pOn.clips[i + 1])].map((x) => +x.toFixed(2)); }
   return { out, fails };
 }, wav);
 console.log(JSON.stringify(res.out, null, 1));

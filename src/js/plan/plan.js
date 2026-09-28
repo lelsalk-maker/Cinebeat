@@ -743,6 +743,12 @@ function planOnce(opts) {
     if (ids.length >= 3) { lastC.strip = { ids }; lastC.mediaId = ids[0]; }
   }
 
+  // Feinschliff wie ein Cutter: Standzeit nach Bildinhalt, stärkstes Bild auf den Einsatz und ans Ende
+  if (!flight && s.cutter !== 'off') {
+    const cp = cutterPolish(clips, { an, win, byId, beatDur, ov });
+    if (cp.retimed || cp.hero) dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Feinschliff: ${[cp.retimed ? `${cp.retimed} Schnitte um ein bis zwei Beats verschoben, damit Totalen und starke Bilder wirken und Details knapp bleiben` : '', cp.hero ? `${cp.hero}× das stärkste Bild aus der Nähe auf den Einsatz bzw. ans Ende gesetzt` : ''].filter(Boolean).join('; ')}.`);
+  }
+
   // Übergänge: aus dem Songaufbau und aus dem, was das vorige Bild zeigt
   let matches = 0, morphs = 0, lastTr = -1, mvSoft = 0;
   for (let i = 1; i < clips.length; i++) {
