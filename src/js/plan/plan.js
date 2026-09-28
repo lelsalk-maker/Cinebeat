@@ -86,11 +86,13 @@ function planOnce(opts) {
     for (let t0 = teaseEnd; t0 < end - 0.05; t0 += sub) pieces.push({ start: t0, end: Math.min(end, t0 + sub), f: { pre: 'rew' } });
     pre = { kind: 'rewind', beats: 4 * bStep, end, teaseEnd, pieces };
   }
-  // Kino-Rollladen: Wand aus sechs Hochkant-Aufnahmen, drei Züge, Schwarz mit Ortstitel, dann öffnet sich das Bild
+  // Kino-Rollladen: sechs Ausschnitte der stärksten Aufnahmen im Kinoband, drei Züge, Schwarz mit Ortstitel, dann öffnet sich das Bild
   let shutter = null;
   if (intro === 'shutter' && !flight) {
-    const st = shutterStep(an), at = (k) => atB(k * st), u = beatDur * st;
-    shutter = { u, reveal: Array.from({ length: SHUTTER.tiles }, (_, k) => (k === 0 ? 0 : at(k))), colorAt: at(SHUTTER.color), pulls: SHUTTER.pulls.map(at), black: at(SHUTTER.black), open: at(SHUTTER.open), end: at(SHUTTER.end) };
+    const st = shutterStep(an), u = beatDur * st;
+    // Zeit einer (auch halben) Zählzeit auf dem Beat-Raster
+    const at = (x) => { const k = x * st, k0 = Math.floor(k + 1e-6), f = k - k0; return f > 1e-6 ? atB(k0) + (atB(k0 + 1) - atB(k0)) * f : atB(k0); };
+    shutter = { u, reveal: SHUTTER.tiles.map((x, k) => (k === 0 ? 0 : at(x))), colorAt: at(SHUTTER.color), pulls: SHUTTER.pulls.map(at), black: at(SHUTTER.black), open: at(SHUTTER.open), end: at(SHUTTER.end) };
     if (shutter.end > D - Math.max(3, barDur * 2)) shutter = null;
     else pre = { kind: 'shutter', beats: SHUTTER.black * st, end: shutter.black, pieces: [{ start: 0, end: shutter.black, f: { pre: 'wall' } }] };
   }
@@ -605,22 +607,22 @@ function planOnce(opts) {
       const others = main.filter((m) => m !== first && m !== hook);
       for (let i = 0; i < P; i++) { clips[i].mediaId = (others[i % Math.max(1, others.length)] || first || {}).id || null; clips[i].role = 'leader'; }
     } else if (pre.kind === 'shutter' && shutter) {
-      // Wand: die besten Hochkant-Aufnahmen (höchstens drei Videos, sonst ruckelt es auf dem Handy), in ihrer Reihenfolge
-      const hookId = clips.find((c) => c.role === 'hook');
-      const cand = goodMedia(usable, allOn).filter((m) => !hookId || m.id !== hookId.mediaId);
-      const portrait = (m) => (m.w && m.h ? m.h > m.w * 1.05 : false);
-      const rank = cand.slice().sort((a, b) => (portrait(b) - portrait(a)) || ((b.score || 0) - (a.score || 0)));
+      // Wand: immer die stärksten Aufnahmen, die stärkste vorn (hält den Blick) – nicht chronologisch.
+      // Höchstens drei Videos (sonst ruckelt es auf dem Handy), keine Beinahe-Doppel nebeneinander.
+      const strength = (m) => (m.score || 0.5) + (m.fav ? 0.25 : 0) + (m.kind === 'video' ? 0.04 : 0);
+      const rank = goodMedia(usable, allOn).slice().sort((a, b) => strength(b) - strength(a));
+      const twin = (a, b) => a.dupOf === b.id || b.dupOf === a.id || (a.hash && b.hash && hamming(a.hash, b.hash) < 10);
       const pick = [];
       for (const m of rank) {
-        if (pick.length >= SHUTTER.tiles) break;
+        if (pick.length >= SHUTTER.tiles.length) break;
         if (m.kind === 'video' && pick.filter((x) => x.kind === 'video').length >= 3) continue;
-        if (pick.some((x) => x.dupOf === m.id || m.dupOf === x.id)) continue;
+        if (pick.some((x) => twin(x, m))) continue;
         pick.push(m);
       }
-      for (const m of rank) if (pick.length < SHUTTER.tiles && !pick.includes(m)) pick.push(m);
+      for (const m of rank) if (pick.length < SHUTTER.tiles.length && !pick.includes(m)) pick.push(m);
       const all = pick.length ? pick : (first ? [first] : []);
-      while (all.length && all.length < SHUTTER.tiles) all.push(all[all.length % Math.max(1, pick.length)]);
-      const ids = orderChrono(all.slice()).map((m) => m.id);
+      while (all.length && all.length < SHUTTER.tiles.length) all.push(all[all.length % Math.max(1, pick.length)]);
+      const ids = all.map((m) => m.id);
       const u = shutter.u, mv = Math.min(0.62, u * 0.82);
       const moves = [
         { side: 'bottom', t: shutter.pulls[0], dur: mv, from: 0, to: 1 / 3 },
@@ -628,7 +630,7 @@ function planOnce(opts) {
         { side: 'bottom', t: shutter.pulls[2], dur: mv * 1.1, from: 1 / 3, to: 2 / 3 + 0.004 },
       ];
       const c = clips[0];
-      c.split = { ids, orient: 'wall', reveal: shutter.reveal.slice(0, ids.length), colorAt: shutter.colorAt, shutter: { moves, closedAt: shutter.pulls[2] + mv * 1.1 } };
+      c.split = { ids, orient: 'wall', reveal: shutter.reveal.slice(0, ids.length), colorAt: shutter.colorAt, colorFirst: true, shutter: { moves, closedAt: shutter.pulls[2] + mv * 1.1 } };
       c.mediaId = ids[0];
       c.role = 'wall';
       shutter.moves = moves;
@@ -1285,7 +1287,7 @@ function planOnce(opts) {
   }
   const overlays = [];
   const sfx = [];
-  let songEnv = null;
+  let songEnv = null, songLp = null;
   // Nichts ist fest: Titel, Kapitel und Statistik lassen sich einzeln ausschalten
   const title = s.showTitle === false ? '' : (settings.title || '').trim();
   const subtitle = s.showTitle === false ? '' : (settings.subtitle || '').trim();
@@ -1500,9 +1502,15 @@ function planOnce(opts) {
     // Geräusche: leise läuft der Projektor, dann drei Züge am Rollladen (der letzte schließt schwer)
     sfx.push({ kind: 'projector', t: 0, dur: Math.max(0.6, shutter.pulls[0] + 0.25), gain: 0.55 });
     (shutter.moves || []).forEach((m, k) => sfx.push({ kind: 'pull', t: Math.max(0, m.t - 0.02), dur: +(m.dur + 0.12).toFixed(3), v: k, gain: 0.9 }));
-    // der Song baut sich erst mit dem Öffnen auf und ist auf dem Einsatz voll da
-    songEnv = [[0, 0], [shutter.open - u, 0], [shutter.end, 1, 'in']];
-    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Kino-Rollladen: ${clips[0].split ? clips[0].split.ids.length : 6} Hochkant-Aufnahmen erscheinen im Takt, erst schwarzweiß, dann in Farbe; der Rollladen schließt in drei Zügen (unten, oben, ganz), auf Schwarz erscheint ${title ? `„${title}“` : 'der Ort'}${geo ? ' mit Koordinaten' : ''}; dann öffnet sich das Bild flüssig nach oben und unten, während der Song leise aufbaut – voll da auf dem Einsatz bei ${fmtMS(shutter.end)}.`);
+    // Musik wie aus dem Kinosaal hinter dem Vorhang: vom ersten Bild an da (gedämpft, halb laut), jeder Zug am
+    // Rollladen macht sie dumpfer und leiser, zum Titel bleibt nur ein leises Grollen; beim Öffnen gehen Filter und
+    // Lautstärke gemeinsam auf – auf dem Einsatz steht der Song voll und klar
+    const M = shutter.moves || [];
+    const e = (k) => (M[k] ? M[k].t + M[k].dur : shutter.black);
+    const t0 = (k) => (M[k] ? M[k].t : shutter.black);
+    songEnv = [[0, 0], [Math.min(0.12, u * 0.25), 0.5], [t0(0), 0.5], [e(0), 0.38], [t0(1), 0.38], [e(1), 0.26], [t0(2), 0.26], [e(2), 0.1], [shutter.black + u * 0.5, 0.05], [shutter.open, 0.05], [shutter.end, 1, 'in']];
+    songLp = [[0, 1100], [t0(0), 1100], [e(0), 750], [t0(1), 750], [e(1), 480], [t0(2), 480], [e(2), 260], [shutter.open, 260], [shutter.end, 18000, 'exp']];
+    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Kino-Rollladen: ${clips[0].split ? clips[0].split.ids.length : 6} Ausschnitte eurer stärksten Aufnahmen erscheinen nebeneinander im Kinoband, die ersten schnell, das stärkste vorn und gleich in Farbe, die anderen erst schwarzweiß; der Rollladen schließt in drei Zügen (unten, oben, ganz), auf Schwarz erscheint ${title ? `„${title}“` : 'der Ort'}${geo ? ' mit Koordinaten' : ''}; dann öffnet sich das Bild flüssig nach oben und unten. Die Musik klingt von Anfang an gedämpft wie hinter dem Vorhang, wird mit jedem Zug dumpfer und öffnet sich mit dem Bild – voll und klar auf dem Einsatz bei ${fmtMS(shutter.end)}.`);
   }
   if (pre && pre.kind === 'countdown') dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, 'Vorspann Countdown: 3 · 2 · 1 wie im alten Kino, danach beginnt dein Einstieg.');
 
@@ -1731,7 +1739,7 @@ function planOnce(opts) {
   return {
     _m: { repeats, dropped: droppedIds.length, scale: usedScale, floor: (fr.shotMin / fr.shot) * (level >= 1 ? 0.5 : 1), D, max: fr.max, settings, extraNeed, level },
     capacity,
-    duration: D, win: songEnv ? { ...win, env: songEnv } : win, clips: all, visibleClips: clips.length,
+    duration: D, win: songEnv ? { ...win, env: songEnv, lp: songLp } : win, clips: all, visibleClips: clips.length,
     look: s.look, format: s.format, frame: s.frame, band, pace: s.pace, split: s.split, font: s.font || 'klassisch', motion: s.motion || 'ken', motionAmt: s.motionAmt || 'medium',
     intro, outro, fx, overlays, sfx, notes: dir.notes, resolved: s, voice,
     beats: beatsRel, downs, beatEnergy, beatDur,

@@ -3171,11 +3171,11 @@ function bandRect(format, frame) {
 
 /** Länge des Aufblende-Einstiegs in Beats: zwei Takte, bei sehr langsamen Songs einer (Aufbau 3–5 s). */
 /**
- * Kino-Rollladen: Ablauf in Zähleinheiten (ein Schlag, bei schnellen Songs zwei). 6 Felder erscheinen (0–5),
- * Farbe fließt hinein (6), Rollladen zieht dreimal (8, 9, 10), Schwarz mit Ortstitel (11–14),
- * dann öffnet sich das Bild flüssig, während der Song aufblendet, bis zum Einsatz (20 = Refrain/Drop).
+ * Kino-Rollladen: Ablauf in Zähleinheiten (ein Schlag, bei schnellen Songs zwei). Sechs Ausschnitte erscheinen im
+ * Kinoband – die ersten im halben Takt, dann ruhiger (0–3,5) –, Farbe fließt hinein (4,5), der Rollladen zieht dreimal
+ * (6, 7, 8), Schwarz mit Ortstitel (9–12), dann öffnet sich das Bild flüssig bis zum Einsatz (20 = Refrain/Drop).
  */
-const SHUTTER = { tiles: 6, color: 6, pulls: [8, 9, 10], black: 11, open: 14, end: 20 };
+const SHUTTER = { tiles: [0, 0.5, 1, 1.5, 2.5, 3.5], color: 4.5, pulls: [6, 7, 8], black: 9, open: 12, end: 20 };
 function shutterStep(an) {
   return an.beatPeriod < 0.36 ? 2 : 1;
 }
@@ -4295,11 +4295,13 @@ function planOnce(opts) {
     for (let t0 = teaseEnd; t0 < end - 0.05; t0 += sub) pieces.push({ start: t0, end: Math.min(end, t0 + sub), f: { pre: 'rew' } });
     pre = { kind: 'rewind', beats: 4 * bStep, end, teaseEnd, pieces };
   }
-  // Kino-Rollladen: Wand aus sechs Hochkant-Aufnahmen, drei Züge, Schwarz mit Ortstitel, dann öffnet sich das Bild
+  // Kino-Rollladen: sechs Ausschnitte der stärksten Aufnahmen im Kinoband, drei Züge, Schwarz mit Ortstitel, dann öffnet sich das Bild
   let shutter = null;
   if (intro === 'shutter' && !flight) {
-    const st = shutterStep(an), at = (k) => atB(k * st), u = beatDur * st;
-    shutter = { u, reveal: Array.from({ length: SHUTTER.tiles }, (_, k) => (k === 0 ? 0 : at(k))), colorAt: at(SHUTTER.color), pulls: SHUTTER.pulls.map(at), black: at(SHUTTER.black), open: at(SHUTTER.open), end: at(SHUTTER.end) };
+    const st = shutterStep(an), u = beatDur * st;
+    // Zeit einer (auch halben) Zählzeit auf dem Beat-Raster
+    const at = (x) => { const k = x * st, k0 = Math.floor(k + 1e-6), f = k - k0; return f > 1e-6 ? atB(k0) + (atB(k0 + 1) - atB(k0)) * f : atB(k0); };
+    shutter = { u, reveal: SHUTTER.tiles.map((x, k) => (k === 0 ? 0 : at(x))), colorAt: at(SHUTTER.color), pulls: SHUTTER.pulls.map(at), black: at(SHUTTER.black), open: at(SHUTTER.open), end: at(SHUTTER.end) };
     if (shutter.end > D - Math.max(3, barDur * 2)) shutter = null;
     else pre = { kind: 'shutter', beats: SHUTTER.black * st, end: shutter.black, pieces: [{ start: 0, end: shutter.black, f: { pre: 'wall' } }] };
   }
@@ -4814,22 +4816,22 @@ function planOnce(opts) {
       const others = main.filter((m) => m !== first && m !== hook);
       for (let i = 0; i < P; i++) { clips[i].mediaId = (others[i % Math.max(1, others.length)] || first || {}).id || null; clips[i].role = 'leader'; }
     } else if (pre.kind === 'shutter' && shutter) {
-      // Wand: die besten Hochkant-Aufnahmen (höchstens drei Videos, sonst ruckelt es auf dem Handy), in ihrer Reihenfolge
-      const hookId = clips.find((c) => c.role === 'hook');
-      const cand = goodMedia(usable, allOn).filter((m) => !hookId || m.id !== hookId.mediaId);
-      const portrait = (m) => (m.w && m.h ? m.h > m.w * 1.05 : false);
-      const rank = cand.slice().sort((a, b) => (portrait(b) - portrait(a)) || ((b.score || 0) - (a.score || 0)));
+      // Wand: immer die stärksten Aufnahmen, die stärkste vorn (hält den Blick) – nicht chronologisch.
+      // Höchstens drei Videos (sonst ruckelt es auf dem Handy), keine Beinahe-Doppel nebeneinander.
+      const strength = (m) => (m.score || 0.5) + (m.fav ? 0.25 : 0) + (m.kind === 'video' ? 0.04 : 0);
+      const rank = goodMedia(usable, allOn).slice().sort((a, b) => strength(b) - strength(a));
+      const twin = (a, b) => a.dupOf === b.id || b.dupOf === a.id || (a.hash && b.hash && hamming(a.hash, b.hash) < 10);
       const pick = [];
       for (const m of rank) {
-        if (pick.length >= SHUTTER.tiles) break;
+        if (pick.length >= SHUTTER.tiles.length) break;
         if (m.kind === 'video' && pick.filter((x) => x.kind === 'video').length >= 3) continue;
-        if (pick.some((x) => x.dupOf === m.id || m.dupOf === x.id)) continue;
+        if (pick.some((x) => twin(x, m))) continue;
         pick.push(m);
       }
-      for (const m of rank) if (pick.length < SHUTTER.tiles && !pick.includes(m)) pick.push(m);
+      for (const m of rank) if (pick.length < SHUTTER.tiles.length && !pick.includes(m)) pick.push(m);
       const all = pick.length ? pick : (first ? [first] : []);
-      while (all.length && all.length < SHUTTER.tiles) all.push(all[all.length % Math.max(1, pick.length)]);
-      const ids = orderChrono(all.slice()).map((m) => m.id);
+      while (all.length && all.length < SHUTTER.tiles.length) all.push(all[all.length % Math.max(1, pick.length)]);
+      const ids = all.map((m) => m.id);
       const u = shutter.u, mv = Math.min(0.62, u * 0.82);
       const moves = [
         { side: 'bottom', t: shutter.pulls[0], dur: mv, from: 0, to: 1 / 3 },
@@ -4837,7 +4839,7 @@ function planOnce(opts) {
         { side: 'bottom', t: shutter.pulls[2], dur: mv * 1.1, from: 1 / 3, to: 2 / 3 + 0.004 },
       ];
       const c = clips[0];
-      c.split = { ids, orient: 'wall', reveal: shutter.reveal.slice(0, ids.length), colorAt: shutter.colorAt, shutter: { moves, closedAt: shutter.pulls[2] + mv * 1.1 } };
+      c.split = { ids, orient: 'wall', reveal: shutter.reveal.slice(0, ids.length), colorAt: shutter.colorAt, colorFirst: true, shutter: { moves, closedAt: shutter.pulls[2] + mv * 1.1 } };
       c.mediaId = ids[0];
       c.role = 'wall';
       shutter.moves = moves;
@@ -5494,7 +5496,7 @@ function planOnce(opts) {
   }
   const overlays = [];
   const sfx = [];
-  let songEnv = null;
+  let songEnv = null, songLp = null;
   // Nichts ist fest: Titel, Kapitel und Statistik lassen sich einzeln ausschalten
   const title = s.showTitle === false ? '' : (settings.title || '').trim();
   const subtitle = s.showTitle === false ? '' : (settings.subtitle || '').trim();
@@ -5709,9 +5711,15 @@ function planOnce(opts) {
     // Geräusche: leise läuft der Projektor, dann drei Züge am Rollladen (der letzte schließt schwer)
     sfx.push({ kind: 'projector', t: 0, dur: Math.max(0.6, shutter.pulls[0] + 0.25), gain: 0.55 });
     (shutter.moves || []).forEach((m, k) => sfx.push({ kind: 'pull', t: Math.max(0, m.t - 0.02), dur: +(m.dur + 0.12).toFixed(3), v: k, gain: 0.9 }));
-    // der Song baut sich erst mit dem Öffnen auf und ist auf dem Einsatz voll da
-    songEnv = [[0, 0], [shutter.open - u, 0], [shutter.end, 1, 'in']];
-    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Kino-Rollladen: ${clips[0].split ? clips[0].split.ids.length : 6} Hochkant-Aufnahmen erscheinen im Takt, erst schwarzweiß, dann in Farbe; der Rollladen schließt in drei Zügen (unten, oben, ganz), auf Schwarz erscheint ${title ? `„${title}“` : 'der Ort'}${geo ? ' mit Koordinaten' : ''}; dann öffnet sich das Bild flüssig nach oben und unten, während der Song leise aufbaut – voll da auf dem Einsatz bei ${fmtMS(shutter.end)}.`);
+    // Musik wie aus dem Kinosaal hinter dem Vorhang: vom ersten Bild an da (gedämpft, halb laut), jeder Zug am
+    // Rollladen macht sie dumpfer und leiser, zum Titel bleibt nur ein leises Grollen; beim Öffnen gehen Filter und
+    // Lautstärke gemeinsam auf – auf dem Einsatz steht der Song voll und klar
+    const M = shutter.moves || [];
+    const e = (k) => (M[k] ? M[k].t + M[k].dur : shutter.black);
+    const t0 = (k) => (M[k] ? M[k].t : shutter.black);
+    songEnv = [[0, 0], [Math.min(0.12, u * 0.25), 0.5], [t0(0), 0.5], [e(0), 0.38], [t0(1), 0.38], [e(1), 0.26], [t0(2), 0.26], [e(2), 0.1], [shutter.black + u * 0.5, 0.05], [shutter.open, 0.05], [shutter.end, 1, 'in']];
+    songLp = [[0, 1100], [t0(0), 1100], [e(0), 750], [t0(1), 750], [e(1), 480], [t0(2), 480], [e(2), 260], [shutter.open, 260], [shutter.end, 18000, 'exp']];
+    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Kino-Rollladen: ${clips[0].split ? clips[0].split.ids.length : 6} Ausschnitte eurer stärksten Aufnahmen erscheinen nebeneinander im Kinoband, die ersten schnell, das stärkste vorn und gleich in Farbe, die anderen erst schwarzweiß; der Rollladen schließt in drei Zügen (unten, oben, ganz), auf Schwarz erscheint ${title ? `„${title}“` : 'der Ort'}${geo ? ' mit Koordinaten' : ''}; dann öffnet sich das Bild flüssig nach oben und unten. Die Musik klingt von Anfang an gedämpft wie hinter dem Vorhang, wird mit jedem Zug dumpfer und öffnet sich mit dem Bild – voll und klar auf dem Einsatz bei ${fmtMS(shutter.end)}.`);
   }
   if (pre && pre.kind === 'countdown') dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, 'Vorspann Countdown: 3 · 2 · 1 wie im alten Kino, danach beginnt dein Einstieg.');
 
@@ -5940,7 +5948,7 @@ function planOnce(opts) {
   return {
     _m: { repeats, dropped: droppedIds.length, scale: usedScale, floor: (fr.shotMin / fr.shot) * (level >= 1 ? 0.5 : 1), D, max: fr.max, settings, extraNeed, level },
     capacity,
-    duration: D, win: songEnv ? { ...win, env: songEnv } : win, clips: all, visibleClips: clips.length,
+    duration: D, win: songEnv ? { ...win, env: songEnv, lp: songLp } : win, clips: all, visibleClips: clips.length,
     look: s.look, format: s.format, frame: s.frame, band, pace: s.pace, split: s.split, font: s.font || 'klassisch', motion: s.motion || 'ken', motionAmt: s.motionAmt || 'medium',
     intro, outro, fx, overlays, sfx, notes: dir.notes, resolved: s, voice,
     beats: beatsRel, downs, beatEnergy, beatDur,
@@ -6509,9 +6517,13 @@ function hookScore(plan, media, an) {
   }
   if (m0 && m0.kind === 'video') mv = Math.max(mv, (m0.motion || 0) / 0.04);
   if (plan.intro === 'rush' || plan.intro === 'knockout') mv = Math.max(mv, 1);
+  // Kino-Rollladen: jedes Feld setzt mit einem Zoom ein und fährt im Ausschnitt weiter, Videos laufen
+  const wall = c0 && c0.split && c0.split.orient === 'wall' ? c0.split : null;
+  if (wall) mv = Math.max(mv, 1);
   add('motion', 'Bewegung ab dem ersten Bild', mv, 0.2, 'Stillstand in der ersten Sekunde wird weggewischt: ein Video oder eine schnelle Bilderfolge vorn hilft.');
   // 2. frühe Veränderung: ein Schnitt in den ersten 1,5 s zeigt „hier passiert etwas“
-  const cuts = clips.filter((c) => c.start > 0.05 && c.start < W).length;
+  // (im Kino-Rollladen ist jedes neu erscheinende Feld eine Veränderung wie ein Schnitt)
+  const cuts = clips.filter((c) => c.start > 0.05 && c.start < W).length + (wall ? wall.reveal.filter((r) => r > 0.05 && r < W).length : 0);
   add('change', 'Früher Schnitt', cuts >= 2 ? 1 : cuts === 1 ? 0.8 : 0.15, 0.2, 'Der erste Schnitt kommt spät: eine schnelle Bilderfolge oder ein kürzeres erstes Bild.');
   // 3. stärkstes Motiv vorn (verglichen mit dem, was der Film sonst zeigt)
   const used = clips.map(mOf).filter(Boolean).map((m) => m.score || 0).sort((a, b) => a - b);
@@ -6526,7 +6538,16 @@ function hookScore(plan, media, an) {
   const med = en.length ? en.slice().sort((a, b) => a - b)[en.length >> 1] : 0.5;
   const firstE = bt.map((b, i) => [b, en[i] || 0]).filter(([b]) => b >= plan.win.start - 0.05 && b < plan.win.start + W).map(([, e]) => e);
   const eAvg = firstE.length ? firstE.reduce((a, b) => a + b, 0) / firstE.length : med;
-  add('music', 'Musik trägt sofort', (eAvg / Math.max(0.05, med) - 0.6) / 0.6, 0.15, 'Der Song beginnt leise: „Ab Refrain“ oder „Kurz davor“ als Songstart.');
+  // ehrlich: ist der Song am Anfang leiser gemischt (Hüllkurve eines Einstiegs), zählt er entsprechend weniger
+  const env = plan.win.env;
+  let envG = 1;
+  if (env && env.length) {
+    const gAt = (x) => { if (x <= env[0][0]) return env[0][1]; for (let k = 1; k < env.length; k++) if (x <= env[k][0]) { const [a, ga] = env[k - 1], [b, gb] = env[k]; return ga + (gb - ga) * ((x - a) / Math.max(1e-6, b - a)); } return env[env.length - 1][1]; };
+    let sum = 0;
+    for (let k = 0; k < 15; k++) sum += gAt((k + 0.5) * W / 15);
+    envG = Math.min(1, (sum / 15) / 0.5);
+  }
+  add('music', 'Musik trägt sofort', ((eAvg / Math.max(0.05, med) - 0.6) / 0.6) * envG, 0.15, 'Der Song beginnt leise: „Ab Refrain“ oder „Kurz davor“ als Songstart.');
   // 6. kein langsamer Anlauf aus Schwarz
   const black = (plan.fx || []).some((f) => (f.type === 'black' || f.type === 'dim') && f.start < 0.3 && f.end > 0.45);
   const slow = plan.intro === 'cinema' || (plan.win.fadeIn || 0) > 0.3;
@@ -9949,18 +9970,27 @@ class Engine {
     }
   }
 
-  /* ---------- Kino-Rollladen: Wand aus Hochkant-Feldern ---------- */
+  /* ---------- Kino-Rollladen: sechs Ausschnitte im Kinoband ---------- */
+  /** Kinoband der Wand (2,39 : 1 über die volle Breite, mittig). */
+  _wallBand(W, H) {
+    const bh = Math.round(Math.min(H * 0.9, W / 2.39));
+    return { y0: Math.round((H - bh) / 2), bh };
+  }
+
   /**
-   * Die Felder erscheinen nacheinander wie auf einer Kinoleinwand (Lampe fährt hoch), erst schwarzweiß,
-   * dann fließt die Farbe hinein. Danach schließt ein Rollladen in drei Zügen: unten, oben, dann ganz.
+   * Kino-Auftakt: im Band in der Bildmitte erscheinen sechs schmale Ausschnitte nebeneinander – die ersten schnell –,
+   * jeder setzt mit einem Zoom ein und fährt danach sichtbar weiter (abwechselnd auf und ab). Das stärkste Bild steht
+   * vorn und ist sofort farbig, die übrigen sind erst schwarzweiß, dann fließt die Farbe hinein. Danach schließt ein
+   * Rollladen das Band in drei Zügen: unten, oben, ganz.
    */
   composeWall(s, t) {
     const c = s.clip, sp = c.split, cv = s.canvas;
     const ctx = cv.getContext('2d');
     const W = cv.width, H = cv.height;
-    const cols = W > H ? 3 : 2, rows = Math.ceil(s.panels.length / cols);
-    const gap = Math.max(2, Math.round(Math.min(W, H) * 0.014));
-    const pw = (W - gap * (cols + 1)) / cols, ph = (H - gap * (rows + 1)) / rows;
+    const n = s.panels.length;
+    const { y0, bh } = this._wallBand(W, H);
+    const gap = Math.max(2, Math.round(W * 0.006));
+    const pw = (W - gap * (n - 1)) / n;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
@@ -9970,53 +10000,60 @@ class Engine {
     // Projektor: das Licht flackert kaum merklich (fest aus der Zeit abgeleitet, jeder Export gleich)
     const fr = Math.floor(t * 24);
     const flick = 0.035 * (((Math.sin(fr * 12.9898) * 43758.5453) % 1 + 1) % 1);
-    for (let k = 0; k < s.panels.length; k++) {
+    const life0 = Math.max(1, (sp.shutter.closedAt || 4) - sp.reveal[0]);
+    for (let k = 0; k < n; k++) {
       const p = s.panels[k];
       if (!p || !p.m) continue;
-      const a = clamp01((t - sp.reveal[k]) / 0.42);
+      const age = t - sp.reveal[k];
+      const a = clamp01(age / 0.3);
       if (a <= 0) continue;
-      const e = easeOutCubic(a);
-      const x = gap + (k % cols) * (pw + gap), y = gap + Math.floor(k / cols) * (ph + gap);
+      const x = k * (pw + gap);
       const src = p.video && p.video.readyState >= 2 ? p.video : p.img || p.m.poster;
       if (!src) continue;
       const sw = src.videoWidth || src.width, sh = src.videoHeight || src.height;
       if (!sw || !sh) continue;
-      // langsames Heranfahren je Feld, beim Erscheinen etwas größer (Lampe fährt hoch)
-      const life = Math.max(0, t - sp.reveal[k]);
-      const zoom = 1.0 + 0.05 * (1 - e) + 0.012 * life;
-      const sc = Math.max(pw / sw, ph / sh) * zoom;
-      const vw = pw / sc, vh = ph / sc;
+      // Einsatz: aus der Nähe zurückgezogen (zügig, weich auslaufend), dann langsam weiter hinein
+      const settle = easeOutCubic(clamp01(age / 0.55));
+      const u = clamp01(age / life0);
+      const zoom = 1.3 - 0.22 * settle + 0.08 * u;
+      const sc = Math.max(pw / sw, bh / sh) * zoom;
+      const vw = pw / sc, vh = bh / sc;
       const f = p.item.focus || [0.5, 0.45];
-      const sx = Math.max(0, Math.min(sw - vw, f[0] * sw - vw / 2));
-      const sy = Math.max(0, Math.min(sh - vh, f[1] * sh - vh / 2));
+      // Fahrt im Ausschnitt: abwechselnd auf und ab, dazu seitlich gegenläufig
+      const dir = k % 2 ? 1 : -1;
+      const slackX = Math.max(0, sw - vw), slackY = Math.max(0, sh - vh);
+      const cx0 = f[0] * sw - vw / 2 + dir * 0.35 * slackX * (u - 0.5);
+      const cy0 = f[1] * sh - vh / 2 - dir * 0.45 * slackY * (u - 0.5);
+      const sx = Math.max(0, Math.min(slackX, cx0)), sy = Math.max(0, Math.min(slackY, cy0));
       ctx.save();
       ctx.beginPath();
-      ctx.rect(x, y, pw, ph);
+      ctx.rect(x, y0, pw, bh);
       ctx.clip();
-      ctx.globalAlpha = e;
-      ctx.drawImage(src, sx, sy, vw, vh, x, y, pw, ph);
-      // Schwarzweiß, bis die Farbe hineinfließt (je Feld leicht versetzt)
-      const cp = smooth(clamp01((t - sp.colorAt - k * 0.07) / 0.55));
+      ctx.globalAlpha = easeOutCubic(a);
+      ctx.drawImage(src, sx, sy, vw, vh, x, y0, pw, bh);
+      // Schwarzweiß, bis die Farbe hineinfließt (je Feld leicht versetzt); das stärkste Bild vorn ist sofort farbig
+      const cp = k === 0 && sp.colorFirst ? 1 : smooth(clamp01((t - sp.colorAt - k * 0.06) / 0.5));
       if (cp < 1) {
         ctx.globalCompositeOperation = 'saturation';
-        ctx.globalAlpha = (1 - cp) * e;
+        ctx.globalAlpha = (1 - cp) * easeOutCubic(a);
         ctx.fillStyle = '#808080';
-        ctx.fillRect(x, y, pw, ph);
+        ctx.fillRect(x, y0, pw, bh);
         ctx.globalCompositeOperation = 'source-over';
       }
       // Belichtung beim Erscheinen: kurz hell, dann das Bild
-      if (a < 1) { ctx.globalAlpha = 0.35 * (1 - a) * (1 - a); ctx.fillStyle = '#fff'; ctx.fillRect(x, y, pw, ph); }
+      if (a < 1) { ctx.globalAlpha = 0.4 * (1 - a) * (1 - a); ctx.fillStyle = '#fff'; ctx.fillRect(x, y0, pw, bh); }
       ctx.restore();
     }
     ctx.globalAlpha = flick;
     ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, W, H);
+    ctx.fillRect(0, y0, W, bh);
     ctx.globalAlpha = 1;
-    // Rollladen: unten und oben je ein Behang aus Lamellen
-    const hb = this._shutterPos(sp.shutter, t, 'bottom') * H, ht = this._shutterPos(sp.shutter, t, 'top') * H;
+    // Rollladen im Band: unten und oben je ein Behang aus Lamellen
+    const hb = this._shutterPos(sp.shutter, t, 'bottom') * bh, ht = this._shutterPos(sp.shutter, t, 'top') * bh;
     const seams = 1 - clamp01((t - sp.shutter.closedAt) / 0.35);
-    if (hb > 0.5) this._drawSlats(ctx, W, H - hb, hb, 'bottom', seams, H);
-    if (ht > 0.5) this._drawSlats(ctx, W, 0, ht, 'top', seams, H);
+    const slat = Math.max(5, bh / 9);
+    if (hb > 0.5) this._drawSlats(ctx, W, y0 + bh - hb, hb, 'bottom', seams, slat);
+    if (ht > 0.5) this._drawSlats(ctx, W, y0, ht, 'top', seams, slat);
     this.r.upload(s.tex, cv);
   }
 
@@ -10036,10 +10073,9 @@ class Engine {
   }
 
   /** Lamellen eines Rollladens: dunkle Profile mit feinen Fugen und einer Endleiste an der Kante. */
-  _drawSlats(ctx, W, y0, h, side, seams, H) {
+  _drawSlats(ctx, W, y0, h, side, seams, slat) {
     ctx.fillStyle = '#000';
     ctx.fillRect(0, y0, W, h);
-    const slat = Math.max(6, H / 34);
     if (seams > 0.01) {
       // Fugen laufen mit dem Behang (Abstand von der Kante gemessen)
       const edge = side === 'bottom' ? y0 : y0 + h;
@@ -10913,6 +10949,38 @@ class Engine {
     if (D - foStart > 0.02) g.gain.setValueCurveAtTime(curve, when + (foStart - offset), D - foStart);
   }
 
+  /** Song → (Tiefpass nach Hüllkurve, z. B. „hinter dem Vorhang“) → Gain. Ohne Kurve direkt. */
+  _songChain(ctx, src, g, when, offset) {
+    const lp = this.plan.win.lp;
+    if (!lp || !lp.length) { src.connect(g); return; }
+    const D = this.plan.duration;
+    const f = ctx.createBiquadFilter();
+    f.type = 'lowpass';
+    f.Q.value = 0.6;
+    const top = Math.min(20000, ctx.sampleRate * 0.45);
+    const at = (x) => {
+      if (x <= lp[0][0]) return lp[0][1];
+      for (let k = 1; k < lp.length; k++) if (x <= lp[k][0]) {
+        const [a, fa] = lp[k - 1], [b, fb] = lp[k];
+        const u = (x - a) / Math.max(1e-6, b - a);
+        // Öffnen des Filters nach dem Gehör: logarithmisch, zum Ende hin schneller (wie ein Filter-Sweep)
+        return lp[k][2] === 'exp' ? fa * Math.pow(fb / fa, u * u) : fa + (fb - fa) * u;
+      }
+      return lp[lp.length - 1][1];
+    };
+    const endT = lp[lp.length - 1][0];
+    const len = Math.max(0.02, Math.min(D, endT + 0.05) - offset);
+    if (len > 0.03) {
+      const n = Math.max(2, Math.min(4000, Math.ceil(len * 60)));
+      const curve = new Float32Array(n);
+      for (let k = 0; k < n; k++) curve[k] = Math.min(top, at(offset + (len * k) / (n - 1)));
+      f.frequency.setValueAtTime(curve[0], when);
+      f.frequency.setValueCurveAtTime(curve, when, len);
+      f.frequency.setValueAtTime(top, when + len + 0.01);
+    } else f.frequency.setValueAtTime(top, when);
+    src.connect(f).connect(g);
+  }
+
   _startAudio(offset, out, extraOut, withSong = true) {
     const ac = this.ac;
     const D = this.plan.duration;
@@ -10920,8 +10988,9 @@ class Engine {
     src.buffer = this.audioBuffer;
     const g = ac.createGain();
     const duck = ac.createGain();
-    src.connect(g).connect(duck);
     const when = ac.currentTime + 0.08;
+    this._songChain(ac, src, g, when, offset);
+    g.connect(duck);
     if (withSong) {
       duck.connect(out);
       if (extraOut) duck.connect(extraOut);
@@ -10986,23 +11055,29 @@ class Engine {
       src.start(at(st), bufOff, v.t1 - st + 0.02);
       list.push(src);
     }
-    // Geräusche der Einstiege (Rollladen, Projektor)
-    for (const fxs of this.plan.sfx || []) {
-      if (fxs.t + fxs.dur <= offset + 0.01) continue;
-      const key = `${ac.sampleRate}|${fxs.kind}|${fxs.dur.toFixed(3)}|${fxs.v || 0}`;
+    // Geräusche der Einstiege (Rollladen, Projektor): selbst zu einer Spur gemischt – eine Quelle statt vieler,
+    // so summiert der Browser immer gleich und der Export bleibt Bit für Bit reproduzierbar
+    const sfx = (this.plan.sfx || []).filter((x) => x.t + x.dur > offset + 0.01);
+    if (sfx.length) {
+      const sr = ac.sampleRate;
       this._sfxData = this._sfxData || new Map();
-      let data = this._sfxData.get(key);
-      if (!data) { data = synthSfx(ac.sampleRate, fxs.kind, fxs.dur, fxs.v || 0); this._sfxData.set(key, data); }
-      const buf = ac.createBuffer(1, data.length, ac.sampleRate);
-      buf.copyToChannel(data, 0);
+      const t0 = Math.max(offset, Math.min(...sfx.map((x) => x.t)));
+      const t1 = Math.max(...sfx.map((x) => x.t + x.dur));
+      const mix = new Float32Array(Math.max(1, Math.ceil((t1 - t0) * sr) + 1));
+      for (const x of sfx) {
+        const key = `${sr}|${x.kind}|${x.dur.toFixed(3)}|${x.v || 0}`;
+        let data = this._sfxData.get(key);
+        if (!data) { data = synthSfx(sr, x.kind, x.dur, x.v || 0); this._sfxData.set(key, data); }
+        const g = x.gain != null ? x.gain : 1;
+        const d0 = Math.round((x.t - t0) * sr);
+        for (let i = Math.max(0, -d0); i < data.length && d0 + i < mix.length; i++) mix[d0 + i] += data[i] * g;
+      }
+      const buf = ac.createBuffer(1, mix.length, sr);
+      buf.copyToChannel(mix, 0);
       const src = ac.createBufferSource();
       src.buffer = buf;
-      const g = ac.createGain();
-      g.gain.value = fxs.gain != null ? fxs.gain : 1;
-      src.connect(g);
-      for (const o of outs) g.connect(o);
-      const st = Math.max(fxs.t, offset);
-      src.start(when + (st - offset), st - fxs.t);
+      for (const o of outs) src.connect(o);
+      src.start(when + (t0 - offset));
       list.push(src);
     }
     return list;
@@ -11278,7 +11353,8 @@ class Engine {
       src.buffer = this.audioBuffer;
       const g = ctx.createGain();
       const duck = ctx.createGain();
-      src.connect(g).connect(duck).connect(ctx.destination);
+      this._songChain(ctx, src, g, 0, 0);
+      g.connect(duck).connect(ctx.destination);
       this._gainCurve(g, 0, 0);
       this._duckCurve(duck.gain, 0, 0);
       src.start(0, this.plan.win.start, D + 0.05);

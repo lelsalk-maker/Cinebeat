@@ -318,18 +318,27 @@ class Engine {
     }
   }
 
-  /* ---------- Kino-Rollladen: Wand aus Hochkant-Feldern ---------- */
+  /* ---------- Kino-Rollladen: sechs Ausschnitte im Kinoband ---------- */
+  /** Kinoband der Wand (2,39 : 1 über die volle Breite, mittig). */
+  _wallBand(W, H) {
+    const bh = Math.round(Math.min(H * 0.9, W / 2.39));
+    return { y0: Math.round((H - bh) / 2), bh };
+  }
+
   /**
-   * Die Felder erscheinen nacheinander wie auf einer Kinoleinwand (Lampe fährt hoch), erst schwarzweiß,
-   * dann fließt die Farbe hinein. Danach schließt ein Rollladen in drei Zügen: unten, oben, dann ganz.
+   * Kino-Auftakt: im Band in der Bildmitte erscheinen sechs schmale Ausschnitte nebeneinander – die ersten schnell –,
+   * jeder setzt mit einem Zoom ein und fährt danach sichtbar weiter (abwechselnd auf und ab). Das stärkste Bild steht
+   * vorn und ist sofort farbig, die übrigen sind erst schwarzweiß, dann fließt die Farbe hinein. Danach schließt ein
+   * Rollladen das Band in drei Zügen: unten, oben, ganz.
    */
   composeWall(s, t) {
     const c = s.clip, sp = c.split, cv = s.canvas;
     const ctx = cv.getContext('2d');
     const W = cv.width, H = cv.height;
-    const cols = W > H ? 3 : 2, rows = Math.ceil(s.panels.length / cols);
-    const gap = Math.max(2, Math.round(Math.min(W, H) * 0.014));
-    const pw = (W - gap * (cols + 1)) / cols, ph = (H - gap * (rows + 1)) / rows;
+    const n = s.panels.length;
+    const { y0, bh } = this._wallBand(W, H);
+    const gap = Math.max(2, Math.round(W * 0.006));
+    const pw = (W - gap * (n - 1)) / n;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
@@ -339,53 +348,60 @@ class Engine {
     // Projektor: das Licht flackert kaum merklich (fest aus der Zeit abgeleitet, jeder Export gleich)
     const fr = Math.floor(t * 24);
     const flick = 0.035 * (((Math.sin(fr * 12.9898) * 43758.5453) % 1 + 1) % 1);
-    for (let k = 0; k < s.panels.length; k++) {
+    const life0 = Math.max(1, (sp.shutter.closedAt || 4) - sp.reveal[0]);
+    for (let k = 0; k < n; k++) {
       const p = s.panels[k];
       if (!p || !p.m) continue;
-      const a = clamp01((t - sp.reveal[k]) / 0.42);
+      const age = t - sp.reveal[k];
+      const a = clamp01(age / 0.3);
       if (a <= 0) continue;
-      const e = easeOutCubic(a);
-      const x = gap + (k % cols) * (pw + gap), y = gap + Math.floor(k / cols) * (ph + gap);
+      const x = k * (pw + gap);
       const src = p.video && p.video.readyState >= 2 ? p.video : p.img || p.m.poster;
       if (!src) continue;
       const sw = src.videoWidth || src.width, sh = src.videoHeight || src.height;
       if (!sw || !sh) continue;
-      // langsames Heranfahren je Feld, beim Erscheinen etwas größer (Lampe fährt hoch)
-      const life = Math.max(0, t - sp.reveal[k]);
-      const zoom = 1.0 + 0.05 * (1 - e) + 0.012 * life;
-      const sc = Math.max(pw / sw, ph / sh) * zoom;
-      const vw = pw / sc, vh = ph / sc;
+      // Einsatz: aus der Nähe zurückgezogen (zügig, weich auslaufend), dann langsam weiter hinein
+      const settle = easeOutCubic(clamp01(age / 0.55));
+      const u = clamp01(age / life0);
+      const zoom = 1.3 - 0.22 * settle + 0.08 * u;
+      const sc = Math.max(pw / sw, bh / sh) * zoom;
+      const vw = pw / sc, vh = bh / sc;
       const f = p.item.focus || [0.5, 0.45];
-      const sx = Math.max(0, Math.min(sw - vw, f[0] * sw - vw / 2));
-      const sy = Math.max(0, Math.min(sh - vh, f[1] * sh - vh / 2));
+      // Fahrt im Ausschnitt: abwechselnd auf und ab, dazu seitlich gegenläufig
+      const dir = k % 2 ? 1 : -1;
+      const slackX = Math.max(0, sw - vw), slackY = Math.max(0, sh - vh);
+      const cx0 = f[0] * sw - vw / 2 + dir * 0.35 * slackX * (u - 0.5);
+      const cy0 = f[1] * sh - vh / 2 - dir * 0.45 * slackY * (u - 0.5);
+      const sx = Math.max(0, Math.min(slackX, cx0)), sy = Math.max(0, Math.min(slackY, cy0));
       ctx.save();
       ctx.beginPath();
-      ctx.rect(x, y, pw, ph);
+      ctx.rect(x, y0, pw, bh);
       ctx.clip();
-      ctx.globalAlpha = e;
-      ctx.drawImage(src, sx, sy, vw, vh, x, y, pw, ph);
-      // Schwarzweiß, bis die Farbe hineinfließt (je Feld leicht versetzt)
-      const cp = smooth(clamp01((t - sp.colorAt - k * 0.07) / 0.55));
+      ctx.globalAlpha = easeOutCubic(a);
+      ctx.drawImage(src, sx, sy, vw, vh, x, y0, pw, bh);
+      // Schwarzweiß, bis die Farbe hineinfließt (je Feld leicht versetzt); das stärkste Bild vorn ist sofort farbig
+      const cp = k === 0 && sp.colorFirst ? 1 : smooth(clamp01((t - sp.colorAt - k * 0.06) / 0.5));
       if (cp < 1) {
         ctx.globalCompositeOperation = 'saturation';
-        ctx.globalAlpha = (1 - cp) * e;
+        ctx.globalAlpha = (1 - cp) * easeOutCubic(a);
         ctx.fillStyle = '#808080';
-        ctx.fillRect(x, y, pw, ph);
+        ctx.fillRect(x, y0, pw, bh);
         ctx.globalCompositeOperation = 'source-over';
       }
       // Belichtung beim Erscheinen: kurz hell, dann das Bild
-      if (a < 1) { ctx.globalAlpha = 0.35 * (1 - a) * (1 - a); ctx.fillStyle = '#fff'; ctx.fillRect(x, y, pw, ph); }
+      if (a < 1) { ctx.globalAlpha = 0.4 * (1 - a) * (1 - a); ctx.fillStyle = '#fff'; ctx.fillRect(x, y0, pw, bh); }
       ctx.restore();
     }
     ctx.globalAlpha = flick;
     ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, W, H);
+    ctx.fillRect(0, y0, W, bh);
     ctx.globalAlpha = 1;
-    // Rollladen: unten und oben je ein Behang aus Lamellen
-    const hb = this._shutterPos(sp.shutter, t, 'bottom') * H, ht = this._shutterPos(sp.shutter, t, 'top') * H;
+    // Rollladen im Band: unten und oben je ein Behang aus Lamellen
+    const hb = this._shutterPos(sp.shutter, t, 'bottom') * bh, ht = this._shutterPos(sp.shutter, t, 'top') * bh;
     const seams = 1 - clamp01((t - sp.shutter.closedAt) / 0.35);
-    if (hb > 0.5) this._drawSlats(ctx, W, H - hb, hb, 'bottom', seams, H);
-    if (ht > 0.5) this._drawSlats(ctx, W, 0, ht, 'top', seams, H);
+    const slat = Math.max(5, bh / 9);
+    if (hb > 0.5) this._drawSlats(ctx, W, y0 + bh - hb, hb, 'bottom', seams, slat);
+    if (ht > 0.5) this._drawSlats(ctx, W, y0, ht, 'top', seams, slat);
     this.r.upload(s.tex, cv);
   }
 
@@ -405,10 +421,9 @@ class Engine {
   }
 
   /** Lamellen eines Rollladens: dunkle Profile mit feinen Fugen und einer Endleiste an der Kante. */
-  _drawSlats(ctx, W, y0, h, side, seams, H) {
+  _drawSlats(ctx, W, y0, h, side, seams, slat) {
     ctx.fillStyle = '#000';
     ctx.fillRect(0, y0, W, h);
-    const slat = Math.max(6, H / 34);
     if (seams > 0.01) {
       // Fugen laufen mit dem Behang (Abstand von der Kante gemessen)
       const edge = side === 'bottom' ? y0 : y0 + h;
@@ -1282,6 +1297,38 @@ class Engine {
     if (D - foStart > 0.02) g.gain.setValueCurveAtTime(curve, when + (foStart - offset), D - foStart);
   }
 
+  /** Song → (Tiefpass nach Hüllkurve, z. B. „hinter dem Vorhang“) → Gain. Ohne Kurve direkt. */
+  _songChain(ctx, src, g, when, offset) {
+    const lp = this.plan.win.lp;
+    if (!lp || !lp.length) { src.connect(g); return; }
+    const D = this.plan.duration;
+    const f = ctx.createBiquadFilter();
+    f.type = 'lowpass';
+    f.Q.value = 0.6;
+    const top = Math.min(20000, ctx.sampleRate * 0.45);
+    const at = (x) => {
+      if (x <= lp[0][0]) return lp[0][1];
+      for (let k = 1; k < lp.length; k++) if (x <= lp[k][0]) {
+        const [a, fa] = lp[k - 1], [b, fb] = lp[k];
+        const u = (x - a) / Math.max(1e-6, b - a);
+        // Öffnen des Filters nach dem Gehör: logarithmisch, zum Ende hin schneller (wie ein Filter-Sweep)
+        return lp[k][2] === 'exp' ? fa * Math.pow(fb / fa, u * u) : fa + (fb - fa) * u;
+      }
+      return lp[lp.length - 1][1];
+    };
+    const endT = lp[lp.length - 1][0];
+    const len = Math.max(0.02, Math.min(D, endT + 0.05) - offset);
+    if (len > 0.03) {
+      const n = Math.max(2, Math.min(4000, Math.ceil(len * 60)));
+      const curve = new Float32Array(n);
+      for (let k = 0; k < n; k++) curve[k] = Math.min(top, at(offset + (len * k) / (n - 1)));
+      f.frequency.setValueAtTime(curve[0], when);
+      f.frequency.setValueCurveAtTime(curve, when, len);
+      f.frequency.setValueAtTime(top, when + len + 0.01);
+    } else f.frequency.setValueAtTime(top, when);
+    src.connect(f).connect(g);
+  }
+
   _startAudio(offset, out, extraOut, withSong = true) {
     const ac = this.ac;
     const D = this.plan.duration;
@@ -1289,8 +1336,9 @@ class Engine {
     src.buffer = this.audioBuffer;
     const g = ac.createGain();
     const duck = ac.createGain();
-    src.connect(g).connect(duck);
     const when = ac.currentTime + 0.08;
+    this._songChain(ac, src, g, when, offset);
+    g.connect(duck);
     if (withSong) {
       duck.connect(out);
       if (extraOut) duck.connect(extraOut);
@@ -1355,23 +1403,29 @@ class Engine {
       src.start(at(st), bufOff, v.t1 - st + 0.02);
       list.push(src);
     }
-    // Geräusche der Einstiege (Rollladen, Projektor)
-    for (const fxs of this.plan.sfx || []) {
-      if (fxs.t + fxs.dur <= offset + 0.01) continue;
-      const key = `${ac.sampleRate}|${fxs.kind}|${fxs.dur.toFixed(3)}|${fxs.v || 0}`;
+    // Geräusche der Einstiege (Rollladen, Projektor): selbst zu einer Spur gemischt – eine Quelle statt vieler,
+    // so summiert der Browser immer gleich und der Export bleibt Bit für Bit reproduzierbar
+    const sfx = (this.plan.sfx || []).filter((x) => x.t + x.dur > offset + 0.01);
+    if (sfx.length) {
+      const sr = ac.sampleRate;
       this._sfxData = this._sfxData || new Map();
-      let data = this._sfxData.get(key);
-      if (!data) { data = synthSfx(ac.sampleRate, fxs.kind, fxs.dur, fxs.v || 0); this._sfxData.set(key, data); }
-      const buf = ac.createBuffer(1, data.length, ac.sampleRate);
-      buf.copyToChannel(data, 0);
+      const t0 = Math.max(offset, Math.min(...sfx.map((x) => x.t)));
+      const t1 = Math.max(...sfx.map((x) => x.t + x.dur));
+      const mix = new Float32Array(Math.max(1, Math.ceil((t1 - t0) * sr) + 1));
+      for (const x of sfx) {
+        const key = `${sr}|${x.kind}|${x.dur.toFixed(3)}|${x.v || 0}`;
+        let data = this._sfxData.get(key);
+        if (!data) { data = synthSfx(sr, x.kind, x.dur, x.v || 0); this._sfxData.set(key, data); }
+        const g = x.gain != null ? x.gain : 1;
+        const d0 = Math.round((x.t - t0) * sr);
+        for (let i = Math.max(0, -d0); i < data.length && d0 + i < mix.length; i++) mix[d0 + i] += data[i] * g;
+      }
+      const buf = ac.createBuffer(1, mix.length, sr);
+      buf.copyToChannel(mix, 0);
       const src = ac.createBufferSource();
       src.buffer = buf;
-      const g = ac.createGain();
-      g.gain.value = fxs.gain != null ? fxs.gain : 1;
-      src.connect(g);
-      for (const o of outs) g.connect(o);
-      const st = Math.max(fxs.t, offset);
-      src.start(when + (st - offset), st - fxs.t);
+      for (const o of outs) src.connect(o);
+      src.start(when + (t0 - offset));
       list.push(src);
     }
     return list;
@@ -1647,7 +1701,8 @@ class Engine {
       src.buffer = this.audioBuffer;
       const g = ctx.createGain();
       const duck = ctx.createGain();
-      src.connect(g).connect(duck).connect(ctx.destination);
+      this._songChain(ctx, src, g, 0, 0);
+      g.connect(duck).connect(ctx.destination);
       this._gainCurve(g, 0, 0);
       this._duckCurve(duck.gain, 0, 0);
       src.start(0, this.plan.win.start, D + 0.05);

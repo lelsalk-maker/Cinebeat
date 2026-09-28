@@ -169,9 +169,13 @@ function hookScore(plan, media, an) {
   }
   if (m0 && m0.kind === 'video') mv = Math.max(mv, (m0.motion || 0) / 0.04);
   if (plan.intro === 'rush' || plan.intro === 'knockout') mv = Math.max(mv, 1);
+  // Kino-Rollladen: jedes Feld setzt mit einem Zoom ein und fährt im Ausschnitt weiter, Videos laufen
+  const wall = c0 && c0.split && c0.split.orient === 'wall' ? c0.split : null;
+  if (wall) mv = Math.max(mv, 1);
   add('motion', 'Bewegung ab dem ersten Bild', mv, 0.2, 'Stillstand in der ersten Sekunde wird weggewischt: ein Video oder eine schnelle Bilderfolge vorn hilft.');
   // 2. frühe Veränderung: ein Schnitt in den ersten 1,5 s zeigt „hier passiert etwas“
-  const cuts = clips.filter((c) => c.start > 0.05 && c.start < W).length;
+  // (im Kino-Rollladen ist jedes neu erscheinende Feld eine Veränderung wie ein Schnitt)
+  const cuts = clips.filter((c) => c.start > 0.05 && c.start < W).length + (wall ? wall.reveal.filter((r) => r > 0.05 && r < W).length : 0);
   add('change', 'Früher Schnitt', cuts >= 2 ? 1 : cuts === 1 ? 0.8 : 0.15, 0.2, 'Der erste Schnitt kommt spät: eine schnelle Bilderfolge oder ein kürzeres erstes Bild.');
   // 3. stärkstes Motiv vorn (verglichen mit dem, was der Film sonst zeigt)
   const used = clips.map(mOf).filter(Boolean).map((m) => m.score || 0).sort((a, b) => a - b);
@@ -186,7 +190,16 @@ function hookScore(plan, media, an) {
   const med = en.length ? en.slice().sort((a, b) => a - b)[en.length >> 1] : 0.5;
   const firstE = bt.map((b, i) => [b, en[i] || 0]).filter(([b]) => b >= plan.win.start - 0.05 && b < plan.win.start + W).map(([, e]) => e);
   const eAvg = firstE.length ? firstE.reduce((a, b) => a + b, 0) / firstE.length : med;
-  add('music', 'Musik trägt sofort', (eAvg / Math.max(0.05, med) - 0.6) / 0.6, 0.15, 'Der Song beginnt leise: „Ab Refrain“ oder „Kurz davor“ als Songstart.');
+  // ehrlich: ist der Song am Anfang leiser gemischt (Hüllkurve eines Einstiegs), zählt er entsprechend weniger
+  const env = plan.win.env;
+  let envG = 1;
+  if (env && env.length) {
+    const gAt = (x) => { if (x <= env[0][0]) return env[0][1]; for (let k = 1; k < env.length; k++) if (x <= env[k][0]) { const [a, ga] = env[k - 1], [b, gb] = env[k]; return ga + (gb - ga) * ((x - a) / Math.max(1e-6, b - a)); } return env[env.length - 1][1]; };
+    let sum = 0;
+    for (let k = 0; k < 15; k++) sum += gAt((k + 0.5) * W / 15);
+    envG = Math.min(1, (sum / 15) / 0.5);
+  }
+  add('music', 'Musik trägt sofort', ((eAvg / Math.max(0.05, med) - 0.6) / 0.6) * envG, 0.15, 'Der Song beginnt leise: „Ab Refrain“ oder „Kurz davor“ als Songstart.');
   // 6. kein langsamer Anlauf aus Schwarz
   const black = (plan.fx || []).some((f) => (f.type === 'black' || f.type === 'dim') && f.start < 0.3 && f.end > 0.45);
   const slow = plan.intro === 'cinema' || (plan.win.fadeIn || 0) > 0.3;

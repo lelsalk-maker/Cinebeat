@@ -10,7 +10,7 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 const QUICK = ['analysis', 'smooth', 'flow', 'style', 'videos', 'allmedia', 'ui', 'e2e', 'features'];
 const ALL = ['meta', 'beats', 'longbeats', 'structure', 'score', 'mux', 'csp', 'offline', 'chapters', 'ui', 'e2e', 'trip', 'flight', 'overflow', 'features', 'flow', 'fastexport', 'ingest', 'adaptive', 'resume', 'sync', 'latency', 'quality', 'perf', 'style', 'stylevis', 'videos', 'allmedia', 'analysis', 'bgexport', 'smooth', 'judder', 'listen', 'workerscore', 'heat', 'grade', 'vsync', 'trips', 'levels', 'us', 'tap', 'hook', 'stimmig', 'carousel', 'carouselui', 'shutter', 'shutterui'];
 // messen Zeit oder Bildrate: nie unter Last anderer Tests
-const SERIAL = new Set(['flight', 'ingest', 'perf', 'latency', 'sync', 'adaptive', 'fastexport', 'bgexport']);
+const SERIAL = new Set(['flight', 'ingest', 'perf', 'latency', 'sync', 'adaptive', 'fastexport', 'bgexport', 'tap']);
 // welche Tests eine Datei berühren
 const MAP = [
   [/^src\/js\/plan\/|^src\/js\/director\.js/, ['analysis', 'smooth', 'flow', 'style', 'allmedia', 'videos', 'chapters', 'overflow', 'features', 'grade', 'vsync', 'us', 'tap', 'hook', 'stimmig', 'carousel', 'carouselui', 'shutter', 'shutterui']],
