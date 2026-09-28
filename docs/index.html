@@ -877,7 +877,8 @@ const clamp01 = (x) => Math.max(0, Math.min(1, x));
 const lerp = (a, b, t) => a + (b - a) * t;
 const smooth = (t) => t * t * (3 - 2 * t);
 // Gleiten statt Anfahren und Abbremsen: die Kamera ist schon in Bewegung, setzt sich nur leicht (wirkt flüssig über Schnitte)
-const easeMotion = (t) => 0.72 * t + 0.28 * (1 - (1 - t) * (1 - t));
+// gleichmäßige Fahrt: dieselbe Geschwindigkeit am Anfang und Ende jeder Einstellung, damit die Kamera über den Schnitt im Fluss bleibt
+const easeMotion = (t) => t;
 
 function waitEvent(target, okEvents, failEvents, timeoutMs) {
   return new Promise((resolve) => {
@@ -3362,9 +3363,42 @@ function spreadSimilar(order) {
 }
 
 /** Ken-Burns-Fahrt, die auf dem Bildschwerpunkt landet. */
-function imageMotion(rng, m, outAspect, visDur, role, prevDir, hint) {
-  const mo = imageMotionRaw(rng, m, outAspect, visDur, role, prevDir, hint);
-  return fitSubject(mo, m, outAspect);
+function imageMotion(rng, m, outAspect, visDur, role, prevDir, hint, tempo = 1) {
+  const mo = fitSubject(imageMotionRaw(rng, m, outAspect, visDur, role, prevDir, hint, tempo), m, outAspect);
+  // Hat der Motivschutz den Zoom gebremst, gleitet die Kamera stattdessen seitlich (sofern das Bild Platz hat),
+  // damit das Tempo zum Rest des Films passt
+  const dur = Math.max(0.25, visDur);
+  const want = 0.0125 * tempo * 0.8;
+  const have = motionSpeed(mo.m, m, outAspect, dur);
+  const srcAspect = m.w && m.h ? m.w / m.h : outAspect;
+  const fw = srcAspect > outAspect ? outAspect / srcAspect : 1;
+  if (have < want * 0.7 && fw < 0.97 && (mo.dir === 'in' || mo.dir === 'out')) {
+    const need = (want - have) * dur * 2 * fw / (1 - fw);
+    const a = mo.m.from, b = mo.m.to;
+    const sgn = (b.x || 0) >= (a.x || 0) ? 1 : -1;
+    const span = Math.min(need, 1.2);
+    if (mo.dir === 'in') a.x = Math.max(-1, Math.min(1, (b.x || 0) - sgn * (Math.abs((b.x || 0) - (a.x || 0)) + span)));
+    else b.x = Math.max(-1, Math.min(1, (a.x || 0) + sgn * (Math.abs((b.x || 0) - (a.x || 0)) + span)));
+  }
+  return mo;
+}
+
+/** Bildschirmgeschwindigkeit einer Fahrt (Anteil der Bildbreite je Sekunde): Schwenk plus Zoom an den Bildrändern. */
+function motionSpeed(mo, m, outAspect, dur) {
+  if (!mo) return 0;
+  const srcAspect = m && m.w && m.h ? m.w / m.h : outAspect;
+  const fw = srcAspect > outAspect ? outAspect / srcAspect : 1, fh = srcAspect > outAspect ? 1 : srcAspect / outAspect;
+  const dx = Math.abs((mo.to.x || 0) - (mo.from.x || 0)) * (1 - fw) / 2 / fw;
+  const dy = (Math.abs((mo.to.y || 0) - (mo.from.y || 0)) * (1 - fh) / 2 / fh) / outAspect;
+  return (dx + dy + Math.abs(mo.to.s - mo.from.s) * 0.5) / Math.max(0.2, dur);
+}
+
+/** Fahrt auf einen Bruchteil verkürzen; der Endausschnitt (das Ziel der Fahrt) bleibt. */
+function scaleMotion(mo, k) {
+  for (const key of ['s', 'x', 'y', 'r']) {
+    const f = mo.from[key] || 0, t = mo.to[key] || 0;
+    if (key === 's') mo.from.s = t + (f - t) * k; else mo.from[key] = t + (f - t) * k;
+  }
 }
 
 /**
@@ -3383,42 +3417,51 @@ function fitSubject(mo, m, outAspect) {
   return mo;
 }
 
-function imageMotionRaw(rng, m, outAspect, visDur, role, prevDir, hint) {
+/**
+ * Kamerafahrt einer Einstellung. Die Geschwindigkeit ist über alle Einstellungen gleich (tempo = Kameratempo aus dem Song):
+ * kurze Bilder fahren ein kurzes Stück, lange ein langes – so läuft die Kamera über jeden Schnitt im selben Fluss.
+ */
+function imageMotionRaw(rng, m, outAspect, visDur, role, prevDir, hint, tempo = 1) {
   const srcAspect = m.w && m.h ? m.w / m.h : outAspect;
   const fw = srcAspect > outAspect ? outAspect / srcAspect : 1;
   const fh = srcAspect > outAspect ? 1 : srcAspect / outAspect;
   const fx = m.focus ? m.focus[0] : 0.5, fy = m.focus ? m.focus[1] : 0.45;
   const toPos = (f, frac) => (frac >= 0.999 ? 0 : Math.max(-1, Math.min(1, ((f - 0.5) * 2) / (1 - frac))));
   const px = toPos(fx, fw), py = toPos(fy, fh);
-  const speed = Math.min(1.4, Math.max(0.6, visDur / 3.2));
-  // Totale: weiter, ruhiger Blick (wenig Zoom); Detail: sanftes Heranfahren statt großer Sprünge
+  const dur = Math.max(0.25, visDur);
+  const speed = Math.min(1.4, Math.max(0.6, dur / 3.2));
+  // Totale: weiter, ruhiger Blick; Detail: sanftes Heranfahren
   const size = shotSize(m);
-  const z = (role === 'burst' ? 0.1 : 0.075) * speed * (size === 0 ? 0.75 : size === 2 ? 0.85 : 1);
+  // Bildschirmweg je Sekunde als Anteil der Bildbreite
+  const v = 0.0125 * tempo * (size === 0 ? 0.85 : size === 2 ? 0.9 : 1);
+  // Zoom: Maßstabsänderung so, dass sich die Bildränder mit v bewegen
+  const z = Math.min(0.16, 2 * v * dur);
+  // Schwenk: Weg im Ausschnitt (−1…1) für dieselbe Bildschirmgeschwindigkeit, quer wie hochkant
+  const panX = fw >= 0.999 ? 0 : Math.min(1.3, (v * 1.15 * dur * 2 * fw) / (1 - fw));
+  const panY = fh >= 0.999 ? 0 : Math.min(1.2, ((v * 1.15 * dur * 2 * fh) / (1 - fh)) * outAspect);
   // feine Neigung, die über die Einstellung ausläuft (modern, nie wackelig)
   const tilt = (rng() < 0.5 ? -1 : 1) * 0.0065 * speed;
   // Richtung bleibt meist über zwei Einstellungen gleich: ruhiger Fluss statt Hin und Her
   // (in ruhigen Teilen noch häufiger: die Kamera fließt in eine Richtung statt hin und her)
   const keep = rng() < (role === 'burst' ? 0.55 : 0.72);
-  // Schwenkweite wächst mit der Dauer: kurze Einstellungen gleiten nur ein Stück, nie ruckartig über das ganze Bild
-  const sweep = Math.min(1, 0.3 * Math.pow(Math.max(0.1, visDur), 1.6));
   // Anschluss an ein Video: die Fahrt nimmt dessen Schwenk-Richtung auf
   if (hint === 'left' || hint === 'right' || hint === 'up' || hint === 'down') prevDir = hint;
   if (fh < 0.72) {
     const down = hint === 'down' ? true : hint === 'up' ? false : prevDir === 'up' ? !keep : prevDir === 'down' ? keep : rng() < 0.5;
-    const a = Math.max(-1, Math.min(1, py + (down ? -0.6 : 0.6) * sweep));
-    return { dir: down ? 'down' : 'up', m: { from: { s: 1.03, x: 0, y: a, r: tilt }, to: { s: 1.03 + z * 0.6, x: 0, y: py, r: 0 } } };
+    const a = Math.max(-1, Math.min(1, py + (down ? -1 : 1) * panY));
+    return { dir: down ? 'down' : 'up', m: { from: { s: 1.03, x: 0, y: a, r: tilt }, to: { s: 1.03 + z * 0.35, x: 0, y: py, r: 0 } } };
   }
   if (fw < 0.72) {
     const right = hint === 'right' ? true : hint === 'left' ? false : prevDir === 'left' ? !keep : prevDir === 'right' ? keep : rng() < 0.5;
-    const a = Math.max(-1, Math.min(1, px + (right ? -0.65 : 0.65) * sweep));
-    return { dir: right ? 'right' : 'left', m: { from: { s: 1.03, x: a, y: 0, r: tilt }, to: { s: 1.03 + z * 0.6, x: px, y: 0, r: 0 } } };
+    const a = Math.max(-1, Math.min(1, px + (right ? -1 : 1) * panX));
+    return { dir: right ? 'right' : 'left', m: { from: { s: 1.03, x: a, y: 0, r: tilt }, to: { s: 1.03 + z * 0.35, x: px, y: 0, r: 0 } } };
   }
   const zin = size === 2 && !hint ? prevDir !== 'in' || keep || rng() < 0.6 : prevDir === 'in' ? keep || rng() < 0.3 : prevDir === 'out' ? !keep : rng() < 0.7;
   const tx = px * 0.8, ty = py * 0.8;
   // leichter Versatz quer zur Zoomrichtung: die Fahrt bekommt eine Kurve statt einer geraden Linie
   const sx = hint === 'right' ? -0.3 : hint === 'left' ? 0.3 : (rng() - 0.5) * 0.35;
-  // Weg quer zum Zoom wie beim Schwenk: in kurzen Einstellungen nur angedeutet
-  const k = Math.min(1, sweep * 1.6);
+  // Weg quer zum Zoom wächst mit der Dauer (gleiches Tempo): in kurzen Einstellungen nur angedeutet
+  const k = Math.min(1, (dur / 3.2) * tempo);
   const ox = tx - (tx * 0.8 - sx) * k, oy = ty - ty * 0.8 * k;
   return zin
     ? { dir: 'in', m: { from: { s: 1.02, x: ox, y: oy, r: tilt }, to: { s: 1.02 + z, x: tx, y: ty, r: -tilt * 0.3 } } }
@@ -4556,6 +4599,20 @@ function planOnce(opts) {
   const voice = [];
   const videoCursor = new Map();
   let prevDir = null;
+  // Kameratempo aus dem Song: Energie je Beat, über gut einen Takt geglättet und auf den Film normiert.
+  // Strophe ruhig, Refrain etwas zügiger – ohne Sprünge an den Schnitten.
+  const bRel = [], bEn = [];
+  for (let i = 0; i < an.beats.length; i++) { const t = an.beats[i] - win.start; if (t >= -barDur * 2 && t <= D + barDur * 2) { bRel.push(t); bEn.push(an.energy[i] || 0); } }
+  const eSm = bRel.map((b) => { let sm = 0, n = 0; for (let k = 0; k < bRel.length; k++) if (Math.abs(bRel[k] - b) <= barDur * 1.25) { sm += bEn[k]; n++; } return n ? sm / n : 0; });
+  const eLo = Math.min(...eSm, 1), eHi = Math.max(...eSm, 0);
+  const amtK = ({ soft: 0.72, medium: 1, strong: 1.35 }[s.motionAmt] || 1) * (s.pace === 'ruhig' ? 0.9 : s.pace === 'schnell' ? 1.08 : 1);
+  const tempoAt = (t) => {
+    if (!bRel.length) return amtK;
+    let k = 0; while (k < bRel.length - 1 && bRel[k + 1] <= t) k++;
+    const k2 = Math.min(bRel.length - 1, k + 1), f = bRel[k2] > bRel[k] ? Math.max(0, Math.min(1, (t - bRel[k]) / (bRel[k2] - bRel[k]))) : 0;
+    const e = eSm[k] + (eSm[k2] - eSm[k]) * f;
+    return amtK * (0.78 + 0.5 * (eHi > eLo ? (e - eLo) / (eHi - eLo) : 0.5));
+  };
   const all = loopClip ? clips.concat([loopClip]) : clips;
   for (const c of all) {
     c.visStart = c.start - (c.tin ? c.tin.dur / 2 : 0);
@@ -4664,8 +4721,10 @@ function planOnce(opts) {
       }
       const fitFrac = srcAspect > outAspect ? outAspect / srcAspect : srcAspect / outAspect;
       c.contain = fitFrac < 0.5;
-      const push = c.label === 'drop' || c.label === 'chorus' ? 0.025 : 0.045;
-      c.motion = c.contain ? { from: { s: 0.93, x: 0, y: 0 }, to: { s: 0.965, x: 0, y: 0 } } : { from: { s: 1, x: 0, y: 0 }, to: { s: 1 + push, x: 0, y: 0 } };
+      // Videos bewegen sich selbst: nur ein leises Heranfahren im gemeinsamen Kameratempo (im Refrain noch leiser)
+      const vt = tempoAt((c.visStart + c.visEnd) / 2), vLen = Math.max(0.3, c.visEnd - c.visStart);
+      const push = Math.min(0.06, 2 * 0.0125 * vt * (c.label === 'drop' || c.label === 'chorus' ? 0.35 : 0.6) * vLen);
+      c.motion = c.contain ? { from: { s: 0.93, x: 0, y: 0 }, to: { s: 0.93 + push * 0.8, x: 0, y: 0 } } : { from: { s: 1, x: 0, y: 0 }, to: { s: 1 + push, x: 0, y: 0 } };
     } else {
       c.srcOffset = 0; c.rate = 1; c.contain = false;
       // Ausrichtung passt nicht zum Format (Querfoto in 9:16, Hochformat im Film): ganz zeigen statt mehr als die Hälfte abzuschneiden
@@ -4675,13 +4734,14 @@ function planOnce(opts) {
       // „Gefällt mir nicht“: eigene Zufallsfolge je Versuch, die Richtung wechselt reihum
       const ag = (ov[c.i] && ov[c.i].again) || 0;
       // (die gemeinsame Zufallsfolge läuft trotzdem gleich weiter, damit sich die übrigen Einstellungen nicht ändern)
-      const mo0 = imageMotion(rng, m, outAspect, visDur, role, prevDir, panHint(c));
+      const tempo = tempoAt((c.visStart + c.visEnd) / 2);
+      const mo0 = imageMotion(rng, m, outAspect, visDur, role, prevDir, panHint(c), tempo);
       let mo = mo0;
       if (ag) {
         const r2 = mulberry32(((s.seed >>> 0) ^ (c.i * 977)) >>> 0);
         const cands = [];
         for (const h of ['left', 'right', 'down', 'up', null, 'in', 'out']) {
-          const q = imageMotion(r2, m, outAspect, visDur, role, h === 'in' || h === 'out' ? (h === 'in' ? 'out' : 'in') : null, h === 'in' || h === 'out' ? null : h);
+          const q = imageMotion(r2, m, outAspect, visDur, role, h === 'in' || h === 'out' ? (h === 'in' ? 'out' : 'in') : null, h === 'in' || h === 'out' ? null : h, tempo);
           if (q.dir !== mo0.dir && !cands.some((x) => x.dir === q.dir)) cands.push(q);
         }
         if (cands.length) mo = cands[(ag - 1) % cands.length];
@@ -4697,14 +4757,17 @@ function planOnce(opts) {
       if (framed && ag % 2 === 0) {
         // schwebt knapp innerhalb des Rahmens und wächst langsam: nichts vom Bild geht verloren
         c.contain = true;
-        c.motion = ag ? { from: { s: 0.975, x: 0, y: 0 }, to: { s: 0.93, x: 0, y: 0 } } : { from: { s: 0.93, x: 0, y: 0 }, to: { s: 0.975, x: 0, y: 0 } };
+        // gleiches Tempo wie die übrigen Fahrten (Rahmenkanten bewegen sich mit dem Kameratempo)
+        const dz = Math.min(0.07, 2 * 0.0125 * tempo * 0.75 * visDur);
+        c.motion = ag ? { from: { s: 0.93 + dz, x: 0, y: 0 }, to: { s: 0.93, x: 0, y: 0 } } : { from: { s: 0.93, x: 0, y: 0 }, to: { s: 0.93 + dz, x: 0, y: 0 } };
       }
       let pc = c.matchCut ? clips[c.i - 1] : null;
       // gerahmte Bilder haben keinen Ausschnitt, an den die Bewegung anschließen könnte
       if (pc && (framed || pc.contain)) { c.matchCut = false; pc = null; }
       if (pc && pc.motion && media[pc.mediaIndex] && media[pc.mediaIndex].kind === 'image') {
         // Match-Cut: gleicher Ausschnitt wie am Ende des vorigen Bilds, die Kamerabewegung läuft weiter
-        const f = pc.motion.from, to = pc.motion.to, k = 0.7;
+        // gleiche Geschwindigkeit wie im vorigen Bild: Weg im Verhältnis der Dauer
+        const f = pc.motion.from, to = pc.motion.to, k = Math.min(1.2, Math.max(0.3, visDur / Math.max(0.2, pc.visEnd - pc.visStart)));
         const cl = (v) => Math.max(-1, Math.min(1, v));
         c.motion = { from: { ...to }, to: { s: Math.max(1, to.s + (to.s - f.s) * k), x: cl(to.x + (to.x - f.x) * k), y: cl(to.y + (to.y - f.y) * k) } };
         c.dir = pc.dir;
@@ -4749,6 +4812,21 @@ function planOnce(opts) {
     const to = c.motion.to;
     c.motion = { from: { s: 1, x: 0, y: 0 }, to: { s: Math.max(1.04, to.s || 1), x: (to.x || 0) * 0.5, y: (to.y || 0) * 0.5 } };
     c.contain = false;
+  }
+  // Tempo-Abgleich: eine Fahrt, die deutlich schneller ist als beide Nachbarn, wird auf deren Tempo gebracht –
+  // die Kamera wirkt wie eine durchgehende Bewegung statt wie einzelne Anläufe
+  {
+    const plainM = (c) => c && c.motion && !(c.split || c.grid || c.burst || c.rush || c.stack || c.strip || c.miniRew || c.pre || c.reveal || c.revealHit || c.leader || c.flightAnim || c.loop) && media[c.mediaIndex] && media[c.mediaIndex].kind === 'image';
+    const sp = clips.map((c) => (plainM(c) ? motionSpeed(c.motion, media[c.mediaIndex], outAspect, Math.max(0.25, c.visEnd - c.visStart)) : null));
+    for (let i = 0; i < clips.length; i++) {
+      if (sp[i] == null || clips[i].matchCut) continue;
+      // ein neu gewürfeltes Bild („Gefällt mir nicht“) ist kein Maßstab für seine Nachbarn: dort ändert sich sonst nichts
+      const again = (j) => !!(ov[j] && ov[j].again);
+      const nb = [sp[i - 1], sp[i + 1]].filter((v, k) => v != null && !again(i + (k ? 1 : -1)) && !(k === 0 ? clips[i].sectionChange : clips[i + 1] && clips[i + 1].sectionChange));
+      if (!nb.length) continue;
+      const lim = Math.max(...nb) * 1.3;
+      if (sp[i] > lim && lim > 0.002) { scaleMotion(clips[i].motion, lim / sp[i]); sp[i] = lim; }
+    }
   }
   if (loopClip) {
     const c0 = loopTo;
@@ -8542,7 +8620,8 @@ class Engine {
     const tt = c.freezeAt != null ? Math.min(t, c.freezeAt) : t;
     const u = clamp01((tt - c.visStart) / Math.max(0.001, c.visEnd - c.visStart));
     // weiche Tempo-Rampe: vor dem Drop beschleunigt die Fahrt, auf dem Einsatz setzt sie schwungvoll ein und läuft aus
-    const e = c.ease === 'in' ? 0.45 * u + 0.55 * u * u * u : c.ease === 'out' ? 1 - Math.pow(1 - u, 2.6) : easeMotion(u);
+    // Tempo-Rampen enden bzw. beginnen im normalen Tempo (Ableitung 1): kein Stillstand, kein Anlauf am Schnitt
+    const e = c.ease === 'in' ? u + 0.8 * u * u * (u - 1) : c.ease === 'out' ? u + 0.8 * u * (1 - u) * (1 - u) : easeMotion(u);
     const mo = c.motion || { from: { s: 1, x: 0, y: 0 }, to: { s: 1, x: 0, y: 0 } };
     const s = lerp(mo.from.s, mo.to.s, e) * extra.zoom * fx.zoom;
     const x = lerp(mo.from.x, mo.to.x, e), y = lerp(mo.from.y, mo.to.y, e);

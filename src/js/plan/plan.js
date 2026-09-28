@@ -859,6 +859,20 @@ function planOnce(opts) {
   const voice = [];
   const videoCursor = new Map();
   let prevDir = null;
+  // Kameratempo aus dem Song: Energie je Beat, über gut einen Takt geglättet und auf den Film normiert.
+  // Strophe ruhig, Refrain etwas zügiger – ohne Sprünge an den Schnitten.
+  const bRel = [], bEn = [];
+  for (let i = 0; i < an.beats.length; i++) { const t = an.beats[i] - win.start; if (t >= -barDur * 2 && t <= D + barDur * 2) { bRel.push(t); bEn.push(an.energy[i] || 0); } }
+  const eSm = bRel.map((b) => { let sm = 0, n = 0; for (let k = 0; k < bRel.length; k++) if (Math.abs(bRel[k] - b) <= barDur * 1.25) { sm += bEn[k]; n++; } return n ? sm / n : 0; });
+  const eLo = Math.min(...eSm, 1), eHi = Math.max(...eSm, 0);
+  const amtK = ({ soft: 0.72, medium: 1, strong: 1.35 }[s.motionAmt] || 1) * (s.pace === 'ruhig' ? 0.9 : s.pace === 'schnell' ? 1.08 : 1);
+  const tempoAt = (t) => {
+    if (!bRel.length) return amtK;
+    let k = 0; while (k < bRel.length - 1 && bRel[k + 1] <= t) k++;
+    const k2 = Math.min(bRel.length - 1, k + 1), f = bRel[k2] > bRel[k] ? Math.max(0, Math.min(1, (t - bRel[k]) / (bRel[k2] - bRel[k]))) : 0;
+    const e = eSm[k] + (eSm[k2] - eSm[k]) * f;
+    return amtK * (0.78 + 0.5 * (eHi > eLo ? (e - eLo) / (eHi - eLo) : 0.5));
+  };
   const all = loopClip ? clips.concat([loopClip]) : clips;
   for (const c of all) {
     c.visStart = c.start - (c.tin ? c.tin.dur / 2 : 0);
@@ -967,8 +981,10 @@ function planOnce(opts) {
       }
       const fitFrac = srcAspect > outAspect ? outAspect / srcAspect : srcAspect / outAspect;
       c.contain = fitFrac < 0.5;
-      const push = c.label === 'drop' || c.label === 'chorus' ? 0.025 : 0.045;
-      c.motion = c.contain ? { from: { s: 0.93, x: 0, y: 0 }, to: { s: 0.965, x: 0, y: 0 } } : { from: { s: 1, x: 0, y: 0 }, to: { s: 1 + push, x: 0, y: 0 } };
+      // Videos bewegen sich selbst: nur ein leises Heranfahren im gemeinsamen Kameratempo (im Refrain noch leiser)
+      const vt = tempoAt((c.visStart + c.visEnd) / 2), vLen = Math.max(0.3, c.visEnd - c.visStart);
+      const push = Math.min(0.06, 2 * 0.0125 * vt * (c.label === 'drop' || c.label === 'chorus' ? 0.35 : 0.6) * vLen);
+      c.motion = c.contain ? { from: { s: 0.93, x: 0, y: 0 }, to: { s: 0.93 + push * 0.8, x: 0, y: 0 } } : { from: { s: 1, x: 0, y: 0 }, to: { s: 1 + push, x: 0, y: 0 } };
     } else {
       c.srcOffset = 0; c.rate = 1; c.contain = false;
       // Ausrichtung passt nicht zum Format (Querfoto in 9:16, Hochformat im Film): ganz zeigen statt mehr als die Hälfte abzuschneiden
@@ -978,13 +994,14 @@ function planOnce(opts) {
       // „Gefällt mir nicht“: eigene Zufallsfolge je Versuch, die Richtung wechselt reihum
       const ag = (ov[c.i] && ov[c.i].again) || 0;
       // (die gemeinsame Zufallsfolge läuft trotzdem gleich weiter, damit sich die übrigen Einstellungen nicht ändern)
-      const mo0 = imageMotion(rng, m, outAspect, visDur, role, prevDir, panHint(c));
+      const tempo = tempoAt((c.visStart + c.visEnd) / 2);
+      const mo0 = imageMotion(rng, m, outAspect, visDur, role, prevDir, panHint(c), tempo);
       let mo = mo0;
       if (ag) {
         const r2 = mulberry32(((s.seed >>> 0) ^ (c.i * 977)) >>> 0);
         const cands = [];
         for (const h of ['left', 'right', 'down', 'up', null, 'in', 'out']) {
-          const q = imageMotion(r2, m, outAspect, visDur, role, h === 'in' || h === 'out' ? (h === 'in' ? 'out' : 'in') : null, h === 'in' || h === 'out' ? null : h);
+          const q = imageMotion(r2, m, outAspect, visDur, role, h === 'in' || h === 'out' ? (h === 'in' ? 'out' : 'in') : null, h === 'in' || h === 'out' ? null : h, tempo);
           if (q.dir !== mo0.dir && !cands.some((x) => x.dir === q.dir)) cands.push(q);
         }
         if (cands.length) mo = cands[(ag - 1) % cands.length];
@@ -1000,14 +1017,17 @@ function planOnce(opts) {
       if (framed && ag % 2 === 0) {
         // schwebt knapp innerhalb des Rahmens und wächst langsam: nichts vom Bild geht verloren
         c.contain = true;
-        c.motion = ag ? { from: { s: 0.975, x: 0, y: 0 }, to: { s: 0.93, x: 0, y: 0 } } : { from: { s: 0.93, x: 0, y: 0 }, to: { s: 0.975, x: 0, y: 0 } };
+        // gleiches Tempo wie die übrigen Fahrten (Rahmenkanten bewegen sich mit dem Kameratempo)
+        const dz = Math.min(0.07, 2 * 0.0125 * tempo * 0.75 * visDur);
+        c.motion = ag ? { from: { s: 0.93 + dz, x: 0, y: 0 }, to: { s: 0.93, x: 0, y: 0 } } : { from: { s: 0.93, x: 0, y: 0 }, to: { s: 0.93 + dz, x: 0, y: 0 } };
       }
       let pc = c.matchCut ? clips[c.i - 1] : null;
       // gerahmte Bilder haben keinen Ausschnitt, an den die Bewegung anschließen könnte
       if (pc && (framed || pc.contain)) { c.matchCut = false; pc = null; }
       if (pc && pc.motion && media[pc.mediaIndex] && media[pc.mediaIndex].kind === 'image') {
         // Match-Cut: gleicher Ausschnitt wie am Ende des vorigen Bilds, die Kamerabewegung läuft weiter
-        const f = pc.motion.from, to = pc.motion.to, k = 0.7;
+        // gleiche Geschwindigkeit wie im vorigen Bild: Weg im Verhältnis der Dauer
+        const f = pc.motion.from, to = pc.motion.to, k = Math.min(1.2, Math.max(0.3, visDur / Math.max(0.2, pc.visEnd - pc.visStart)));
         const cl = (v) => Math.max(-1, Math.min(1, v));
         c.motion = { from: { ...to }, to: { s: Math.max(1, to.s + (to.s - f.s) * k), x: cl(to.x + (to.x - f.x) * k), y: cl(to.y + (to.y - f.y) * k) } };
         c.dir = pc.dir;
@@ -1052,6 +1072,21 @@ function planOnce(opts) {
     const to = c.motion.to;
     c.motion = { from: { s: 1, x: 0, y: 0 }, to: { s: Math.max(1.04, to.s || 1), x: (to.x || 0) * 0.5, y: (to.y || 0) * 0.5 } };
     c.contain = false;
+  }
+  // Tempo-Abgleich: eine Fahrt, die deutlich schneller ist als beide Nachbarn, wird auf deren Tempo gebracht –
+  // die Kamera wirkt wie eine durchgehende Bewegung statt wie einzelne Anläufe
+  {
+    const plainM = (c) => c && c.motion && !(c.split || c.grid || c.burst || c.rush || c.stack || c.strip || c.miniRew || c.pre || c.reveal || c.revealHit || c.leader || c.flightAnim || c.loop) && media[c.mediaIndex] && media[c.mediaIndex].kind === 'image';
+    const sp = clips.map((c) => (plainM(c) ? motionSpeed(c.motion, media[c.mediaIndex], outAspect, Math.max(0.25, c.visEnd - c.visStart)) : null));
+    for (let i = 0; i < clips.length; i++) {
+      if (sp[i] == null || clips[i].matchCut) continue;
+      // ein neu gewürfeltes Bild („Gefällt mir nicht“) ist kein Maßstab für seine Nachbarn: dort ändert sich sonst nichts
+      const again = (j) => !!(ov[j] && ov[j].again);
+      const nb = [sp[i - 1], sp[i + 1]].filter((v, k) => v != null && !again(i + (k ? 1 : -1)) && !(k === 0 ? clips[i].sectionChange : clips[i + 1] && clips[i + 1].sectionChange));
+      if (!nb.length) continue;
+      const lim = Math.max(...nb) * 1.3;
+      if (sp[i] > lim && lim > 0.002) { scaleMotion(clips[i].motion, lim / sp[i]); sp[i] = lim; }
+    }
   }
   if (loopClip) {
     const c0 = loopTo;

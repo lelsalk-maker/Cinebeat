@@ -10,7 +10,8 @@ const p = await b.newPage();
 p.on('pageerror', (e) => console.log('pageerror', e.message));
 await p.goto('http://127.0.0.1:8124/test/pipeline.html');
 const wav = readFileSync(`${OUT}/struct.wav`).toString('base64');
-const res = await p.evaluate(async (b64) => {
+const res = await p.evaluate(async ([b64, SDBG]) => {
+  const process = { env: { SDBG } };
   const fails = [], out = {};
   const bin = atob(b64); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
   const an = await analyzeAudio(await new OfflineAudioContext(2, 1, 44100).decodeAudioData(u.buffer));
@@ -51,20 +52,45 @@ const res = await p.evaluate(async (b64) => {
       if (prevDir && c.dir && isCalmLabel(c.label) && ((prevDir === 'left' && c.dir === 'right') || (prevDir === 'right' && c.dir === 'left') || (prevDir === 'up' && c.dir === 'down') || (prevDir === 'down' && c.dir === 'up'))) flips++;
       prevDir = c.dir;
     }
+    // Geschwindigkeit der Kamera am Ende einer Einstellung und am Anfang der nächsten (Bildschirm-Pixel je Sekunde)
+    const easeD = (c, u) => { const h = 1e-3; const f = (x) => (c.ease === 'in' ? x + 0.8 * x * x * (x - 1) : c.ease === 'out' ? x + 0.8 * x * (1 - x) * (1 - x) : easeMotion(x)); return (f(Math.min(1, u + h)) - f(Math.max(0, u - h))) / (Math.min(1, u + h) - Math.max(0, u - h)); };
+    const speed = (c, u) => {
+      const mo = c.motion; if (!mo || c.contain || c.split || c.grid || c.burst || c.rush || c.miniRew || c.stack || c.reveal || c.revealHit || c.loop || c.pre || c.leader || c.freezeAt != null) return null;
+      const it = media[c.mediaIndex] || {}; if (it.kind === 'video') return null;
+      const srcA = it.w && it.h ? it.w / it.h : outA;
+      const fw = srcA > outA ? outA / srcA : 1, fh = srcA > outA ? 1 : srcA / outA;
+      const dur = Math.max(0.2, c.visEnd - c.visStart);
+      const dispW = W / fw, dispH = (W / outA) / fh;
+      const px = Math.abs(mo.to.x - mo.from.x) * (1 - fw) / 2 * dispW + Math.abs(mo.to.y - mo.from.y) * (1 - fh) / 2 * dispH;
+      const zp = Math.abs(mo.to.s - mo.from.s) * W * 0.5;
+      return (px + zp) / dur * easeD(c, u);
+    };
+    const jumps = [];
+    for (let i = 1; i < pl.clips.length; i++) {
+      const a = pl.clips[i - 1], b2 = pl.clips[i];
+      if (b2.sectionChange) continue;
+      const va = speed(a, 1), vb = speed(b2, 0);
+      if (va == null || vb == null || Math.max(va, vb) < 3) continue;
+      jumps.push(Math.max(va, vb) / Math.max(1, Math.min(va, vb)));
+      if (process.env.SDBG) (out._dbg = out._dbg || []).push(`${name} ${i} ${va.toFixed(0)}→${vb.toFixed(0)} A:${a.dir}/${(a.visEnd - a.visStart).toFixed(1)}s ${JSON.stringify(a.motion)} B:${b2.dir}/${(b2.visEnd - b2.visStart).toFixed(1)}s ${JSON.stringify(b2.motion)} ${media[a.mediaIndex].w}x${media[a.mediaIndex].h}/${media[b2.mediaIndex].w}x${media[b2.mediaIndex].h}`);
+    }
+    jumps.sort((x, y) => x - y);
+    const q = (f) => (jumps.length ? +jumps[Math.min(jumps.length - 1, Math.floor(jumps.length * f))].toFixed(2) : 0);
     const D = pl.duration / 60;
     const fx = {}; for (const f of pl.fx) fx[f.type] = (fx[f.type] || 0) + 1;
     const tr = {}; for (const c of cuts) { const k = c.tin ? TR_NAMES[c.tin.type] || c.tin.type : '-'; tr[k] = (tr[k] || 0) + 1; }
     const perMin = Object.fromEntries(Object.entries(fx).map(([k, v]) => [k, +(v / D).toFixed(1)]));
-    out[name] = { D: +pl.duration.toFixed(1), clips: pl.clips.length, maxPanPxS: Math.round(maxPan), maxZoomPerS: +maxZoom.toFixed(3), pans, flipsCalm: flips, calmShort, fxPerMin: perMin, tr, notes: pl.notes.length };
+    out[name] = { D: +pl.duration.toFixed(1), clips: pl.clips.length, speedJumpMed: q(0.5), speedJumpP90: q(0.9), maxPanPxS: Math.round(maxPan), maxZoomPerS: +maxZoom.toFixed(3), pans, flipsCalm: flips, calmShort, fxPerMin: perMin, tr, notes: pl.notes.length };
     return out[name];
   };
   for (const [n, st] of [['story', { format: '9:16' }], ['energisch', { format: '9:16', variant: 'energisch' }], ['ruhig', { format: '9:16', variant: 'ruhig' }], ['film', { format: '16:9' }], ['beitrag', { format: '4:5', allMedia: 'off' }], ['musikvideo', { format: '9:16', mv: 'on' }]]) audit(n, st);
   for (const [n, o] of Object.entries(out)) {
     if (o.maxPanPxS > 420) fails.push(`${n}: Schwenk zu schnell (${o.maxPanPxS} px/s)`);
     if (o.flipsCalm > 2) fails.push(`${n}: ${o.flipsCalm} Hin-und-Her-Schwenks in ruhigen Teilen`);
+    if (o.speedJumpMed > 1.45 || o.speedJumpP90 > 2.2) fails.push(`${n}: Kameratempo springt an Schnitten (Median ${o.speedJumpMed}×, 90 % ${o.speedJumpP90}×)`);
   }
   return { out, fails };
-}, wav);
+}, [wav, process.env.SDBG || '']);
 console.log(JSON.stringify(res.out, null, 1));
 console.log('Fehler:', res.fails.length ? res.fails.join(' | ') : 'keine');
 await b.close();

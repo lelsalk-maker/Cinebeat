@@ -63,7 +63,10 @@ const res = await p.evaluate(async (b64) => {
   const k = pl.clips.findIndex((c, i) => i > 3 && !c.vid && !c.split && !c.burst && c.motion && c.motion.to);
   const ag = buildPlan({ an, media, settings: set0, overrides: { texts: [], stickers: [], clips: { [k]: { again: 1 } } } });
   const same = (a, b) => JSON.stringify(a.motion) === JSON.stringify(b.motion);
-  out.again = { k, changed: !same(pl.clips[k], ag.clips[k]), others: pl.clips.filter((c, i) => i !== k && ag.clips[i] && !same(c, ag.clips[i])).length };
+  // Nachbarn dürfen sich nur so weit ändern, wie ein anders langer Übergang ihre sichtbare Dauer verschiebt (gleiches Tempo, gleiche Richtung)
+  const spd = (c) => motionSpeed(c.motion, media[c.mediaIndex], 1080 / 1920, Math.max(0.25, c.visEnd - c.visStart));
+  const sameish = (a, b2) => same(a, b2) || (a.dir === b2.dir && a.contain === b2.contain && Math.abs(spd(a) - spd(b2)) <= 0.03 * Math.max(spd(a), 1e-4) + 1e-4);
+  out.again = { k, changed: !same(pl.clips[k], ag.clips[k]), others: pl.clips.filter((c, i) => i !== k && ag.clips[i] && !sameish(c, ag.clips[i])).length };
   if (!out.again.changed || out.again.others > 0) fails.push('Gefällt mir nicht ändert falsch');
   // drei Varianten: ruhig hat längere Einstellungen als energisch
   const avg = (v) => { const q = buildPlan({ an, media, settings: { ...set0, variant: v }, overrides: { texts: [], stickers: [] } }); return q.duration / q.clips.length; };

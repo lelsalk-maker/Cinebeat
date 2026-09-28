@@ -5,7 +5,8 @@ const clamp01 = (x) => Math.max(0, Math.min(1, x));
 const lerp = (a, b, t) => a + (b - a) * t;
 const smooth = (t) => t * t * (3 - 2 * t);
 // Gleiten statt Anfahren und Abbremsen: die Kamera ist schon in Bewegung, setzt sich nur leicht (wirkt flüssig über Schnitte)
-const easeMotion = (t) => 0.72 * t + 0.28 * (1 - (1 - t) * (1 - t));
+// gleichmäßige Fahrt: dieselbe Geschwindigkeit am Anfang und Ende jeder Einstellung, damit die Kamera über den Schnitt im Fluss bleibt
+const easeMotion = (t) => t;
 
 function waitEvent(target, okEvents, failEvents, timeoutMs) {
   return new Promise((resolve) => {
