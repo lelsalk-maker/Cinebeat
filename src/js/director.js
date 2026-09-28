@@ -273,6 +273,8 @@ function direct(an, media, s, chapters, flight) {
   // Songausschnitt
   // Story: der ganze Song passt nicht in 60 s – dann der beste 60-s-Ausschnitt
   const storyCap = fr.kind === 'story' && s.target !== 'reel' && s.format === '9:16';
+  // Instagram-Formate haben harte Grenzen (Story 60 s, Reel 90 s, Beitrag 60 s); nur der Film darf länger
+  const hardCap = fr.kind !== 'film';
   const full = s.length === 'full' && !(storyCap && songLen > fr.max);
   if (s.length === 'full' && !full) notes.push(`Eine Story zeigt höchstens ${fr.max} s am Stück: der Film nimmt den besten ${fr.max}-s-Ausschnitt. Den ganzen Song bekommst du als Reel.`);
   let win;
@@ -286,15 +288,20 @@ function direct(an, media, s, chapters, flight) {
     const willReveal = s.intro === 'reveal' || (s.intro === 'auto' && autoReveal(an, chapters, flight, fr));
     const lead = (willReveal ? revealBeats(an) * an.beatPeriod : 0) + (s.intro === 'grid' && list.length >= 4 ? (list.length >= 9 ? 9 : 4) * step * an.beatPeriod : s.intro === 'countdown' ? 3 * step * an.beatPeriod : 0) + (flight || s.intro === 'split' ? 0 : preLead * step * an.beatPeriod);
     // Nachplanung für mehr Material: das Ende darf nicht wieder auf dieselbe kürzere Stelle einrasten
-    win = smartWindow(an, T, lead, storyCap ? fr.max : Infinity, s._minT ? 0.97 : 0.8);
+    win = smartWindow(an, T, lead, hardCap ? fr.max : Infinity, s._minT ? 0.97 : 0.8);
   } else {
     win = pickWindow(an, { length: T, songStart: s.songStart });
   }
-  // Story: harte Grenze, Ende auf einem Taktanfang davor
-  if (storyCap && win.end - win.start > fr.max) {
-    const lim = win.start + fr.max;
-    const bar = (an.barStart || []).filter((b) => b > win.start + fr.max * 0.8 && b <= lim).pop();
-    win = { ...win, end: bar || lim };
+  // harte Grenze (Story, Reel, Beitrag), Ende auf einem Taktanfang davor
+  // (auch bei genau der Grenze: das Ende muss auf einer Eins liegen, nicht mitten im Takt)
+  if (hardCap && win.end - win.start > fr.max - 0.05) {
+    const lim = win.start + fr.max + 0.02;
+    const onBar = (an.barStart || []).some((b) => Math.abs(b - win.end) < 0.06);
+    if (!onBar || win.end > lim) {
+      const bar = Array.from(an.barStart || []).filter((b) => b > win.start + fr.max * 0.8 && b <= lim).pop();
+      const beat = Array.from(an.beats || []).filter((b) => b > win.start + fr.max * 0.8 && b <= lim).pop();
+      win = { ...win, end: bar || beat || Math.min(win.end, lim) };
+    }
   }
   const D = win.end - win.start;
 

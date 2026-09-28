@@ -30,7 +30,9 @@ function chooseTransition(ctx, rng) {
  * Sprung ins Helle → Lichtblende, Sprung ins Dunkle → Schwarzblende statt Blende.
  */
 function refineTransition(tr, rel, ctx) {
-  if (!rel || tr.punch) return tr;
+  if (!rel) return tr;
+  // fast gleicher Bildaufbau: auch im Drop ein Match-Cut (die Kamerafahrt läuft weiter) statt Zoom-Stoß
+  if (tr.punch) return ctx.s.match !== 'off' && rel.sim > 0.9 && tr.type === TR.CUT ? { type: TR.CUT, dur: 0, punch: false, match: true } : tr;
   const { A, B, beatDur, s, peak, rng } = ctx;
   const lenA = A.end - A.start, lenB = B.end - B.start;
   const fit = (beats, max = 2.4) => Math.min(beats * beatDur, 0.45 * lenA, 0.45 * lenB, max);

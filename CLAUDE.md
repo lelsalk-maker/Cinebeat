@@ -16,7 +16,7 @@ beat-synchrone Filme macht. Läuft komplett auf dem Gerät (iPhone ist Hauptziel
 | --- | --- |
 | `src/js/mediaio.js` | Bild dekodieren, Video-Elemente (iOS: `primeVideo`), WebM-Fix |
 | `meta.js`, `world.js` | EXIF/MP4-Metadaten, Orte, Küstenlinien |
-| `audio.js` | Beats, Takte, Abschnitte (intro/verse/build/drop/chorus/break/outro), Bassdrum/Snare, `AN_VER` (erhöhen ⇒ Neuanalyse) |
+| `audio.js` | Beats, Takte, Abschnitte (intro/verse/build/drop/chorus/break/outro), Bassdrum/Snare, `AN_VER` (erhöhen ⇒ Neuanalyse). Tempo-Oktave per Bassdrum (150 statt 75), Schnittraster `alignToKick` (Strecken ohne Bassdrum aufs Tempo der Nachbarn) |
 | `score.js` | Bildbewertung: Schärfe, Farbe, Fokus, Layout, Hash; Video-Highlights; `actionCurve`/`motionHits` (Bewegungsmomente bildgenau) |
 | `plan/base.js` | Zufall, `LOOKS`, `FORMATS`, `TR` (Übergänge), `sectionAt`, `pickWindow` |
 | `plan/cuts.js` | Schnittraster auf Beats (`planCuts`, DP), `adjustCuts` |
@@ -30,7 +30,7 @@ beat-synchrone Filme macht. Läuft komplett auf dem Gerät (iPhone ist Hauptziel
 | `plan/arrange.js` | Anordnung nach Tageszeit: `dayBlock`, `arrangeBlocks` (lokale Suche je Block: Wir ruhig, Totalen/starke Bilder lang, Energie zur Songstelle, keine ähnlichen Nachbarn) |
 | `plan/cutter.js` | `cutterPolish`: Standzeit nach Bildinhalt (Schnitte ±1–2 Beats auf starken Zählzeiten), Höhepunkt-/Schlussbild |
 | `plan/vsync.js` | Videoschnitt auf den Takt: `hitGrid` (Eins/Snare/Bassdrum/Beats), `syncVideoOffset` legt Aktionsmomente (`m.hits`) aufs Raster |
-| `plan/advice.js` | Song zuerst: `idealLength`, `songAdvice` (ideale Menge per Testschnitt), `planQuality` (Bewertung), `bestCut` (beste von n Varianten), `hookScore` (Stopp-Wert der ersten 1,5 s), `improveHook` |
+| `plan/advice.js` | Song zuerst: `idealLength`, `songAdvice` (ideale Menge per Testschnitt), `planQuality` (Bewertung), `bestCut` (beste von n Varianten, abzüglich Unstimmigkeiten), `planAudit` (harte Regeln gegen den Song: Schlag, Drop, Mindestzeiten, Länge, Reihenfolge, nichts fehlt), `hookScore` (Stopp-Wert der ersten 1,5 s), `improveHook` |
 | `director.js` | Auto-Regie: Varianten (`VARIANTS`), Musikvideo (`withMusicVideo`), Aussortieren (`autoOut`), Länge, Songausschnitt, Tempo, Look, Einstieg/Ende, Stil-Budget (`rs.*`) |
 | `perflog.js` | Leistungsprotokoll (`perfLog.add`, lokal, 40 Einträge) und Wärmeschutz beim Export (`HeatGuard`) |
 | `scoreworker.js` | Worker fürs Einlesen (mit `score.js` von `build.mjs` als `SCORE_WORKER_SRC` eingebettet, Blob-Worker) |
@@ -53,6 +53,7 @@ Ablauf je Ort (`rec.flow`): `song` (Song wählen) → `advice` (Songprofil + Emp
 - Chronologie in Tagesblöcken (Standard `order: 'tageszeit'`): je Tag „Morgen & Mittag“ (bis 14 Uhr) und „Nachmittag & Abend“ (Nacht bis 4 Uhr = Vorabend, `dayBlock`); Blöcke nie vertauscht, innerhalb ordnet `arrangeBlocks` (plan/arrange.js) frei. `order: 'streng'`: Uhrzeit (Ausnahmen: Startbild, Tausch innerhalb 3 min, Beinahe-Doppel versetzt).
 - „Alle Aufnahmen“ (Standard): nichts weglassen; verdichten zuerst in Drop/Refrain; ruhige Teile ≥ 2 Beats.
 - Videos laufen wirklich (mind. ein Takt), bester Moment auf dem Schlag; nie in Sekundenbruchteil-Einstellungen.
+- Stimmigkeit: `test/stimmig.mjs` prüft `planAudit` über 3 Tempi × 3 Materialmengen × 10 Formate (Story, Reel 90 s …) – muss ohne Befund bleiben.
 - Songdynamik: Drop-Einsatz ist ein Schnitt. Design: Schwarz/Dunkelblau/Beige, schlicht, modern.
 - Farbe: `colorMatch` gleicht je Szene an (`[r,g,b,gamma]`), Stimmung bleibt. Ausschnitt: `framePoint` (Drittel, Horizont, Kopf).
 - Mitgetippt: `overrides.taps` (Songzeit, auf Beats gerastet) → erzwungene Schnitte in `planCuts` (Segment `tap`), Zoom-Stoß (`fx.tap`); Cutter und Zusammenlegungen in `chrono.js` lassen sie stehen; im Vorspann/Video nur Akzent.

@@ -255,7 +255,9 @@ function flowOrder(list, wantMatch) {
     }
   }
   // Beinahe-Doppel nie direkt hintereinander (wirkt wie ein Hänger): um einen Platz verschieben
-  for (let i = 1; i < out.length - 1; i++) if (twin(out[i - 1], out[i]) && !twin(out[i - 1], out[i + 1])) { const t = out[i]; out[i] = out[i + 1]; out[i + 1] = t; }
+  // (nur innerhalb desselben Tagesblocks – nie über einen Tageswechsel oder eine Nacht hinweg)
+  const sameMoment = (a, b) => !a.time || !b.time || dayBlock(a) === dayBlock(b);
+  for (let i = 1; i < out.length - 1; i++) if (twin(out[i - 1], out[i]) && !twin(out[i - 1], out[i + 1]) && sameMoment(out[i], out[i + 1])) { const t = out[i]; out[i] = out[i + 1]; out[i + 1] = t; }
   return out;
 }
 
@@ -290,7 +292,9 @@ function shotRelation(a, b) {
 function spreadSimilar(order) {
   const sim = (a, b) => a && b && a.avg && b.avg && Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) < 18 && (!a.hash || !b.hash || hamming(a.hash, b.hash) < 14);
   for (let i = 2; i < order.length - 1; i++) {
-    if (sim(order[i], order[i - 1]) && !sim(order[i + 1], order[i - 1])) { const t = order[i]; order[i] = order[i + 1]; order[i + 1] = t; }
+    // nur mit einer Aufnahme aus demselben Moment tauschen (nie über eine Pause, einen Tageswechsel oder eine Nacht)
+    const close = !order[i].time || !order[i + 1].time || Math.abs(order[i].time - order[i + 1].time) <= 3 * 60 * 1000;
+    if (close && sim(order[i], order[i - 1]) && !sim(order[i + 1], order[i - 1])) { const t = order[i]; order[i] = order[i + 1]; order[i + 1] = t; }
   }
   return order;
 }

@@ -19,7 +19,7 @@ const SLOT_ENERGY = { drop: 1, chorus: 0.9, build: 0.65, verse: 0.4, intro: 0.3,
  * Fest bleiben: Videos, eigene Entscheidungen, verschobene Aufnahmen, Startbild, Stil-Mittel und Bilder, auf die sich
  * Rückspulen, Wiederholung oder Echo beziehen. Liefert { moved, blocks } für die Erklärung.
  */
-function arrangeBlocks(clips, { byId, ov = {}, moved: userMoved = new Set(), us = true }) {
+function arrangeBlocks(clips, { byId, ov = {}, moved: userMoved = new Set(), us = true, aspect = 0 }) {
   const special = (c) => c.split || c.grid || c.burst || c.rush || c.stack || c.strip || c.miniRew || c.pre || c.reveal || c.leader || c.flightAnim || c.loop || c.vid || c.gridMid || c.afterGrid || c.replay || c.replaySeg || c.repeatSeg || c.echo;
   // eigenes Motiv bleibt; „Gefällt mir nicht“ ändert nur die Bewegung und wird mitgeordnet
   const own = (c) => { const o = ov[c.i]; return !!(o && o.mediaId); };
@@ -58,6 +58,7 @@ function arrangeBlocks(clips, { byId, ov = {}, moved: userMoved = new Set(), us 
   const energyOf = (m) => { let v = energyC.get(m.id); if (v == null) { v = mediaEnergy(m); energyC.set(m.id, v); } return v; };
   // zwei Nachbarn: nie Beinahe-Doppel hintereinander; ähnlicher Bildaufbau ist eine Match-Cut-Chance (wie in flowOrder),
   // gleiche Einstellungsgröße leicht vermeiden
+  const framed = (m) => { if (!aspect || !m.w || !m.h) return false; const r = m.w / m.h; return (r > aspect ? aspect / r : r / aspect) < 0.5; };
   const pair = (a, b) => {
     if (!a || !b) return 0;
     const key = a.id + '|' + b.id;
@@ -69,7 +70,9 @@ function arrangeBlocks(clips, { byId, ov = {}, moved: userMoved = new Set(), us 
     const colorD = a.avg && b.avg ? Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) : 99;
     const dup = a.dupOf === b.id || b.dupOf === a.id || (a.hash && b.hash && hamming(a.hash, b.hash) < 12 && colorD < 30);
     if (dup) p -= 0.6;
-    else if (sim > 0.78) p += 0.45; // Match-Cut (Übergangswahl ab 0,78): unsichtbarer Schnitt, Kamerafahrt läuft weiter
+    // Match-Cut (Übergangswahl ab 0,78): unsichtbarer Schnitt, Kamerafahrt läuft weiter – nur bildfüllend möglich
+    // (ein gerahmtes Querfoto im Hochformat hat keinen Ausschnitt, an den die Bewegung anschließen könnte)
+    else if (sim > 0.78 && !framed(a) && !framed(b)) p += 0.7;
     if (a.kind === 'image' && b.kind === 'image' && sizeOf(a) === sizeOf(b)) p -= 0.08;
     // Hoch- und Querformat im Wechsel: die Kamera müsste zwischen Schwenk und Zoom springen – ruhiger gleich bei gleich
     const land = (m) => (m.w && m.h ? (m.w > m.h * 1.1 ? 1 : m.h > m.w * 1.1 ? -1 : 0) : 0);

@@ -53,7 +53,7 @@ function percentile(arr, p) {
  * Taktphase (Downbeats), Energie je Beat und eine Hüllkurve für die Anzeige.
  */
 /** Version der Analyse: gespeicherte Songs mit älterer Version werden einmal neu analysiert. */
-const AN_VER = 4;
+const AN_VER = 6;
 
 /**
  * Mithören: findet in der Mikrofonaufnahme den genauen Einsatz des Songs nach dem Startsignal.
@@ -273,6 +273,24 @@ async function analyzeAudio(buffer, onProgress) {
       if (Math.abs(off) < 1) period = bestLag + off;
     }
   }
+  // Oktavfehler: schlägt die Bassdrum regelmäßig auch auf jedem halben Schlag, ist das Tempo doppelt so hoch
+  // (150 statt 75 BPM). Ein 75er mit Achtel-Hi-Hats bleibt – dort liegt auf den Zwischenschlägen kein Kick.
+  if (hasRhythm && isFinite(period) && (60 * fps) / (period / 2) <= 180) {
+    const kr = new Float32Array(nFrames);
+    for (let j = 4; j < nFrames; j++) { let pre = 0; for (let k = j - 4; k < j; k++) pre = Math.max(pre, lowE[k]); kr[j] = Math.max(0, lowE[j] - pre); }
+    const acK = (lag) => {
+      let best = 0;
+      for (let l = Math.round(lag) - 1; l <= Math.round(lag) + 1; l++) {
+        if (l < 1) continue;
+        let v = 0;
+        for (let i = 0; i + l < nFrames; i++) v += kr[i] * kr[i + l];
+        best = Math.max(best, v / (nFrames - l));
+      }
+      return best;
+    };
+    const full = acK(period), half = acK(period / 2);
+    if (full > 0 && half >= full * 0.6) period /= 2;
+  }
   if (!hasRhythm || !isFinite(period) || period <= 0) period = (60 * fps) / 100;
   // Regelmäßigkeit: wie stark ragt der Peak aus der Autokorrelation heraus?
   let acMean = 0, acCount = 0;
@@ -438,6 +456,9 @@ async function analyzeAudio(buffer, onProgress) {
   const toFrame = (t) => Math.max(0, Math.min(nFrames - 1, Math.round(((t - 0.014) * sr - N / 2) / hop)));
   // Hi-Hats zwischen den Schlägen können das Raster um einen halben Schlag verschieben: die Bassdrum entscheidet
   beats = fixHalfPhase(beats, pSec, lowE, toFrame, nFrames);
+  // Schnittraster beruhigt; Struktur und Energie rechnen weiter mit dem gemessenen Raster (erkennt Abschnitte besser)
+  // Schnittraster: auf die Anschläge im Bassband gezogen (Struktur und Energie rechnen mit dem Tracking-Raster)
+  const beatsSteady = alignToKick(beats, pSec, lowE, toFrame, frameTime, nFrames);
 
   // RMS je Beat -> Energie 0..1
   const beatRms = new Float32Array(beats.length);
@@ -452,7 +473,7 @@ async function analyzeAudio(buffer, onProgress) {
     for (let f = Math.max(0, a - 2); f <= Math.min(nFrames - 1, a + 2); f++) lf = Math.max(lf, lowFlux[f] + 0.5 * flux[f]);
     beatLow[i] = lf;
   }
-  const drums = detectDrums(beats, pSec, lowE, hiE, toFrame, nFrames);
+  const drums = detectDrums(beatsSteady, pSec, lowE, hiE, toFrame, nFrames);
   const vocal = detectVocals(beats, pSec, timbreF, chromaF, toFrame, nFrames);
   const db = Array.from(beatRms, (v) => 20 * Math.log10(v + 1e-7));
   const lo = percentile(db, 0.05), hi = percentile(db, 0.97);
@@ -493,13 +514,28 @@ async function analyzeAudio(buffer, onProgress) {
   });
 
   onProgress && onProgress(1);
-  return {
+  // Zeiten der Struktur (Abschnitte, Takte, Refrain, Stopps) über den Schlag-Index aufs beruhigte Raster übertragen
+  const toSteady = (t) => {
+    if (!(t > 0) || !beats.length) return t;
+    let lo = 0, hi = beats.length - 1;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (beats[m] < t) lo = m + 1; else hi = m; }
+    if (lo > 0 && Math.abs(beats[lo - 1] - t) < Math.abs(beats[lo] - t)) lo--;
+    return t + (beatsSteady[lo] - beats[lo]);
+  };
+  const st = {
     ...structure,
+    sections: structure.sections.map((x) => ({ ...x, start: x.start > 0 ? toSteady(x.start) : x.start, end: x.end < duration - 0.05 ? toSteady(x.end) : x.end })),
+    barStart: structure.downIdx ? structure.downIdx.map((i) => beatsSteady[i]) : structure.barStart.map(toSteady),
+    hook: toSteady(structure.hook),
+    stops: (structure.stops || []).map((x) => ({ ...x, t: toSteady(x.t), end: toSteady(x.end) })),
+  };
+  return {
+    ...st,
     ver: AN_VER,
     bpm: (60 * fps) / period,
     beatPeriod: pSec,
     hasRhythm,
-    beats: Float64Array.from(beats),
+    beats: Float64Array.from(beatsSteady),
     energy,
     kicks: drums.kicks,
     vocal: vocal.level,
@@ -558,25 +594,102 @@ function drumRise(arr, f, nFrames) {
  * Halbe Phasenlage prüfen: liegt die Bassdrum über 16 Schläge deutlich auf den Zwischenschlägen,
  * sitzt das Raster dort auf den Hi-Hats. Dann rückt dieser Teil um einen halben Schlag.
  */
+/**
+ * Feinabgleich auf den Anschlag: jeder Schlag rückt auf den steilsten Energieanstieg im Bassband in seiner Nähe
+ * (±70 ms, höchstens ein Fünftel Schlag) – nur wenn dort ein klarer Anschlag ist. Zwischen-Frame-genau; die
+ * Versatz zwischen beiden Messungen kalibriert sich je Song selbst: dort, wo das Tracking-Raster ohnehin genau auf
+ * dem Anschlag liegt, bleibt es unverändert; korrigiert werden nur die unsicheren Strecken (z. B. leise Strophen).
+ */
+function alignToKick(beats, pSec, lowE, toFrame, frameTime, nFrames) {
+  const rise = new Float32Array(nFrames);
+  for (let j = 4; j < nFrames; j++) { let pre = 0; for (let k = j - 4; k < j; k++) pre = Math.max(pre, lowE[k]); rise[j] = Math.max(0, lowE[j] - pre); }
+  const peaks = [];
+  for (let j = 1; j < nFrames - 1; j++) if (rise[j] > 0 && rise[j] >= rise[j - 1] && rise[j] > rise[j + 1]) peaks.push(rise[j]);
+  const thr = percentile(peaks, 0.75) * 0.5 || 1e-9;
+  const fr = frameTime(1) - frameTime(0);
+  const R = Math.max(2, Math.round(Math.min(0.07, pSec * 0.2) / fr));
+  const hit = beats.map((t) => {
+    const f = toFrame(t);
+    let bj = -1, bv = thr;
+    for (let j = Math.max(1, f - R); j <= Math.min(nFrames - 2, f + R); j++) if (rise[j] > bv && rise[j] >= rise[j - 1] && rise[j] >= rise[j + 1]) { bv = rise[j]; bj = j; }
+    if (bj < 0) return null;
+    const y0 = rise[bj - 1], y1 = rise[bj], y2 = rise[bj + 1], den = y0 - 2 * y1 + y2;
+    const sub = den < 0 ? Math.max(-0.5, Math.min(0.5, (0.5 * (y0 - y2)) / den)) : 0;
+    return frameTime(bj + sub);
+  });
+  // Selbstkalibrierung: typischer Versatz der Anschlags-Messung gegenüber dem Raster, wo beide fast übereinstimmen
+  const d = hit.map((h, i) => (h == null ? null : h - beats[i])).filter((x) => x != null && Math.abs(x) < 0.04);
+  if (d.length < 8) return beats;
+  const off = percentile(d, 0.5);
+  const out = beats.map((t, i) => {
+    if (hit[i] == null) return t;
+    const a = hit[i] - off;
+    // nur wirklich neben dem Anschlag liegende Schläge verschieben; genaue bleiben unangetastet
+    return Math.abs(a - t) > Math.max(0.012, fr * 1.2) ? a : t;
+  });
+  // Strecken ohne Bassdrum (Intro nur mit Flächen, Build mit Wirbeln, Break): weiche Einsätze (Akkordwechsel,
+  // Triolen) ziehen das Raster dort weg. Die Schläge gehören aufs Tempo der Bassdrum links und rechts,
+  // am Anfang/Ende auf das Tempo der nächsten sicheren Schläge. Anzahl und Reihenfolge bleiben gleich.
+  const C = [];
+  for (let i = 0; i < out.length; i++) if (hit[i] != null) C.push(i);
+  if (C.length < 8) return out;
+  const ok = (per) => Math.abs(per - pSec) < pSec * 0.08;
+  for (let q = 0; q + 1 < C.length; q++) {
+    const a = C[q], z = C[q + 1], m = z - a;
+    if (m < 2) continue;
+    const span = out[z] - out[a], n = Math.round(span / pSec);
+    if (n !== m || Math.abs(span / pSec - n) > 0.15 || !ok(span / n)) continue;
+    // nur, wo das Raster sichtbar holpert (Abstände weichen > 12 % ab); ein gleichmäßig schwingendes Tempo bleibt
+    const per = span / n, src = out.slice(a, z + 1);
+    const rough = src.some((t, k) => k > 0 && Math.abs(t - src[k - 1] - per) > per * 0.12);
+    if (rough) for (let k = a + 1; k < z; k++) out[k] = out[a] + per * (k - a);
+  }
+  // Tempo am Rand: Ausgleichsgerade über bis zu 48 sichere Schläge (8 Schläge allein schätzen das Tempo zu grob)
+  const fit = (cs) => {
+    const xs = cs.map((c) => Math.round((out[c] - out[cs[0]]) / pSec)), ys = cs.map((c) => out[c]);
+    const n = xs.length, mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n;
+    let sxy = 0, sxx = 0;
+    for (let k = 0; k < n; k++) { sxy += (xs[k] - mx) * (ys[k] - my); sxx += (xs[k] - mx) * (xs[k] - mx); }
+    return sxx > 0 ? sxy / sxx : 0;
+  };
+  // Beginn/Ende der durchgehenden Bassdrum (vereinzelte tiefe Töne davor zählen nicht)
+  let q0 = 0; while (q0 + 6 < C.length && C[q0 + 6] - C[q0] > 8) q0++;
+  let q1 = C.length - 1; while (q1 - 6 >= 0 && C[q1] - C[q1 - 6] > 8) q1--;
+  if (q0 + 6 < C.length) {
+    const f = C[q0], perF = fit(C.slice(q0, q0 + 48));
+    if (f >= 2 && ok(perF) && out[f] - perF * f > -perF * 0.35) for (let k = 0; k < f; k++) out[k] = Math.max(0, out[f] - perF * (f - k));
+  }
+  if (q1 - 6 >= 0) {
+    const l = C[q1], perL = fit(C.slice(Math.max(0, q1 - 47), q1 + 1));
+    if (out.length - 1 - l >= 2 && ok(perL)) for (let k = l + 1; k < out.length; k++) out[k] = out[l] + perL * (k - l);
+  }
+  return out;
+}
+
 function fixHalfPhase(beats, pSec, lowE, toFrame, nFrames) {
   const n = beats.length;
   if (n < 16) return beats;
-  const mid = (i) => (beats[i] + (i + 1 < n ? beats[i + 1] : beats[i] + pSec)) / 2;
-  const on = beats.map((t) => drumRise(lowE, toFrame(t), nFrames));
-  const off = beats.map((_, i) => drumRise(lowE, toFrame(mid(i)), nFrames));
-  const ref = percentile(on.concat(off), 0.95) || 1e-9;
-  const flip = new Array(n).fill(false);
+  // Verschiebung um einen Bruchteil q des Schlags (½; bei einem Raster im halben Tempo auch ¼ und ¾)
+  const at = (i, q) => beats[i] + ((i + 1 < n ? beats[i + 1] : beats[i] + pSec) - beats[i]) * q;
+  const QS = [0.5, 0.25, 0.75];
+  // etwas breiter suchen (±4 Frames): ein Raster, das nicht genau einen halben Schlag, sondern knapp daneben liegt, wird auch erkannt
+  const wide = (t) => { const f = toFrame(t); let m = 0; for (let d = -3; d <= 3; d++) m = Math.max(m, drumRise(lowE, f + d, nFrames)); return m; };
+  const on = beats.map(wide);
+  const offs = QS.map((q) => beats.map((_, i) => wide(at(i, q))));
+  const ref = percentile(on.concat(offs[0]), 0.95) || 1e-9;
+  const shift = new Array(n).fill(0);
   for (let s0 = 0; s0 < n; s0 += 8) {
-    let a = 0, b = 0;
-    const e = Math.min(n, s0 + 16);
-    for (let i = s0; i < e; i++) { a += on[i]; b += off[i]; }
-    const c = e - s0;
-    if (b > a * 2.5 && b / c > ref * 0.06) for (let i = s0; i < Math.min(n, s0 + 8); i++) flip[i] = true;
+    const e = Math.min(n, s0 + 16), c = e - s0;
+    let a = 0;
+    for (let i = s0; i < e; i++) a += on[i];
+    let bestQ = 0, bestB = 0;
+    QS.forEach((q, qi) => { let b = 0; for (let i = s0; i < e; i++) b += offs[qi][i]; if (b > bestB) { bestB = b; bestQ = q; } });
+    if (bestB > a * 2 && bestB / c > ref * 0.06) for (let i = s0; i < Math.min(n, s0 + 8); i++) shift[i] = bestQ;
   }
-  if (!flip.some(Boolean)) return beats;
+  if (!shift.some(Boolean)) return beats;
   const out = [];
   for (let i = 0; i < n; i++) {
-    const t = flip[i] ? mid(i) : beats[i];
+    const t = shift[i] ? at(i, shift[i]) : beats[i];
     if (!out.length || t - out[out.length - 1] > pSec * 0.6) out.push(t);
   }
   return out;

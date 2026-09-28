@@ -304,9 +304,13 @@ function planOnce(opts) {
       if (k < 2 || Math.abs(bts0[k] - h) > 0.08) continue;
       const a = bts0[k - 2], z = bts0[k];
       if (a < introEnd + barDur * 0.5 || overlapsSpecial(a, z)) continue;
-      const sub = (z - a) / 4 >= 0.2 ? (z - a) / 4 : (z - a) / 2;
+      // jeden der zwei Schläge für sich teilen (halbe Schläge, bei schnellen Songs ganze): die Stücke sitzen genau
+      // auf den Unterteilungen, auch wenn das Raster dort leicht atmet
       const pieces = [];
-      for (let t0 = a; t0 < z - 0.05; t0 += sub) pieces.push({ start: t0, end: Math.min(z, t0 + sub), w: 5, miniRew: true });
+      for (let j = k - 2; j < k; j++) {
+        const b0 = bts0[j], b1 = bts0[j + 1], parts = (b1 - b0) / 2 >= 0.2 ? 2 : 1;
+        for (let q = 0; q < parts; q++) pieces.push({ start: b0 + ((b1 - b0) * q) / parts, end: b0 + ((b1 - b0) * (q + 1)) / parts, w: 5, miniRew: true });
+      }
       insertSegs(a, z, pieces);
       miniAt = { a, z };
       break;
@@ -753,7 +757,7 @@ function planOnce(opts) {
   const userMoved = new Set((overrides.moves || []).flatMap((x) => [x.id, x.before]).filter(Boolean));
   const nUs = usOn ? clips.filter((c) => isUs(byId.get(c.mediaId))).length : 0;
   if (byTime) {
-    const ar = arrangeBlocks(clips, { byId, ov, moved: userMoved, us: usOn });
+    const ar = arrangeBlocks(clips, { byId, ov, moved: userMoved, us: usOn, aspect: outAspect });
     // weiche Szenenübergänge bleiben auf ihren Taktanfängen (musikalische Stelle, nicht die Aufnahme)
     if (ar.moved) {
       dir.notes.push(`Reihenfolge nach Tageszeit: in ${ar.blocks} ${ar.blocks === 1 ? 'Tagesblock' : 'Tagesblöcken'} (Morgen & Mittag bzw. Nachmittag & Abend) ${ar.moved} Aufnahmen so gesetzt, dass${usOn && nUs ? ' ihr die ruhigen Passagen tragt, Natur und Dinge die schnellen,' : ''} Totalen und starke Bilder lange Plätze bekommen, die Bildenergie zur Songstelle passt und nie zwei ähnliche Bilder aufeinander folgen. Die Tage bleiben in ihrer Reihenfolge.`);
@@ -767,6 +771,51 @@ function planOnce(opts) {
   if (!flight && s.cutter !== 'off') {
     const cp = cutterPolish(clips, { an, win, byId, beatDur, ov, us: usOn, blocks: byTime, taps: (overrides.taps || []).map((t) => t - win.start) });
     if (cp.retimed || cp.hero) dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Feinschliff: ${[cp.retimed ? `${cp.retimed} Schnitte um ein bis zwei Beats verschoben, damit Totalen und starke Bilder wirken und Details knapp bleiben` : '', cp.hero ? `${cp.hero}× das stärkste Bild aus der Nähe auf den Einsatz bzw. ans Ende gesetzt` : ''].filter(Boolean).join('; ')}.`);
+  }
+
+  // Mindestlängen nachschleifen: eine schlichte Einstellung in einem ruhigen Teil (Intro, Strophe, Break, Outro) kürzer als
+  // zwei Schläge oder ein Video kürzer als 1,2 s bekommt Zeit von Nachbarn – notfalls über eine Kette schlichter Einstellungen
+  // (jede Grenze rückt um dieselben ganzen Schläge). Keine Aufnahme geht verloren; Abschnittswechsel, Tipps und Stil-Mittel bleiben.
+  if (!flight) {
+    const calmL = (c) => c.label === 'intro' || c.label === 'verse' || c.label === 'break' || c.label === 'outro';
+    const fixedC = (c) => !c || c.burst || c.rush || c.leader || c.pre || c.miniRew || c.reveal || c.grid || c.gridMid || c.split || c.loop || c.flightAnim || c.stack || c.role === 'hook' || c.replay;
+    const tapSet = (overrides.taps || []).map((t) => t - win.start);
+    const bRel = Array.from(an.beats).map((b) => b - win.start);
+    const locked = (t) => tapSet.some((x) => Math.abs(x - t) < 0.05) || clips.some((c) => c.sectionChange && Math.abs(c.start - t) < 0.05);
+    const minOf = (c) => (c.vid ? Math.min(videoSpan(byId.get(c.vid) || {}) || 1.2, Math.max(1.2, beatDur * 2)) : calmL(c) && level < 4 ? beatDur * 2 : beatDur);
+    const beatIdx = (t) => { let k = 0, d = Infinity; bRel.forEach((b, i) => { const x = Math.abs(b - t); if (x < d) { d = x; k = i; } }); return k; };
+    for (let i = 0; i < clips.length; i++) {
+      const c = clips[i];
+      if (fixedC(c) || !(c.vid || calmL(c))) continue;
+      const want = minOf(c) * 0.95;
+      if (c.end - c.start >= want) continue;
+      const beatsNeed = Math.max(1, Math.ceil((want - (c.end - c.start)) / beatDur - 0.05));
+      let done = false;
+      for (const dir of [1, -1]) {
+        // Kette in Richtung dir bis zu einer Einstellung mit genug Reserve
+        const chain = [];
+        for (let k = i + dir; k >= 0 && k < clips.length; k += dir) {
+          const n = clips[k];
+          const edge = dir > 0 ? n.start : n.end;
+          if (fixedC(n) || locked(edge)) break;
+          chain.push(n);
+          if (n.end - n.start - beatsNeed * beatDur >= minOf(n) - 0.02) break;
+          if (chain.length >= 3) { chain.length = 0; break; }
+        }
+        const last = chain[chain.length - 1];
+        if (!last || last.end - last.start - beatsNeed * beatDur < minOf(last) - 0.02) continue;
+        // alle Grenzen zwischen c und last um beatsNeed Schläge verschieben (auf echten Schlägen)
+        const seq = [c, ...chain];
+        for (let q = 0; q < seq.length - 1; q++) {
+          const a = dir > 0 ? seq[q] : seq[q + 1], b = dir > 0 ? seq[q + 1] : seq[q];
+          const bi = beatIdx(a.end) + dir * beatsNeed;
+          if (bi < 0 || bi >= bRel.length) { done = false; break; }
+          a.end = bRel[bi]; b.start = bRel[bi];
+          done = true;
+        }
+        if (done) break;
+      }
+    }
   }
 
   // Übergänge: aus dem Songaufbau und aus dem, was das vorige Bild zeigt
@@ -1045,13 +1094,20 @@ function planOnce(opts) {
         }
         if (cands.length) mo = cands[(ag - 1) % cands.length];
       }
-      prevDir = mo.dir;
+      // (der Nachbar richtet sich weiter nach der ursprünglichen Richtung – er bleibt, wie er war)
+      prevDir = mo0.dir;
       c.motion = mo.m;
       c.dir = mo.dir;
       // Tempo-Rampe im Foto: in einen Drop/Refrain hinein beschleunigen, auf dem Einsatz schwungvoll auslaufen
       const nx = clips[c.i + 1];
       if (nx && nx.sectionChange && !isCalmLabel(nx.label) && isCalmLabel(c.label)) { c.ease = 'in'; mo.m.to.s += 0.035; }
       else if (c.sectionChange && !isCalmLabel(c.label)) c.ease = 'out';
+      // neu gewürfelt: die ursprüngliche Bewegung bleibt Maßstab für den Tempo-Abgleich der Nachbarn
+      if (ag) {
+        const m0 = JSON.parse(JSON.stringify(mo0.m));
+        if (c.ease === 'in') m0.to.s += 0.035;
+        c._m0 = framed ? { from: { s: 0.93, x: 0, y: 0 }, to: { s: 0.93 + Math.min(0.07, 2 * 0.0125 * tempo * 0.75 * visDur), x: 0, y: 0 } } : m0;
+      }
       // (bei „Gefällt mir nicht“ abwechselnd bildfüllend mit Fahrt oder gerahmt mit umgekehrter Richtung)
       if (framed && ag % 2 === 0) {
         // schwebt knapp innerhalb des Rahmens und wächst langsam: nichts vom Bild geht verloren
@@ -1138,14 +1194,14 @@ function planOnce(opts) {
   {
     const plainM = (c) => c && c.motion && !(c.split || c.grid || c.burst || c.rush || c.stack || c.strip || c.miniRew || c.pre || c.reveal || c.revealHit || c.leader || c.flightAnim || c.loop) && media[c.mediaIndex] && media[c.mediaIndex].kind === 'image';
     const sp = clips.map((c) => (plainM(c) ? motionSpeed(c.motion, media[c.mediaIndex], outAspect, Math.max(0.25, c.visEnd - c.visStart)) : null));
+    const sp0 = clips.map((c, i) => (c._m0 && sp[i] != null ? motionSpeed(c._m0, media[c.mediaIndex], outAspect, Math.max(0.25, c.visEnd - c.visStart)) : sp[i]));
     for (let i = 0; i < clips.length; i++) {
       if (sp[i] == null || clips[i].matchCut) continue;
-      // ein neu gewürfeltes Bild („Gefällt mir nicht“) ist kein Maßstab für seine Nachbarn: dort ändert sich sonst nichts
-      const again = (j) => !!(ov[j] && ov[j].again);
-      const nb = [sp[i - 1], sp[i + 1]].filter((v, k) => v != null && !again(i + (k ? 1 : -1)) && !(k === 0 ? clips[i].sectionChange : clips[i + 1] && clips[i + 1].sectionChange));
+      // ein neu gewürfeltes Bild („Gefällt mir nicht“) zählt für seine Nachbarn mit der ursprünglichen Fahrt (sp0): dort ändert sich nichts
+      const nb = [sp0[i - 1], sp0[i + 1]].filter((v, k) => v != null && !(k === 0 ? clips[i].sectionChange : clips[i + 1] && clips[i + 1].sectionChange));
       if (!nb.length) continue;
       const lim = Math.max(...nb) * 1.3;
-      if (sp[i] > lim && lim > 0.002) { scaleMotion(clips[i].motion, lim / sp[i]); sp[i] = lim; }
+      if (sp[i] > lim && lim > 0.002) { scaleMotion(clips[i].motion, lim / sp[i]); sp[i] = lim; if (!clips[i]._m0) sp0[i] = lim; }
     }
     // zweiter Durchgang, Paar für Paar: keine Fahrt mehr als 1,8× so schnell wie die direkt davor oder danach
     // (nur bremsen, nie beschleunigen; nicht über einen Songteil-Wechsel, einen Match-Cut oder ein neu gewürfeltes Bild)
@@ -1154,9 +1210,10 @@ function planOnce(opts) {
         const a = sp[i - 1], b = sp[i];
         if (a == null || b == null || clips[i].sectionChange || clips[i].matchCut || (ov[i] && ov[i].again) || (ov[i - 1] && ov[i - 1].again)) continue;
         if (b > a * 1.8 && a > 0.002) { scaleMotion(clips[i].motion, (a * 1.8) / b); sp[i] = a * 1.8; }
-        else if (a > b * 1.8 && b > 0.002) { scaleMotion(clips[i - 1].motion, (b * 1.8) / a); sp[i - 1] = b * 1.8; }
+        else if (a > b * 1.8 && b > 0.002 && !clips[i - 1].matchCut) { scaleMotion(clips[i - 1].motion, (b * 1.8) / a); sp[i - 1] = b * 1.8; }
       }
     }
+    for (const c of clips) delete c._m0;
   }
   if (loopClip) {
     const c0 = loopTo;
@@ -1561,6 +1618,12 @@ function planOnce(opts) {
   }
   for (const st of overrides.stickers || []) if (st.kind !== 'emoji') overlays.push({ ...st, type: 'sticker', start: st.start != null ? st.start : 0, end: st.end != null ? st.end : D });
 
+  // Lückenlos: winzige Rundungsreste an den Rändern schneller Serien (unter 20 ms) schließen – der Schnitt liegt
+  // auf dem Beginn der nächsten Einstellung (dort sitzt der Schlag)
+  for (let i = 1; i < clips.length; i++) {
+    const a = clips[i - 1], b = clips[i], d = b.start - a.end;
+    if (d !== 0 && Math.abs(d) < 0.02) { a.end = b.start; if (a.visEnd != null) a.visEnd += d; }
+  }
   // Keine Doppelungen: wiederholt sich eine Aufnahme nur, weil sonst Zeit übrig wäre, wird mit längeren Einstellungen neu geplant
   const plain = clips.filter((c) => c.mediaId && !c.pre && !c.leader && !c.reveal && !c.grid && !c.burst && !c.split && !c.strip && !c.stack && !c.miniRew && !c.rush && !c.replay && !c.loop && !c.flightAnim);
   const seen = new Map();

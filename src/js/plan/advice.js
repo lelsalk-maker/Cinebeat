@@ -131,10 +131,12 @@ async function bestCut(opts, n = 8, onProgress) {
   const tried = [];
   for (let k = 0; k < seeds.length; k++) {
     const plan = buildPlan({ ...opts, settings: { ...opts.settings, seed: seeds[k] } });
-    const score = planQuality(plan, opts.media);
-    tried.push({ seed: seeds[k], score });
+    // harte Regeln gegen den Song (Schlag, Drop, Mindestzeiten, Reihenfolge): jede Unstimmigkeit kostet deutlich
+    const audit = opts.an ? planAudit(plan, opts.media, opts.an) : [];
+    const score = planQuality(plan, opts.media) - audit.length * 4;
+    tried.push({ seed: seeds[k], score, audit: audit.length });
     // bei Gleichstand bleibt die bisherige Variante (die aktuelle zuerst)
-    if (!best || score > best.score + 1e-6) { best = { plan, seed: seeds[k], score }; stale = 0; } else stale++;
+    if (!best || score > best.score + 1e-6) { best = { plan, seed: seeds[k], score, audit }; stale = 0; } else stale++;
     if (onProgress) onProgress(k + 1, seeds.length);
     await new Promise((r) => setTimeout(r, 0));
     // bringen drei Varianten nacheinander nichts mehr, ist die beste gefunden (spart Rechenzeit auf dem Handy)
@@ -223,4 +225,94 @@ async function improveHook(opts, onProgress) {
     best = { h, settings: { intro, songStart }, hookId };
   }
   return { from: h0, to: best.h, settings: best.settings, hookId: best.hookId };
+}
+
+/**
+ * Stimmigkeits-Prüfung: harte Regeln, die jeder fertige Schnitt gegenüber dem Song erfüllen muss.
+ * Liefert [{ code, t, msg }] – leer heißt: alles stimmt.
+ */
+function planAudit(plan, media, an) {
+  const out = [];
+  const add = (code, t, msg) => out.push({ code, t: +(+t).toFixed(2), msg });
+  const flags = (c) => ['burst', 'rush', 'leader', 'pre', 'miniRew', 'reveal', 'knock', 'grid', 'stack', 'split', 'vid', 'replay', 'strip', 'gridMid', 'afterGrid', 'loop', 'tap'].filter((k) => c[k]).concat(c.role ? ['role=' + c.role] : []).join(',');
+  const win = plan.win, D = plan.duration, beat = plan.beatDur || an.beatPeriod || 0.5;
+  const rel = (a) => Array.from(a || []).map((x) => x - win.start);
+  const beats = rel(an.beats), bars = rel(an.barStart);
+  const near = (arr, t, tol = 0.035) => arr.some((b) => Math.abs(b - t) < tol);
+  const clips = plan.clips.filter((c) => !c.loop);
+  const fr = formatRule(plan.resolved);
+  // 1. Film lückenlos, nichts ragt über das Ende
+  for (let i = 1; i < clips.length; i++) if (Math.abs(clips[i].start - clips[i - 1].end) > 0.001) add('luecke', clips[i].start, `Lücke/Überlappung ${(clips[i].start - clips[i - 1].end).toFixed(3)} s zwischen Einstellung ${i} (${flags(clips[i - 1])}) und ${i + 1} (${flags(clips[i])})`);
+  if (clips.length && Math.abs(clips[clips.length - 1].end - D) > 0.02) add('ende', D, 'letzte Einstellung endet nicht mit dem Film');
+  // 2. jeder Schnitt auf einem Schlag
+  // bewusst schnelle Serien (Bilderflut, Serie, Rückspulen) schneiden auf Achtel/Sechzehntel des Schlags
+  const sub = [];
+  for (let i = 0; i + 1 < beats.length; i++) for (let q = 1; q < 4; q++) sub.push(beats[i] + ((beats[i + 1] - beats[i]) * q) / 4);
+  const fast = (c) => c.burst || c.rush || c.miniRew || c.leader || c.knock;
+  for (const c of clips) if (c.start > 0.05 && !near(beats, c.start) && !(fast(c) || fast(clips[c.i - 1] || {})) || (c.start > 0.05 && (fast(c) || fast(clips[c.i - 1] || {})) && !near(beats, c.start) && !near(sub, c.start))) add('beat', c.start, `Schnitt neben dem Schlag (Einstellung ${c.i + 1} ${flags(c)} ${c.label})`);
+  // 3. jeder Einsatz eines Refrains/Drops im Film ist ein Schnitt
+  for (const s of an.sections || []) {
+    // wie der Planer: der Einsatz rastet auf den nächsten Schlag (höchstens ein gutes Drittel Schlag daneben)
+    const t0 = s.start - win.start;
+    let t = t0, bd = Infinity;
+    for (const b of beats) { const d = Math.abs(b - t0); if (d < bd) { bd = d; t = b; } }
+    if (bd > beat * 0.35) t = t0;
+    if ((s.label !== 'drop' && s.label !== 'chorus') || t < 0.5 || t > D - 0.5) continue;
+    const prev = (an.sections || []).find((x) => Math.abs(x.end - s.start) < 0.05);
+    if (prev && (prev.label === 'drop' || prev.label === 'chorus')) continue;
+    if (!clips.some((c) => Math.abs(c.start - t) < 0.04)) add('drop', t, 'Einsatz von Refrain/Drop ist kein Schnitt');
+  }
+  // 4. keine Sekundenbruchteile: normale Einstellungen mindestens ein Schlag, in ruhigen Teilen mindestens zwei (außer bewusst dicht)
+  const busyC = (c) => c.burst || c.rush || c.leader || c.pre || c.miniRew || c.reveal || c.knock || c.grid || c.stack || c.split;
+  for (const c of clips) {
+    if (busyC(c) || c.i === clips.length - 1) continue;
+    const len = c.end - c.start;
+    if (len < beat * 0.95) add('kurz', c.start, `Einstellung ${c.i + 1} kürzer als ein Schlag (${len.toFixed(2)} s)`);
+    else if ((c.label === 'intro' || c.label === 'verse' || c.label === 'break' || c.label === 'outro') && len < beat * 1.85 && (plan._m ? plan._m.level < 4 : true) && !(c.tapCut)) add('hektik', c.start, `ruhiger Teil (${c.label}), aber Einstellung ${c.i + 1} nur ${len.toFixed(2)} s ${flags(c)}`);
+  }
+  // 5. Videos: laufen über keinen Drop-Einsatz, lang genug, sinnvolles Tempo
+  const snapB = (t0) => { let t = t0, bd = Infinity; for (const b of beats) { const d = Math.abs(b - t0); if (d < bd) { bd = d; t = b; } } return bd <= beat * 0.35 ? t : t0; };
+  const drops = (an.sections || []).filter((s) => s.label === 'drop' || s.label === 'chorus').map((s) => snapB(s.start - win.start));
+  for (const c of clips) {
+    const m = media[c.mediaIndex];
+    if (!m || m.kind !== 'video' || c.split || c.grid) continue;
+    if (drops.some((t) => t > c.start + 0.05 && t < c.end - 0.05)) add('video-drop', c.start, `Video läuft über einen Drop-Einsatz (Einstellung ${c.i + 1})`);
+    const len = c.end - c.start;
+    if (c.vid && len < Math.min(videoSpan(m) * 0.9, 1.2) - 0.03) add('video-kurz', c.start, `Video nur ${len.toFixed(2)} s`);
+    if (c.rate && (c.rate < 0.34 || c.rate > 2.7)) add('video-tempo', c.start, `Video-Tempo ${c.rate}`);
+  }
+  // 6. Songausschnitt: beginnt auf einer Eins, endet auf einer Eins oder einem Abschnittsende; Länge im Format
+  if (bars.length && !near(bars, 0, 0.06)) add('start', 0, 'Songausschnitt beginnt nicht auf einer Eins');
+  const secEnds = (an.sections || []).map((s) => s.end - win.start);
+  // (am natürlichen Songende – nach der letzten Eins – ist Schluss richtig, auch wenn das Raster dort ausläuft)
+  const songEnd = (an.lastSound != null && win.end >= Math.min(an.duration || Infinity, an.lastSound + 0.2) - 0.05) || (bars.length && D >= bars[bars.length - 1] - 0.1);
+  if (bars.length && !near(bars, D, 0.08) && !near(secEnds, D, 0.08) && !songEnd) add('schluss', D, `Songausschnitt endet mitten im Takt (${(win.start).toFixed(2)}–${win.end.toFixed(2)})`);
+  if (D > fr.max + 0.5) add('laenge', D, `Film ${D.toFixed(1)} s länger als ${fr.max} s (${fr.label})`);
+  // 7. nichts doppelt, nichts vergessen (alle Aufnahmen)
+  const cap = plan.capacity || {};
+  // Wiederholung nur, wenn das Material die gewählte Länge nicht füllen kann (Fotos höchstens 6 s, Videos ganz)
+  const fill = media.filter((m) => !m.bad && !m.excluded).reduce((a, m) => a + (m.kind === 'video' ? videoSpan(m) : 6), 0);
+  if (cap.repeats && fill >= D) add('doppelt', 0, `${cap.repeats}× dieselbe Aufnahme mehrfach, obwohl das Material reicht`);
+  // „Alle Aufnahmen“: fehlen darf nur etwas, wenn die Länge fest gewählt ist und schlicht nicht alles hineinpasst
+  const fixedLen = typeof plan.resolved.length === 'number' || +plan.resolved.length > 0;
+  // (ebenso, wenn der Film schon an der Formatgrenze oder am Songende steht – dann sagt die Notiz, was draußen bleibt)
+  const bar = an.bpm ? 240 / an.bpm : 2;
+  const atLimit = D >= fr.max - bar * 1.6 - 0.05 || songEnd;
+  if (plan.resolved.allMedia !== 'off' && cap.droppedIds && cap.droppedIds.length && !fixedLen && !atLimit) add('fehlt', 0, `${cap.droppedIds.length} Aufnahmen fehlen`);
+  // 8. Reihenfolge: Tagesblöcke nie vertauscht (Vorschau-Einstiege ausgenommen)
+  if (plan.resolved.order !== 'streng') {
+    // Startbild-Einstiege (Aufblende, Countdown, Raster) und Vorschauen zeigen bewusst das stärkste Bild der Reise vorab
+    const seq = clips.filter((c) => !c.rush && !c.pre && !c.reveal && !c.revealHit && !c.leader && !c.knock && !c.grid && c.role !== 'hook' && c.role !== 'rush' && !c.replay && !c.miniRew && media[c.mediaIndex] && media[c.mediaIndex].time).map((c) => media[c.mediaIndex]);
+    // Wiederholungen (zu wenig Material für die gewählte Länge) zählen nicht als Reihenfolge
+    const cnt = new Map();
+    for (const c of plan.clips) cnt.set(c.mediaId, (cnt.get(c.mediaId) || 0) + 1);
+    const seen = new Set([...cnt].filter(([, n]) => n > 1).map(([id]) => id));
+    for (let i = 1; i < seq.length; i++) {
+      seen.add(seq[i - 1].id);
+      if (seen.has(seq[i].id)) continue;
+      const a = dayBlock(seq[i - 1]), b = dayBlock(seq[i]);
+      if (a !== b && seq[i].time < seq[i - 1].time) { add('reihenfolge', i, `Tagesblock ${b} nach ${a} (Position ${i}: ${seq[i - 1].id}→${seq[i].id})`); break; }
+    }
+  }
+  return out;
 }

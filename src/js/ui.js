@@ -1601,7 +1601,7 @@ async function cutFilm(n = 8) {
   $('flowStage').hidden = true;
   engine.t = 0;
   await rebuild({ fresh: true });
-  toast(`Fertig: der beste von ${res.tried.length} geprüften Schnitten.`);
+  toast(`Fertig: der beste von ${res.tried.length} geprüften Schnitten. ${res.audit && res.audit.length ? `${res.audit.length} Stelle${res.audit.length === 1 ? '' : 'n'} weicht vom Song ab.` : 'Stimmig: jeder Schnitt passt zum Song.'}`);
 }
 
 async function showPoster() {

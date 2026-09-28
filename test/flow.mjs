@@ -31,7 +31,8 @@ const res = await p.evaluate(async (b64) => {
   if (adj('m0', 'm8')) fails.push('Doppel nebeneinander');
   if (ids.length !== media.length || new Set(ids).size !== media.length) fails.push('Reihenfolge verliert Bilder');
   // 2. Match-Cuts
-  const plan = buildPlan({ an, media, settings: S0, overrides: { texts: [], stickers: [] } });
+  // (ab Songanfang: im Drop setzt der Zoom-Stoß die meisten Schnitte, Match-Cuts gehören in ruhigere Teile)
+  const plan = buildPlan({ an, media, settings: { ...S0, songStart: 'start' }, overrides: { texts: [], stickers: [] } });
   const mc = plan.clips.filter((c) => c.matchCut);
   let cont = 0;
   for (const c of mc) { const pc = plan.clips[c.i - 1]; if (pc.motion && c.motion && Math.abs(pc.motion.to.s - c.motion.from.s) < 1e-6 && Math.abs(pc.motion.to.x - c.motion.from.x) < 1e-6) cont++; }
