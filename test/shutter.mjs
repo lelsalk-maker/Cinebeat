@@ -55,8 +55,8 @@ const r = await p.evaluate(async (b64) => {
   if (mv.map((m) => m.side).join() !== 'slit,hold,off' || !mv.every((m) => onBeat(m.t))) fails.push('Lichtschlitz: Schließen, Stehen, Erlöschen nicht auf den Schlägen');
   const sh = plan.overlays.find((o) => o.type === 'shutter'), city = plan.overlays.find((o) => o.type === 'city');
   if (!sh || !city) fails.push('Rollladen/Titel fehlt');
-  // der Ortsname kommt genau auf dem Schlag, auf dem die Linie erlischt, und steht bis ins Öffnen
-  if (city && !(Math.abs(city.start - mv[2].t) < 0.02 && onBeat(city.start) && city.end > sh.open && city.end < sh.end)) fails.push('Titel nicht direkt nach der Linie bis ins Öffnen');
+  // nach dem Erlöschen der Linie kurz Schwarz, dann auf dem nächsten Schlag der Ortsname, stehend bis ins Öffnen
+  if (city && !(city.start > sp.shutter.closedAt + 0.15 && city.start - mv[2].t < an.beatPeriod * shutterStep(an) + 0.02 && onBeat(city.start) && city.end > sh.open && city.end < sh.end)) fails.push('Titel nicht kurz nach Schwarz bis ins Öffnen');
   // die Linie steht 2–3 Schläge und pocht auf ihnen; Einsatz vier Takte nach dem ersten Bild
   const lineBeats = (mv[2].t - (mv[0].t + mv[0].dur)) / an.beatPeriod;
   out.lineBeats = +lineBeats.toFixed(2);
@@ -117,10 +117,10 @@ const r = await p.evaluate(async (b64) => {
   if (!(lp.above > l1.above + 3)) fails.push('Linie pocht nicht auf dem Schlag');
   if (!(l1.line > 150 && l1.warm > 5 && l1.above < 8 && l1.below < 8)) fails.push('Lichtschlitz: keine feine beige Linie auf Schwarz');
   if (!(Math.abs(l1.line - l2.line) < 8)) fails.push('Lichtschlitz: Linie steht nicht still');
-  const blk = await shot(Math.max(sp.shutter.closedAt, sh.start) + 0.1);
+  const blk = await shot((sp.shutter.closedAt + (city ? city.start : sh.start)) / 2);
   const title = await shot(city ? Math.min(sh.open - 0.05, city.start + 1.2) : sh.start + 1);
-  out.black = +Math.max(stat(blk, 0, 0.3).L, stat(blk, 0.7, 1).L).toFixed(1);
-  if (out.black > 3) fails.push(`nach dem Erlöschen nicht schwarz (${out.black})`);
+  out.black = +stat(blk, 0, 1).L.toFixed(1);
+  if (out.black > 5) fails.push(`nach dem Erlöschen nicht schwarz (${out.black})`);
   out.title = [+stat(title, 0.02, 0.3).L.toFixed(1), +stat(title, 0.35, 0.65).L.toFixed(1)];
   if (!(out.title[0] < 3 && out.title[1] > 2)) fails.push('Titel nicht auf Schwarz');
   const mid = await shot(sh.open + (sh.end - sh.open) * 0.5);

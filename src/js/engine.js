@@ -373,7 +373,7 @@ class Engine {
   /**
    * Lichtschlitz: Schwarz schiebt sich von oben und unten weich zur Mitte, im letzten Stück glüht der Rest des Bilds
    * zu einer feinen beigen Linie auf (mit weichem Schein). Die Linie steht zwei Schläge und pocht auf jedem, dann
-   * zieht sie sich zur Mitte zusammen und erlischt – genau dort erscheint der Ortsname.
+   * zieht sie sich zur Mitte zusammen und erlischt; kurz Schwarz, dann kommt der Ortsname.
    */
   _drawSlit(ctx, W, y0, bh, sh, t) {
     const [close, , off] = sh.moves;

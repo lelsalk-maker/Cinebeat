@@ -694,7 +694,7 @@ function planOnce(opts) {
       while (all.length && all.length < SHUTTER.tiles.length) all.push(all[all.length % Math.max(1, pick.length)]);
       const ids = all.map((m) => m.id);
       // Lichtschlitz: schließen (1. Zählzeit), Linie steht still (2.), erlischt (3.) – danach Schwarz mit Ortsnamen
-      const u = shutter.u, mvC = Math.min(0.8, u * 0.9), mvO = Math.min(0.3, u * 0.6);
+      const u = shutter.u, mvC = Math.min(0.8, u * 0.9), mvO = Math.min(0.25, u * 0.45);
       const moves = [
         { side: 'slit', t: shutter.pulls[0], dur: mvC },
         { side: 'hold', t: shutter.pulls[1], dur: Math.max(0.05, shutter.pulls[2] - shutter.pulls[1]) },
@@ -1582,13 +1582,13 @@ function planOnce(opts) {
   if (pre && pre.kind === 'shutter' && shutter) {
     const u = shutter.u;
     overlays.push({ type: 'shutter', start: shutter.black - 0.03, open: shutter.open, end: shutter.end + 0.02 });
-    // der Ortsname kommt genau auf dem Schlag, auf dem die Linie zur Mitte erlischt – kein leerer Moment dazwischen
-    if (title) overlays.push({ type: 'city', text: title, sub: subtitle, geo, start: shutter.pulls[2], end: shutter.open + 2.2 * u, cap: shutter.end - 0.3 });
+    // nach dem Erlöschen der Linie kurz ganz Schwarz, dann auf dem nächsten Schlag der Ortsname
+    if (title) overlays.push({ type: 'city', text: title, sub: subtitle, geo, start: shutter.black, end: shutter.open + 2.2 * u, cap: shutter.end - 0.3 });
     // Geräusch: nur der Projektor läuft ganz leise, der Lichtschlitz schließt still
     sfx.push({ kind: 'projector', t: 0, dur: Math.max(0.6, shutter.pulls[0] + 0.25), gain: 0.35 });
     // Musik: läuft von Anfang an unverändert (kein Aufbau im Ton – auf Instagram kommt der Song ohnehin so);
     // der Einstieg lebt allein davon, dass jedes Bild, die Linie und der Ortsname auf den Schlägen sitzen
-    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Kino-Rollladen: ${clips[0].split ? clips[0].split.ids.length : 6} Ausschnitte eurer stärksten Aufnahmen erscheinen nebeneinander im Kinoband, die ersten schnell, das stärkste vorn und gleich in Farbe, die anderen erst schwarzweiß; das Band schließt sich zu einer feinen Lichtlinie, die zwei Schläge lang im Takt pocht und dann zur Mitte erlischt – genau dort erscheint ${title ? `„${title}“` : 'der Ort'}${geo ? ' mit Koordinaten' : ''}; dann öffnet sich das Bild flüssig nach oben und unten. Alles sitzt auf den Schlägen des Songs, der von Anfang an voll läuft; der Einsatz kommt vier Takte nach dem ersten Bild (${fmtMS(shutter.end)}).`);
+    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Kino-Rollladen: ${clips[0].split ? clips[0].split.ids.length : 6} Ausschnitte eurer stärksten Aufnahmen erscheinen nebeneinander im Kinoband, die ersten schnell, das stärkste vorn und gleich in Farbe, die anderen erst schwarzweiß; das Band schließt sich zu einer feinen Lichtlinie, die zwei Schläge lang im Takt pocht und dann zur Mitte erlischt; nach einem Moment Schwarz erscheint auf dem nächsten Schlag ${title ? `„${title}“` : 'der Ort'}${geo ? ' mit Koordinaten' : ''}; dann öffnet sich das Bild flüssig nach oben und unten. Alles sitzt auf den Schlägen des Songs, der von Anfang an voll läuft; der Einsatz kommt vier Takte nach dem ersten Bild (${fmtMS(shutter.end)}).`);
   }
   if (pre && pre.kind === 'countdown') dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, 'Vorspann Countdown: 3 · 2 · 1 wie im alten Kino, danach beginnt dein Einstieg.');
 
