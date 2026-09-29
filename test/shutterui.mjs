@@ -28,7 +28,8 @@ const info = await page.evaluate(() => {
 });
 console.log(JSON.stringify(info));
 if (info.setting !== 'shutter' || info.intro !== 'shutter') fails.push('Einstieg nicht übernommen');
-if (!info.wall || !info.sfx || !info.env) fails.push('Wand/Geräusche/Song-Aufbau fehlen');
+// der Song läuft unverändert von Anfang an (kein Aufbau im Ton, wie mit der Instagram-Musik)
+if (!info.wall || !info.sfx || info.env) fails.push('Wand/Geräusche fehlen oder Song mit Aufbau');
 if (!info.preLocked) fails.push('Vorspann nicht gesperrt');
 if (!/Kino-Rollladen/.test(info.regie) || !info.notes) fails.push('Regie nennt den Einstieg nicht');
 // Vorschau: ein paar Sekunden abspielen (Projektor, erster Zug)

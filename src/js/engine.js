@@ -298,7 +298,7 @@ class Engine {
    * Kino-Auftakt: im Band in der Bildmitte erscheinen sechs schmale Ausschnitte nebeneinander – die ersten schnell –,
    * jeder setzt mit einem Zoom ein und fährt danach sichtbar weiter (abwechselnd auf und ab). Das stärkste Bild steht
    * vorn und ist sofort farbig, die übrigen sind erst schwarzweiß, dann fließt die Farbe hinein. Danach schließt sich das
-   * Band zum Lichtschlitz: eine feine Linie, die kurz steht und dann erlischt.
+   * Band zum Lichtschlitz: eine feine Linie, die zwei Schläge im Takt pocht und dann erlischt.
    */
   composeWall(s, t) {
     const c = s.clip, sp = c.split, cv = s.canvas;
@@ -365,15 +365,15 @@ class Engine {
     ctx.fillStyle = '#000';
     ctx.fillRect(0, y0, W, bh);
     ctx.globalAlpha = 1;
-    // Lichtschlitz: das Band schließt sich zur Mitte zu einer feinen Lichtlinie, die kurz steht und dann erlischt
+    // Lichtschlitz: das Band schließt sich zur Mitte zu einer feinen Lichtlinie, die zwei Schläge pocht und dann erlischt
     this._drawSlit(ctx, W, y0, bh, sp.shutter, t);
     this.r.upload(s.tex, cv);
   }
 
   /**
    * Lichtschlitz: Schwarz schiebt sich von oben und unten weich zur Mitte, im letzten Stück glüht der Rest des Bilds
-   * zu einer feinen beigen Linie auf (mit weichem Schein). Die Linie steht kurz still, dann zieht sie sich zur Mitte
-   * zusammen und erlischt – danach ist alles schwarz.
+   * zu einer feinen beigen Linie auf (mit weichem Schein). Die Linie steht zwei Schläge und pocht auf jedem, dann
+   * zieht sie sich zur Mitte zusammen und erlischt – genau dort erscheint der Ortsname.
    */
   _drawSlit(ctx, W, y0, bh, sh, t) {
     const [close, , off] = sh.moves;
@@ -398,8 +398,12 @@ class Engine {
     ctx.fillStyle = '#000';
     ctx.fillRect(0, top - 1, W, hOpen + 2);
     ctx.globalAlpha = 1;
-    const a = glow * (1 - 0.5 * q(v)), ha = a * (1 - v) * (1 - v);
-    const halo = lineH * 6;
+    // Cliffhanger im Takt: auf jedem Schlag pocht die Linie kurz (heller Schein, einen Hauch dicker), dann ruhig
+    let beat = 0;
+    for (const b of sh.beats || []) { const d = t - b; if (d >= 0 && d < 0.3) beat = Math.max(beat, Math.exp(-d / 0.07)); }
+    const a = glow * (1 - 0.5 * q(v)), ha = a * (1 - v) * (1 - v) * (1 + 1.6 * beat);
+    const halo = lineH * (6 + 5 * beat);
+    if (beat > 0.02 && v <= 0) { const grow = Math.round(lineH * 0.6 * beat); ctx.fillStyle = '#000'; ctx.fillRect(0, top - grow - 1, W, hOpen + 2 * grow + 2); }
     const gU = ctx.createLinearGradient(0, cy - halo, 0, cy);
     gU.addColorStop(0, 'rgba(236,214,178,0)');
     gU.addColorStop(1, `rgba(236,214,178,${0.28 * ha})`);
@@ -412,7 +416,8 @@ class Engine {
     ctx.fillRect(x0, cy, w, halo);
     ctx.globalAlpha = a;
     ctx.fillStyle = '#f4dfbb';
-    ctx.fillRect(x0, top, w, hOpen);
+    const gr = v <= 0 ? Math.round(lineH * 0.6 * beat) : 0;
+    ctx.fillRect(x0, top - gr, w, hOpen + 2 * gr);
     ctx.globalAlpha = 1;
   }
 

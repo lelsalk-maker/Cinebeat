@@ -1,6 +1,6 @@
 // Kino-Rollladen: sechs Ausschnitte der stärksten Aufnahmen nebeneinander im Kinoband (die ersten schnell, das stärkste
 // vorn und farbig, die übrigen erst schwarzweiß), Lichtschlitz (Band schließt zur Linie, Linie steht, erlischt), Schwarz mit Ortstitel,
-// dann öffnet sich das Bild flüssig; die Musik klingt gedämpft wie hinter dem Vorhang und öffnet sich zum Einsatz.
+// dann öffnet sich das Bild flüssig; alles auf den Schlägen, der Song läuft von Anfang an unverändert.
 // Geprüft wird der Plan, das gerenderte Bild (Pixel) und der Ton (Pegel je Abschnitt).
 import { chromium } from '/opt/node22/lib/node_modules/playwright/index.mjs';
 import { makeStructuredSong } from './wav.mjs';
@@ -55,7 +55,13 @@ const r = await p.evaluate(async (b64) => {
   if (mv.map((m) => m.side).join() !== 'slit,hold,off' || !mv.every((m) => onBeat(m.t))) fails.push('Lichtschlitz: Schließen, Stehen, Erlöschen nicht auf den Schlägen');
   const sh = plan.overlays.find((o) => o.type === 'shutter'), city = plan.overlays.find((o) => o.type === 'city');
   if (!sh || !city) fails.push('Rollladen/Titel fehlt');
-  if (city && !(city.start >= sp.shutter.closedAt && city.end > sh.open && city.end < sh.end)) fails.push('Titel nicht auf Schwarz bis ins Öffnen');
+  // der Ortsname kommt genau auf dem Schlag, auf dem die Linie erlischt, und steht bis ins Öffnen
+  if (city && !(Math.abs(city.start - mv[2].t) < 0.02 && onBeat(city.start) && city.end > sh.open && city.end < sh.end)) fails.push('Titel nicht direkt nach der Linie bis ins Öffnen');
+  // die Linie steht 2–3 Schläge und pocht auf ihnen; Einsatz vier Takte nach dem ersten Bild
+  const lineBeats = (mv[2].t - (mv[0].t + mv[0].dur)) / an.beatPeriod;
+  out.lineBeats = +lineBeats.toFixed(2);
+  if (!(lineBeats >= 1.8 && lineBeats <= 3.2) || !(sp.shutter.beats || []).every(onBeat) || (sp.shutter.beats || []).length < 2) fails.push('Linie nicht 2–3 Schläge im Takt');
+  if (!(sh.end / (an.beatPeriod * shutterStep(an)) < 16.2)) fails.push('Einstieg zu lang: ' + sh.end.toFixed(2));
   const pulls = plan.sfx.filter((x) => x.kind === 'pull');
   if (pulls.length || !plan.sfx.some((x) => x.kind === 'projector')) fails.push('Rollladen soll still schließen');
   // Ortsname: nach dem Ausschreiben lange genug lesbar
@@ -84,7 +90,7 @@ const r = await p.evaluate(async (b64) => {
   const stat = (d, y0, y1, x0 = 0, x1 = 1) => { let L = 0, C = 0, n = 0; for (let y = Math.floor(y0 * H); y < Math.floor(y1 * H); y += 2) for (let x = Math.floor(x0 * W); x < Math.floor(x1 * W); x += 2) { const i = (y * W + x) * 4, r = d[i], g = d[i + 1], bb = d[i + 2]; L += (r + g + bb) / 3; C += Math.max(r, g, bb) - Math.min(r, g, bb); n++; } return { L: L / n, C: C / n }; };
   // Kinoband: 2,39 : 1 in der Mitte
   const bh = Math.min(H * 0.9, W / 2.39) / H, b0 = (1 - bh) / 2, b1 = b0 + bh;
-  const bw = await shot(Math.min(sp.reveal[5] + 0.35, sp.colorAt - 0.03)), col = await shot(sp.colorAt + 0.9);
+  const bw = await shot(Math.min(sp.reveal[5] + 0.35, sp.colorAt - 0.03)), col = await shot(sp.colorAt + Math.min(0.9, (mv[0].t - sp.colorAt) * 0.8));
   const sFirst = stat(bw, b0 + 0.01, b1 - 0.01, 0.01, 0.15), sBw = stat(bw, b0 + 0.01, b1 - 0.01, 0.2, 0.99), sCol = stat(col, b0 + 0.01, b1 - 0.01, 0.2, 0.99);
   const outside = stat(bw, 0, b0 - 0.02).L + stat(bw, b1 + 0.02, 1).L;
   out.bw = sBw; out.col = sCol; out.first = sFirst; out.outside = +outside.toFixed(1);
@@ -105,13 +111,15 @@ const r = await p.evaluate(async (b64) => {
     for (let y = mid - 3; y <= mid + 3; y++) { let L = 0, rb = 0, n = 0; for (let x = Math.floor(W * 0.3); x < Math.floor(W * 0.7); x++) { const i = (y * W + x) * 4; L += (d[i] + d[i + 1] + d[i + 2]) / 3; rb += d[i] - d[i + 2]; n++; } if (L / n > best) { best = L / n; warm = rb / n; } }
     return { line: +best.toFixed(1), warm: +warm.toFixed(1), above: +stat(d, b0 + 0.005, b0 + bh * 0.4).L.toFixed(1), below: +stat(d, b1 - bh * 0.4, b1 - 0.005).L.toFixed(1) };
   };
-  const l1 = await lineAt(mv[0].t + mv[0].dur + 0.05), l2 = await lineAt(mv[2].t - 0.06);
-  out.slit = [l1, l2];
+  const bts = sp.shutter.beats;
+  const l1 = await lineAt(bts[0] + 0.3), l2 = await lineAt(mv[2].t - 0.06), lp = await lineAt(bts[1] + 0.02);
+  out.slit = [l1, l2, lp];
+  if (!(lp.above > l1.above + 3)) fails.push('Linie pocht nicht auf dem Schlag');
   if (!(l1.line > 150 && l1.warm > 5 && l1.above < 8 && l1.below < 8)) fails.push('Lichtschlitz: keine feine beige Linie auf Schwarz');
   if (!(Math.abs(l1.line - l2.line) < 8)) fails.push('Lichtschlitz: Linie steht nicht still');
-  const blk = await shot(sp.shutter.closedAt + 0.4);
+  const blk = await shot(Math.max(sp.shutter.closedAt, sh.start) + 0.1);
   const title = await shot(city ? Math.min(sh.open - 0.05, city.start + 1.2) : sh.start + 1);
-  out.black = +stat(blk, 0, 1).L.toFixed(1);
+  out.black = +Math.max(stat(blk, 0, 0.3).L, stat(blk, 0.7, 1).L).toFixed(1);
   if (out.black > 3) fails.push(`nach dem Erlöschen nicht schwarz (${out.black})`);
   out.title = [+stat(title, 0.02, 0.3).L.toFixed(1), +stat(title, 0.35, 0.65).L.toFixed(1)];
   if (!(out.title[0] < 3 && out.title[1] > 2)) fails.push('Titel nicht auf Schwarz');
@@ -122,7 +130,7 @@ const r = await p.evaluate(async (b64) => {
   out.after = [+stat(after, 0.0, 0.1).L.toFixed(1), +stat(after, 0.9, 1).L.toFixed(1)];
   if (!(out.after[0] > 15 && out.after[1] > 15)) fails.push('nach dem Einsatz nicht ganz offen');
 
-  // Ton: still bis zum Öffnen (nur Geräusche), Züge hörbar, Song baut auf, auf dem Einsatz voll
+  // Ton: der Song läuft von Anfang an unverändert, auf dem Einsatz voll
   const au = await eng._renderAudio(22050, true);
   const ch = au.getChannelData(0), sr = au.sampleRate;
   const rms = (a, z) => { let s = 0, n = 0; for (let i = Math.floor(a * sr); i < Math.floor(z * sr); i++) { s += ch[i] * ch[i]; n++; } return Math.sqrt(s / Math.max(1, n)); };
@@ -138,11 +146,10 @@ const r = await p.evaluate(async (b64) => {
   const auNo = await eng._renderAudio(22050, true);
   eng.plan = plan;
   out.audio = { wall: +rms(...wallT).toFixed(4), pull: +rms(mv[0].t, mv[0].t + mv[0].dur).toFixed(4), title: +rms(sp.shutter.closedAt + 0.5 * u, sh.open - 0.05).toFixed(4), rise: +rms(sh.open + 2 * u, sh.open + 3 * u).toFixed(4), full: +rms(...fullT).toFixed(4), muffle: +(hp(auF, ...wallT) / Math.max(1e-9, hp(auNo, ...wallT))).toFixed(3) };
+  // Song von Anfang an unverändert (wie mit der Instagram-Musik): kein Dämpfen, kein Lautstärke-Aufbau
+  if (plan.win.env || plan.win.lp) fails.push('Song hat einen Aufbau im Ton');
   if (!(out.audio.wall > out.audio.full * 0.12)) fails.push('Musik trägt am Anfang nicht');
-  if (!(out.audio.wall < out.audio.full * 0.7)) fails.push('Musik am Anfang zu laut');
-  if (!(out.audio.muffle < 0.35)) fails.push('Musik am Anfang nicht gedämpft');
-  if (!(out.audio.title < out.audio.full * 0.12)) fails.push('zum Titel nicht leise');
-  if (!(out.audio.rise > out.audio.title && out.audio.rise < out.audio.full * 0.7)) fails.push('Song baut sich nicht auf');
+  if (!(out.audio.muffle > 0.95)) fails.push('Musik am Anfang gedämpft');
   if (!(out.audio.full > 0.05)) fails.push('Song auf dem Einsatz nicht voll');
   // gleiches Ergebnis bei jedem Export (fester Zufall)
   const au2 = await eng._renderAudio(22050, true);

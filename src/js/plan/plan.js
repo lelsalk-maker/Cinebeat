@@ -95,7 +95,7 @@ function planOnce(opts) {
     const st = shutterStep(an), u = beatDur * st;
     // Zeit einer (auch halben) Zählzeit auf dem Beat-Raster
     const at = (x) => { const k = x * st, k0 = Math.floor(k + 1e-6), f = k - k0; return f > 1e-6 ? atB(k0) + (atB(k0 + 1) - atB(k0)) * f : atB(k0); };
-    shutter = { u, reveal: SHUTTER.tiles.map((x, k) => (k === 0 ? 0 : at(x))), colorAt: at(SHUTTER.color), pulls: SHUTTER.pulls.map(at), black: at(SHUTTER.black), open: at(SHUTTER.open), end: at(SHUTTER.end) };
+    shutter = { u, reveal: SHUTTER.tiles.map((x, k) => (k === 0 ? 0 : at(x))), colorAt: at(SHUTTER.color), pulls: SHUTTER.pulls.map(at), beats: SHUTTER.beats.map(at), black: at(SHUTTER.black), open: at(SHUTTER.open), end: at(SHUTTER.end) };
     if (shutter.end > D - Math.max(3, barDur * 2)) shutter = null;
     else pre = { kind: 'shutter', beats: SHUTTER.black * st, end: shutter.black, pieces: [{ start: 0, end: shutter.black, f: { pre: 'wall' } }] };
   }
@@ -694,14 +694,14 @@ function planOnce(opts) {
       while (all.length && all.length < SHUTTER.tiles.length) all.push(all[all.length % Math.max(1, pick.length)]);
       const ids = all.map((m) => m.id);
       // Lichtschlitz: schließen (1. Zählzeit), Linie steht still (2.), erlischt (3.) – danach Schwarz mit Ortsnamen
-      const u = shutter.u, mvC = Math.min(0.85, u * 1.1), mvO = Math.min(0.5, u * 0.7);
+      const u = shutter.u, mvC = Math.min(0.8, u * 0.9), mvO = Math.min(0.3, u * 0.6);
       const moves = [
         { side: 'slit', t: shutter.pulls[0], dur: mvC },
         { side: 'hold', t: shutter.pulls[1], dur: Math.max(0.05, shutter.pulls[2] - shutter.pulls[1]) },
         { side: 'off', t: shutter.pulls[2], dur: mvO },
       ];
       const c = clips[0];
-      c.split = { ids, orient: 'wall', reveal: shutter.reveal.slice(0, ids.length), colorAt: shutter.colorAt, colorFirst: true, shutter: { moves, closedAt: shutter.pulls[2] + mvO } };
+      c.split = { ids, orient: 'wall', reveal: shutter.reveal.slice(0, ids.length), colorAt: shutter.colorAt, colorFirst: true, shutter: { moves, beats: shutter.beats, closedAt: shutter.pulls[2] + mvO } };
       c.mediaId = ids[0];
       c.role = 'wall';
       shutter.moves = moves;
@@ -1582,19 +1582,13 @@ function planOnce(opts) {
   if (pre && pre.kind === 'shutter' && shutter) {
     const u = shutter.u;
     overlays.push({ type: 'shutter', start: shutter.black - 0.03, open: shutter.open, end: shutter.end + 0.02 });
-    if (title) overlays.push({ type: 'city', text: title, sub: subtitle, geo, start: shutter.black + Math.min(0.25, u * 0.4), end: shutter.open + 2.2 * u, cap: shutter.end - 0.3 });
+    // der Ortsname kommt genau auf dem Schlag, auf dem die Linie zur Mitte erlischt – kein leerer Moment dazwischen
+    if (title) overlays.push({ type: 'city', text: title, sub: subtitle, geo, start: shutter.pulls[2], end: shutter.open + 2.2 * u, cap: shutter.end - 0.3 });
     // Geräusch: nur der Projektor läuft ganz leise, der Lichtschlitz schließt still
     sfx.push({ kind: 'projector', t: 0, dur: Math.max(0.6, shutter.pulls[0] + 0.25), gain: 0.35 });
-    // Musik wie aus dem Kinosaal hinter dem Vorhang: vom ersten Bild an da (gedämpft, halb laut), der Lichtschlitz
-    // macht sie dumpfer und leiser, zum Titel bleibt nur ein leises Grollen; beim Öffnen gehen Filter und
-    // Lautstärke gemeinsam auf – auf dem Einsatz steht der Song voll und klar
-    const M = shutter.moves || [];
-    const e = (k) => (M[k] ? M[k].t + M[k].dur : shutter.black);
-    const t0 = (k) => (M[k] ? M[k].t : shutter.black);
-    // Schließen zum Lichtschlitz macht sie dumpfer, solange die Linie steht bleibt es so, mit dem Erlöschen fast still
-    songEnv = [[0, 0], [Math.min(0.12, u * 0.25), 0.5], [t0(0), 0.5], [e(0), 0.3], [t0(2), 0.3], [e(2), 0.1], [shutter.black + u * 0.5, 0.05], [shutter.open, 0.05], [shutter.end, 1, 'in']];
-    songLp = [[0, 1100], [t0(0), 1100], [e(0), 600], [t0(2), 600], [e(2), 260], [shutter.open, 260], [shutter.end, 18000, 'exp']];
-    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Kino-Rollladen: ${clips[0].split ? clips[0].split.ids.length : 6} Ausschnitte eurer stärksten Aufnahmen erscheinen nebeneinander im Kinoband, die ersten schnell, das stärkste vorn und gleich in Farbe, die anderen erst schwarzweiß; das Band schließt sich zu einer feinen Lichtlinie, die kurz stillsteht und dann erlischt; auf Schwarz erscheint ${title ? `„${title}“` : 'der Ort'}${geo ? ' mit Koordinaten' : ''}; dann öffnet sich das Bild flüssig nach oben und unten. Die Musik klingt von Anfang an gedämpft wie hinter dem Vorhang, wird mit dem Lichtschlitz dumpfer und öffnet sich mit dem Bild – voll und klar auf dem Einsatz bei ${fmtMS(shutter.end)}.`);
+    // Musik: läuft von Anfang an unverändert (kein Aufbau im Ton – auf Instagram kommt der Song ohnehin so);
+    // der Einstieg lebt allein davon, dass jedes Bild, die Linie und der Ortsname auf den Schlägen sitzen
+    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Kino-Rollladen: ${clips[0].split ? clips[0].split.ids.length : 6} Ausschnitte eurer stärksten Aufnahmen erscheinen nebeneinander im Kinoband, die ersten schnell, das stärkste vorn und gleich in Farbe, die anderen erst schwarzweiß; das Band schließt sich zu einer feinen Lichtlinie, die zwei Schläge lang im Takt pocht und dann zur Mitte erlischt – genau dort erscheint ${title ? `„${title}“` : 'der Ort'}${geo ? ' mit Koordinaten' : ''}; dann öffnet sich das Bild flüssig nach oben und unten. Alles sitzt auf den Schlägen des Songs, der von Anfang an voll läuft; der Einsatz kommt vier Takte nach dem ersten Bild (${fmtMS(shutter.end)}).`);
   }
   if (pre && pre.kind === 'countdown') dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, 'Vorspann Countdown: 3 · 2 · 1 wie im alten Kino, danach beginnt dein Einstieg.');
 
