@@ -3276,7 +3276,7 @@ function bandRect(format, frame) {
 /** Länge des Aufblende-Einstiegs in Beats: zwei Takte, bei sehr langsamen Songs einer (Aufbau 3–5 s). */
 /**
  * Kino-Rollladen: Ablauf in Zähleinheiten (ein Schlag, bei schnellen Songs zwei). Sechs Ausschnitte erscheinen im
- * Kinoband gleichmäßig im halben Takt (0–2,5), Farbe fließt hinein (3,5), der Rollladen zieht dreimal (5, 6, 7),
+ * Kinoband gleichmäßig im halben Takt (0–2,5), Farbe fließt hinein (3,5), das Band schließt zum Lichtschlitz (5), die Linie steht (6) und erlischt (7),
  * Schwarz mit Ortstitel (8–11), dann öffnet sich das Bild flüssig bis zum Einsatz (20 = Refrain/Drop).
  */
 const SHUTTER = { tiles: [0, 0.5, 1, 1.5, 2, 2.5], color: 3.5, pulls: [5, 6, 7], black: 8, open: 11, end: 20 };
@@ -4421,7 +4421,7 @@ function planOnce(opts) {
     marks.forEach((t0, i) => pieces.push({ start: t0, end: i + 1 < marks.length ? marks[i + 1] : end, f: { pre: 'rew' } }));
     pre = { kind: 'rewind', beats: 4 * bStep, end, teaseEnd, pieces };
   }
-  // Kino-Rollladen: sechs Ausschnitte der stärksten Aufnahmen im Kinoband, drei Züge, Schwarz mit Ortstitel, dann öffnet sich das Bild
+  // Kino-Rollladen: sechs Ausschnitte der stärksten Aufnahmen im Kinoband, Lichtschlitz, Schwarz mit Ortstitel, dann öffnet sich das Bild
   let shutter = null;
   if (intro === 'shutter' && !flight) {
     const st = shutterStep(an), u = beatDur * st;
@@ -5025,14 +5025,15 @@ function planOnce(opts) {
       const all = pick.length ? pick : (first ? [first] : []);
       while (all.length && all.length < SHUTTER.tiles.length) all.push(all[all.length % Math.max(1, pick.length)]);
       const ids = all.map((m) => m.id);
-      const u = shutter.u, mv = Math.min(0.62, u * 0.82);
+      // Lichtschlitz: schließen (1. Zählzeit), Linie steht still (2.), erlischt (3.) – danach Schwarz mit Ortsnamen
+      const u = shutter.u, mvC = Math.min(0.85, u * 1.1), mvO = Math.min(0.5, u * 0.7);
       const moves = [
-        { side: 'bottom', t: shutter.pulls[0], dur: mv, from: 0, to: 1 / 3 },
-        { side: 'top', t: shutter.pulls[1], dur: mv, from: 0, to: 1 / 3 },
-        { side: 'bottom', t: shutter.pulls[2], dur: mv * 1.1, from: 1 / 3, to: 2 / 3 + 0.004 },
+        { side: 'slit', t: shutter.pulls[0], dur: mvC },
+        { side: 'hold', t: shutter.pulls[1], dur: Math.max(0.05, shutter.pulls[2] - shutter.pulls[1]) },
+        { side: 'off', t: shutter.pulls[2], dur: mvO },
       ];
       const c = clips[0];
-      c.split = { ids, orient: 'wall', reveal: shutter.reveal.slice(0, ids.length), colorAt: shutter.colorAt, colorFirst: true, shutter: { moves, closedAt: shutter.pulls[2] + mv * 1.1 } };
+      c.split = { ids, orient: 'wall', reveal: shutter.reveal.slice(0, ids.length), colorAt: shutter.colorAt, colorFirst: true, shutter: { moves, closedAt: shutter.pulls[2] + mvO } };
       c.mediaId = ids[0];
       c.role = 'wall';
       shutter.moves = moves;
@@ -5914,18 +5915,18 @@ function planOnce(opts) {
     const u = shutter.u;
     overlays.push({ type: 'shutter', start: shutter.black - 0.03, open: shutter.open, end: shutter.end + 0.02 });
     if (title) overlays.push({ type: 'city', text: title, sub: subtitle, geo, start: shutter.black + Math.min(0.25, u * 0.4), end: shutter.open + 2.2 * u, cap: shutter.end - 0.3 });
-    // Geräusche: leise läuft der Projektor, dann drei Züge am Rollladen (der letzte schließt schwer)
-    // (kein Zieh-Geräusch mehr: der Rollladen schließt still, nur der Projektor läuft ganz leise)
+    // Geräusch: nur der Projektor läuft ganz leise, der Lichtschlitz schließt still
     sfx.push({ kind: 'projector', t: 0, dur: Math.max(0.6, shutter.pulls[0] + 0.25), gain: 0.35 });
-    // Musik wie aus dem Kinosaal hinter dem Vorhang: vom ersten Bild an da (gedämpft, halb laut), jeder Zug am
-    // Rollladen macht sie dumpfer und leiser, zum Titel bleibt nur ein leises Grollen; beim Öffnen gehen Filter und
+    // Musik wie aus dem Kinosaal hinter dem Vorhang: vom ersten Bild an da (gedämpft, halb laut), der Lichtschlitz
+    // macht sie dumpfer und leiser, zum Titel bleibt nur ein leises Grollen; beim Öffnen gehen Filter und
     // Lautstärke gemeinsam auf – auf dem Einsatz steht der Song voll und klar
     const M = shutter.moves || [];
     const e = (k) => (M[k] ? M[k].t + M[k].dur : shutter.black);
     const t0 = (k) => (M[k] ? M[k].t : shutter.black);
-    songEnv = [[0, 0], [Math.min(0.12, u * 0.25), 0.5], [t0(0), 0.5], [e(0), 0.38], [t0(1), 0.38], [e(1), 0.26], [t0(2), 0.26], [e(2), 0.1], [shutter.black + u * 0.5, 0.05], [shutter.open, 0.05], [shutter.end, 1, 'in']];
-    songLp = [[0, 1100], [t0(0), 1100], [e(0), 750], [t0(1), 750], [e(1), 480], [t0(2), 480], [e(2), 260], [shutter.open, 260], [shutter.end, 18000, 'exp']];
-    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Kino-Rollladen: ${clips[0].split ? clips[0].split.ids.length : 6} Ausschnitte eurer stärksten Aufnahmen erscheinen nebeneinander im Kinoband, die ersten schnell, das stärkste vorn und gleich in Farbe, die anderen erst schwarzweiß; der Rollladen schließt still in drei Zügen (unten, oben, ganz), auf Schwarz erscheint ${title ? `„${title}“` : 'der Ort'}${geo ? ' mit Koordinaten' : ''}; dann öffnet sich das Bild flüssig nach oben und unten. Die Musik klingt von Anfang an gedämpft wie hinter dem Vorhang, wird mit jedem Zug dumpfer und öffnet sich mit dem Bild – voll und klar auf dem Einsatz bei ${fmtMS(shutter.end)}.`);
+    // Schließen zum Lichtschlitz macht sie dumpfer, solange die Linie steht bleibt es so, mit dem Erlöschen fast still
+    songEnv = [[0, 0], [Math.min(0.12, u * 0.25), 0.5], [t0(0), 0.5], [e(0), 0.3], [t0(2), 0.3], [e(2), 0.1], [shutter.black + u * 0.5, 0.05], [shutter.open, 0.05], [shutter.end, 1, 'in']];
+    songLp = [[0, 1100], [t0(0), 1100], [e(0), 600], [t0(2), 600], [e(2), 260], [shutter.open, 260], [shutter.end, 18000, 'exp']];
+    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Kino-Rollladen: ${clips[0].split ? clips[0].split.ids.length : 6} Ausschnitte eurer stärksten Aufnahmen erscheinen nebeneinander im Kinoband, die ersten schnell, das stärkste vorn und gleich in Farbe, die anderen erst schwarzweiß; das Band schließt sich zu einer feinen Lichtlinie, die kurz stillsteht und dann erlischt; auf Schwarz erscheint ${title ? `„${title}“` : 'der Ort'}${geo ? ' mit Koordinaten' : ''}; dann öffnet sich das Bild flüssig nach oben und unten. Die Musik klingt von Anfang an gedämpft wie hinter dem Vorhang, wird mit dem Lichtschlitz dumpfer und öffnet sich mit dem Bild – voll und klar auf dem Einsatz bei ${fmtMS(shutter.end)}.`);
   }
   if (pre && pre.kind === 'countdown') dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, 'Vorspann Countdown: 3 · 2 · 1 wie im alten Kino, danach beginnt dein Einstieg.');
 
@@ -10314,8 +10315,8 @@ class Engine {
   /**
    * Kino-Auftakt: im Band in der Bildmitte erscheinen sechs schmale Ausschnitte nebeneinander – die ersten schnell –,
    * jeder setzt mit einem Zoom ein und fährt danach sichtbar weiter (abwechselnd auf und ab). Das stärkste Bild steht
-   * vorn und ist sofort farbig, die übrigen sind erst schwarzweiß, dann fließt die Farbe hinein. Danach schließt ein
-   * Rollladen das Band in drei Zügen: unten, oben, ganz.
+   * vorn und ist sofort farbig, die übrigen sind erst schwarzweiß, dann fließt die Farbe hinein. Danach schließt sich das
+   * Band zum Lichtschlitz: eine feine Linie, die kurz steht und dann erlischt.
    */
   composeWall(s, t) {
     const c = s.clip, sp = c.split, cv = s.canvas;
@@ -10382,50 +10383,54 @@ class Engine {
     ctx.fillStyle = '#000';
     ctx.fillRect(0, y0, W, bh);
     ctx.globalAlpha = 1;
-    // Rollladen im Band: unten und oben je ein Behang aus Lamellen
-    const hb = this._shutterPos(sp.shutter, t, 'bottom') * bh, ht = this._shutterPos(sp.shutter, t, 'top') * bh;
-    const seams = 1 - clamp01((t - sp.shutter.closedAt) / 0.35);
-    const slat = Math.max(5, bh / 9);
-    if (hb > 0.5) this._drawSlats(ctx, W, y0 + bh - hb, hb, 'bottom', seams, slat);
-    if (ht > 0.5) this._drawSlats(ctx, W, y0, ht, 'top', seams, slat);
+    // Lichtschlitz: das Band schließt sich zur Mitte zu einer feinen Lichtlinie, die kurz steht und dann erlischt
+    this._drawSlit(ctx, W, y0, bh, sp.shutter, t);
     this.r.upload(s.tex, cv);
   }
 
-  /** Höhe eines Behangs (Anteil am Band) zur Zeit t: jeder Zug gleitet weich an und setzt sanft auf. */
-  _shutterPos(sh, t, side) {
-    let h = 0;
-    for (const m of sh.moves) {
-      if (m.side !== side) continue;
-      const u = clamp01((t - m.t) / m.dur);
-      if (u <= 0) continue;
-      // weich anfahren, gleiten, weich aufsetzen (ohne Nachfedern, ohne Stufen)
-      const e = u * u * u * (u * (6 * u - 15) + 10);
-      h = m.from + (m.to - m.from) * e;
-    }
-    return Math.max(0, Math.min(1, h));
-  }
-
   /**
-   * Rollladen-Behang als geschlossene, tiefschwarze Fläche (keine Lamellen, keine Fugen): nur eine feine Endleiste
-   * mit einem Hauch Licht und ein weicher Schatten, den der Behang aufs Bild wirft – so wirkt er schwer und edel.
+   * Lichtschlitz: Schwarz schiebt sich von oben und unten weich zur Mitte, im letzten Stück glüht der Rest des Bilds
+   * zu einer feinen beigen Linie auf (mit weichem Schein). Die Linie steht kurz still, dann zieht sie sich zur Mitte
+   * zusammen und erlischt – danach ist alles schwarz.
    */
-  _drawSlats(ctx, W, y0, h, side, seams, slat) {
+  _drawSlit(ctx, W, y0, bh, sh, t) {
+    const [close, , off] = sh.moves;
+    const u = clamp01((t - close.t) / close.dur);
+    if (u <= 0) return;
+    const q = (x) => x * x * x * (x * (6 * x - 15) + 10);
+    const lineH = Math.max(2, Math.round(bh * 0.012));
+    // auf ganze Pixelzeilen: keine halb durchscheinenden Ränder (die Fugen der Felder blieben sonst als Striche sichtbar)
+    const hOpen = Math.max(lineH, Math.round(bh - (bh - lineH) * q(u)));
+    const cy = y0 + bh / 2, top = Math.round(cy - hOpen / 2);
     ctx.fillStyle = '#000';
-    ctx.fillRect(0, y0, W, h);
-    if (seams <= 0.01) return;
-    const edge = side === 'bottom' ? y0 : y0 + h;
-    const sh = Math.max(4, slat * 0.9);
-    // Schatten aufs Bild
-    const g = ctx.createLinearGradient(0, edge, 0, side === 'bottom' ? edge - sh : edge + sh);
-    g.addColorStop(0, `rgba(0,0,0,${0.55 * seams})`);
-    g.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, side === 'bottom' ? edge - sh : edge, W, sh);
-    // Endleiste
-    const rail = Math.max(1.5, slat * 0.08);
-    ctx.globalAlpha = 0.9 * seams;
-    ctx.fillStyle = '#2a2d33';
-    ctx.fillRect(0, side === 'bottom' ? edge : edge - rail, W, rail);
+    ctx.fillRect(0, y0, W, top - y0);
+    ctx.fillRect(0, top + hOpen, W, y0 + bh - top - hOpen);
+    const v = clamp01((t - off.t) / off.dur);
+    if (v >= 1) { ctx.fillRect(0, y0, W, bh); return; }
+    // Aufglühen im letzten Stück des Schließens: der Bildrest wird zu Licht
+    const glow = q(clamp01((u - 0.55) / 0.45));
+    if (glow <= 0) return;
+    const w = Math.round(W * (1 - q(v))), x0 = Math.round((W - w) / 2);
+    // der Bildrest verschwindet ganz im Licht (vorher schwarz darunter, sonst schimmern die Fugen durch)
+    ctx.globalAlpha = v > 0 ? 1 : glow;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, top - 1, W, hOpen + 2);
+    ctx.globalAlpha = 1;
+    const a = glow * (1 - 0.5 * q(v)), ha = a * (1 - v) * (1 - v);
+    const halo = lineH * 6;
+    const gU = ctx.createLinearGradient(0, cy - halo, 0, cy);
+    gU.addColorStop(0, 'rgba(236,214,178,0)');
+    gU.addColorStop(1, `rgba(236,214,178,${0.28 * ha})`);
+    ctx.fillStyle = gU;
+    ctx.fillRect(x0, cy - halo, w, halo);
+    const gD = ctx.createLinearGradient(0, cy, 0, cy + halo);
+    gD.addColorStop(0, `rgba(236,214,178,${0.28 * ha})`);
+    gD.addColorStop(1, 'rgba(236,214,178,0)');
+    ctx.fillStyle = gD;
+    ctx.fillRect(x0, cy, w, halo);
+    ctx.globalAlpha = a;
+    ctx.fillStyle = '#f4dfbb';
+    ctx.fillRect(x0, top, w, hOpen);
     ctx.globalAlpha = 1;
   }
 

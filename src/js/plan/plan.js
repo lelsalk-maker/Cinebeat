@@ -89,7 +89,7 @@ function planOnce(opts) {
     marks.forEach((t0, i) => pieces.push({ start: t0, end: i + 1 < marks.length ? marks[i + 1] : end, f: { pre: 'rew' } }));
     pre = { kind: 'rewind', beats: 4 * bStep, end, teaseEnd, pieces };
   }
-  // Kino-Rollladen: sechs Ausschnitte der stärksten Aufnahmen im Kinoband, drei Züge, Schwarz mit Ortstitel, dann öffnet sich das Bild
+  // Kino-Rollladen: sechs Ausschnitte der stärksten Aufnahmen im Kinoband, Lichtschlitz, Schwarz mit Ortstitel, dann öffnet sich das Bild
   let shutter = null;
   if (intro === 'shutter' && !flight) {
     const st = shutterStep(an), u = beatDur * st;
@@ -693,14 +693,15 @@ function planOnce(opts) {
       const all = pick.length ? pick : (first ? [first] : []);
       while (all.length && all.length < SHUTTER.tiles.length) all.push(all[all.length % Math.max(1, pick.length)]);
       const ids = all.map((m) => m.id);
-      const u = shutter.u, mv = Math.min(0.62, u * 0.82);
+      // Lichtschlitz: schließen (1. Zählzeit), Linie steht still (2.), erlischt (3.) – danach Schwarz mit Ortsnamen
+      const u = shutter.u, mvC = Math.min(0.85, u * 1.1), mvO = Math.min(0.5, u * 0.7);
       const moves = [
-        { side: 'bottom', t: shutter.pulls[0], dur: mv, from: 0, to: 1 / 3 },
-        { side: 'top', t: shutter.pulls[1], dur: mv, from: 0, to: 1 / 3 },
-        { side: 'bottom', t: shutter.pulls[2], dur: mv * 1.1, from: 1 / 3, to: 2 / 3 + 0.004 },
+        { side: 'slit', t: shutter.pulls[0], dur: mvC },
+        { side: 'hold', t: shutter.pulls[1], dur: Math.max(0.05, shutter.pulls[2] - shutter.pulls[1]) },
+        { side: 'off', t: shutter.pulls[2], dur: mvO },
       ];
       const c = clips[0];
-      c.split = { ids, orient: 'wall', reveal: shutter.reveal.slice(0, ids.length), colorAt: shutter.colorAt, colorFirst: true, shutter: { moves, closedAt: shutter.pulls[2] + mv * 1.1 } };
+      c.split = { ids, orient: 'wall', reveal: shutter.reveal.slice(0, ids.length), colorAt: shutter.colorAt, colorFirst: true, shutter: { moves, closedAt: shutter.pulls[2] + mvO } };
       c.mediaId = ids[0];
       c.role = 'wall';
       shutter.moves = moves;
@@ -1582,18 +1583,18 @@ function planOnce(opts) {
     const u = shutter.u;
     overlays.push({ type: 'shutter', start: shutter.black - 0.03, open: shutter.open, end: shutter.end + 0.02 });
     if (title) overlays.push({ type: 'city', text: title, sub: subtitle, geo, start: shutter.black + Math.min(0.25, u * 0.4), end: shutter.open + 2.2 * u, cap: shutter.end - 0.3 });
-    // Geräusche: leise läuft der Projektor, dann drei Züge am Rollladen (der letzte schließt schwer)
-    // (kein Zieh-Geräusch mehr: der Rollladen schließt still, nur der Projektor läuft ganz leise)
+    // Geräusch: nur der Projektor läuft ganz leise, der Lichtschlitz schließt still
     sfx.push({ kind: 'projector', t: 0, dur: Math.max(0.6, shutter.pulls[0] + 0.25), gain: 0.35 });
-    // Musik wie aus dem Kinosaal hinter dem Vorhang: vom ersten Bild an da (gedämpft, halb laut), jeder Zug am
-    // Rollladen macht sie dumpfer und leiser, zum Titel bleibt nur ein leises Grollen; beim Öffnen gehen Filter und
+    // Musik wie aus dem Kinosaal hinter dem Vorhang: vom ersten Bild an da (gedämpft, halb laut), der Lichtschlitz
+    // macht sie dumpfer und leiser, zum Titel bleibt nur ein leises Grollen; beim Öffnen gehen Filter und
     // Lautstärke gemeinsam auf – auf dem Einsatz steht der Song voll und klar
     const M = shutter.moves || [];
     const e = (k) => (M[k] ? M[k].t + M[k].dur : shutter.black);
     const t0 = (k) => (M[k] ? M[k].t : shutter.black);
-    songEnv = [[0, 0], [Math.min(0.12, u * 0.25), 0.5], [t0(0), 0.5], [e(0), 0.38], [t0(1), 0.38], [e(1), 0.26], [t0(2), 0.26], [e(2), 0.1], [shutter.black + u * 0.5, 0.05], [shutter.open, 0.05], [shutter.end, 1, 'in']];
-    songLp = [[0, 1100], [t0(0), 1100], [e(0), 750], [t0(1), 750], [e(1), 480], [t0(2), 480], [e(2), 260], [shutter.open, 260], [shutter.end, 18000, 'exp']];
-    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Kino-Rollladen: ${clips[0].split ? clips[0].split.ids.length : 6} Ausschnitte eurer stärksten Aufnahmen erscheinen nebeneinander im Kinoband, die ersten schnell, das stärkste vorn und gleich in Farbe, die anderen erst schwarzweiß; der Rollladen schließt still in drei Zügen (unten, oben, ganz), auf Schwarz erscheint ${title ? `„${title}“` : 'der Ort'}${geo ? ' mit Koordinaten' : ''}; dann öffnet sich das Bild flüssig nach oben und unten. Die Musik klingt von Anfang an gedämpft wie hinter dem Vorhang, wird mit jedem Zug dumpfer und öffnet sich mit dem Bild – voll und klar auf dem Einsatz bei ${fmtMS(shutter.end)}.`);
+    // Schließen zum Lichtschlitz macht sie dumpfer, solange die Linie steht bleibt es so, mit dem Erlöschen fast still
+    songEnv = [[0, 0], [Math.min(0.12, u * 0.25), 0.5], [t0(0), 0.5], [e(0), 0.3], [t0(2), 0.3], [e(2), 0.1], [shutter.black + u * 0.5, 0.05], [shutter.open, 0.05], [shutter.end, 1, 'in']];
+    songLp = [[0, 1100], [t0(0), 1100], [e(0), 600], [t0(2), 600], [e(2), 260], [shutter.open, 260], [shutter.end, 18000, 'exp']];
+    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Kino-Rollladen: ${clips[0].split ? clips[0].split.ids.length : 6} Ausschnitte eurer stärksten Aufnahmen erscheinen nebeneinander im Kinoband, die ersten schnell, das stärkste vorn und gleich in Farbe, die anderen erst schwarzweiß; das Band schließt sich zu einer feinen Lichtlinie, die kurz stillsteht und dann erlischt; auf Schwarz erscheint ${title ? `„${title}“` : 'der Ort'}${geo ? ' mit Koordinaten' : ''}; dann öffnet sich das Bild flüssig nach oben und unten. Die Musik klingt von Anfang an gedämpft wie hinter dem Vorhang, wird mit dem Lichtschlitz dumpfer und öffnet sich mit dem Bild – voll und klar auf dem Einsatz bei ${fmtMS(shutter.end)}.`);
   }
   if (pre && pre.kind === 'countdown') dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, 'Vorspann Countdown: 3 · 2 · 1 wie im alten Kino, danach beginnt dein Einstieg.');
 

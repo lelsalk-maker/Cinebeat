@@ -1,5 +1,5 @@
 // Kino-Rollladen: sechs Ausschnitte der stärksten Aufnahmen nebeneinander im Kinoband (die ersten schnell, das stärkste
-// vorn und farbig, die übrigen erst schwarzweiß), drei Züge (unten, oben, ganz) mit Geräusch, Schwarz mit Ortstitel,
+// vorn und farbig, die übrigen erst schwarzweiß), Lichtschlitz (Band schließt zur Linie, Linie steht, erlischt), Schwarz mit Ortstitel,
 // dann öffnet sich das Bild flüssig; die Musik klingt gedämpft wie hinter dem Vorhang und öffnet sich zum Einsatz.
 // Geprüft wird der Plan, das gerenderte Bild (Pixel) und der Ton (Pegel je Abschnitt).
 import { chromium } from '/opt/node22/lib/node_modules/playwright/index.mjs';
@@ -52,7 +52,7 @@ const r = await p.evaluate(async (b64) => {
   const halfBeat = (t) => beats.some((x, i) => beats[i + 1] != null && Math.abs((x + beats[i + 1]) / 2 - t) < 0.02);
   if (!sp.reveal.slice(1).every((x) => onBeat(x) || halfBeat(x)) || sp.reveal.some((x, k) => k && x <= sp.reveal[k - 1])) fails.push('Felder nicht nacheinander im Takt');
   const mv = sp.shutter.moves;
-  if (mv.map((m) => m.side).join() !== 'bottom,top,bottom' || !mv.every((m) => onBeat(m.t))) fails.push('Rollladen-Züge');
+  if (mv.map((m) => m.side).join() !== 'slit,hold,off' || !mv.every((m) => onBeat(m.t))) fails.push('Lichtschlitz: Schließen, Stehen, Erlöschen nicht auf den Schlägen');
   const sh = plan.overlays.find((o) => o.type === 'shutter'), city = plan.overlays.find((o) => o.type === 'city');
   if (!sh || !city) fails.push('Rollladen/Titel fehlt');
   if (city && !(city.start >= sp.shutter.closedAt && city.end > sh.open && city.end < sh.end)) fails.push('Titel nicht auf Schwarz bis ins Öffnen');
@@ -97,16 +97,22 @@ const r = await p.evaluate(async (b64) => {
   let diff = 0, cnt = 0; for (let y = Math.floor((b0 + 0.02) * H); y < Math.floor((b1 - 0.02) * H); y += 2) for (let x = Math.floor(W / 6) + 2; x < Math.floor(W / 3) - 2; x += 2) { const i = (y * W + x) * 4; diff += Math.abs(m1[i] - m2[i]); cnt++; }
   out.motion = +(diff / cnt).toFixed(2);
   if (out.motion < 1.5) fails.push('keine Bewegung im Feld');
-  const p1 = await shot(mv[0].t + mv[0].dur + 0.05), p2 = await shot(mv[1].t + mv[1].dur + 0.05);
-  const third = bh / 3;
-  out.p1 = [stat(p1, b1 - third + 0.01, b1 - 0.005).L, stat(p1, b0 + 0.005, b0 + third - 0.01).L].map((x) => +x.toFixed(1));
-  out.p2 = [stat(p2, b0 + 0.005, b0 + third - 0.01).L, stat(p2, b0 + third + 0.01, b1 - third - 0.01).L].map((x) => +x.toFixed(1));
-  if (!(out.p1[0] < 12 && out.p1[1] > 25)) fails.push('1. Zug: unten nicht zu');
-  if (!(out.p2[0] < 12 && out.p2[1] > 25)) fails.push('2. Zug: oben nicht zu');
+  // Lichtschlitz: nach dem Schließen oben/unten im Band schwarz, in der Mitte eine helle beige Linie; sie steht still
+  // (zweimal gleich) und erlischt dann ganz
+  const lineAt = async (t) => {
+    const d = await shot(t), mid = Math.round((b0 + bh / 2) * H);
+    let best = 0, warm = 0;
+    for (let y = mid - 3; y <= mid + 3; y++) { let L = 0, rb = 0, n = 0; for (let x = Math.floor(W * 0.3); x < Math.floor(W * 0.7); x++) { const i = (y * W + x) * 4; L += (d[i] + d[i + 1] + d[i + 2]) / 3; rb += d[i] - d[i + 2]; n++; } if (L / n > best) { best = L / n; warm = rb / n; } }
+    return { line: +best.toFixed(1), warm: +warm.toFixed(1), above: +stat(d, b0 + 0.005, b0 + bh * 0.4).L.toFixed(1), below: +stat(d, b1 - bh * 0.4, b1 - 0.005).L.toFixed(1) };
+  };
+  const l1 = await lineAt(mv[0].t + mv[0].dur + 0.05), l2 = await lineAt(mv[2].t - 0.06);
+  out.slit = [l1, l2];
+  if (!(l1.line > 150 && l1.warm > 5 && l1.above < 8 && l1.below < 8)) fails.push('Lichtschlitz: keine feine beige Linie auf Schwarz');
+  if (!(Math.abs(l1.line - l2.line) < 8)) fails.push('Lichtschlitz: Linie steht nicht still');
   const blk = await shot(sp.shutter.closedAt + 0.4);
   const title = await shot(city ? Math.min(sh.open - 0.05, city.start + 1.2) : sh.start + 1);
   out.black = +stat(blk, 0, 1).L.toFixed(1);
-  if (out.black > 3) fails.push(`nach dem 3. Zug nicht schwarz (${out.black})`);
+  if (out.black > 3) fails.push(`nach dem Erlöschen nicht schwarz (${out.black})`);
   out.title = [+stat(title, 0.02, 0.3).L.toFixed(1), +stat(title, 0.35, 0.65).L.toFixed(1)];
   if (!(out.title[0] < 3 && out.title[1] > 2)) fails.push('Titel nicht auf Schwarz');
   const mid = await shot(sh.open + (sh.end - sh.open) * 0.5);

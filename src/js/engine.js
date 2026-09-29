@@ -297,8 +297,8 @@ class Engine {
   /**
    * Kino-Auftakt: im Band in der Bildmitte erscheinen sechs schmale Ausschnitte nebeneinander – die ersten schnell –,
    * jeder setzt mit einem Zoom ein und fährt danach sichtbar weiter (abwechselnd auf und ab). Das stärkste Bild steht
-   * vorn und ist sofort farbig, die übrigen sind erst schwarzweiß, dann fließt die Farbe hinein. Danach schließt ein
-   * Rollladen das Band in drei Zügen: unten, oben, ganz.
+   * vorn und ist sofort farbig, die übrigen sind erst schwarzweiß, dann fließt die Farbe hinein. Danach schließt sich das
+   * Band zum Lichtschlitz: eine feine Linie, die kurz steht und dann erlischt.
    */
   composeWall(s, t) {
     const c = s.clip, sp = c.split, cv = s.canvas;
@@ -365,50 +365,54 @@ class Engine {
     ctx.fillStyle = '#000';
     ctx.fillRect(0, y0, W, bh);
     ctx.globalAlpha = 1;
-    // Rollladen im Band: unten und oben je ein Behang aus Lamellen
-    const hb = this._shutterPos(sp.shutter, t, 'bottom') * bh, ht = this._shutterPos(sp.shutter, t, 'top') * bh;
-    const seams = 1 - clamp01((t - sp.shutter.closedAt) / 0.35);
-    const slat = Math.max(5, bh / 9);
-    if (hb > 0.5) this._drawSlats(ctx, W, y0 + bh - hb, hb, 'bottom', seams, slat);
-    if (ht > 0.5) this._drawSlats(ctx, W, y0, ht, 'top', seams, slat);
+    // Lichtschlitz: das Band schließt sich zur Mitte zu einer feinen Lichtlinie, die kurz steht und dann erlischt
+    this._drawSlit(ctx, W, y0, bh, sp.shutter, t);
     this.r.upload(s.tex, cv);
   }
 
-  /** Höhe eines Behangs (Anteil am Band) zur Zeit t: jeder Zug gleitet weich an und setzt sanft auf. */
-  _shutterPos(sh, t, side) {
-    let h = 0;
-    for (const m of sh.moves) {
-      if (m.side !== side) continue;
-      const u = clamp01((t - m.t) / m.dur);
-      if (u <= 0) continue;
-      // weich anfahren, gleiten, weich aufsetzen (ohne Nachfedern, ohne Stufen)
-      const e = u * u * u * (u * (6 * u - 15) + 10);
-      h = m.from + (m.to - m.from) * e;
-    }
-    return Math.max(0, Math.min(1, h));
-  }
-
   /**
-   * Rollladen-Behang als geschlossene, tiefschwarze Fläche (keine Lamellen, keine Fugen): nur eine feine Endleiste
-   * mit einem Hauch Licht und ein weicher Schatten, den der Behang aufs Bild wirft – so wirkt er schwer und edel.
+   * Lichtschlitz: Schwarz schiebt sich von oben und unten weich zur Mitte, im letzten Stück glüht der Rest des Bilds
+   * zu einer feinen beigen Linie auf (mit weichem Schein). Die Linie steht kurz still, dann zieht sie sich zur Mitte
+   * zusammen und erlischt – danach ist alles schwarz.
    */
-  _drawSlats(ctx, W, y0, h, side, seams, slat) {
+  _drawSlit(ctx, W, y0, bh, sh, t) {
+    const [close, , off] = sh.moves;
+    const u = clamp01((t - close.t) / close.dur);
+    if (u <= 0) return;
+    const q = (x) => x * x * x * (x * (6 * x - 15) + 10);
+    const lineH = Math.max(2, Math.round(bh * 0.012));
+    // auf ganze Pixelzeilen: keine halb durchscheinenden Ränder (die Fugen der Felder blieben sonst als Striche sichtbar)
+    const hOpen = Math.max(lineH, Math.round(bh - (bh - lineH) * q(u)));
+    const cy = y0 + bh / 2, top = Math.round(cy - hOpen / 2);
     ctx.fillStyle = '#000';
-    ctx.fillRect(0, y0, W, h);
-    if (seams <= 0.01) return;
-    const edge = side === 'bottom' ? y0 : y0 + h;
-    const sh = Math.max(4, slat * 0.9);
-    // Schatten aufs Bild
-    const g = ctx.createLinearGradient(0, edge, 0, side === 'bottom' ? edge - sh : edge + sh);
-    g.addColorStop(0, `rgba(0,0,0,${0.55 * seams})`);
-    g.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, side === 'bottom' ? edge - sh : edge, W, sh);
-    // Endleiste
-    const rail = Math.max(1.5, slat * 0.08);
-    ctx.globalAlpha = 0.9 * seams;
-    ctx.fillStyle = '#2a2d33';
-    ctx.fillRect(0, side === 'bottom' ? edge : edge - rail, W, rail);
+    ctx.fillRect(0, y0, W, top - y0);
+    ctx.fillRect(0, top + hOpen, W, y0 + bh - top - hOpen);
+    const v = clamp01((t - off.t) / off.dur);
+    if (v >= 1) { ctx.fillRect(0, y0, W, bh); return; }
+    // Aufglühen im letzten Stück des Schließens: der Bildrest wird zu Licht
+    const glow = q(clamp01((u - 0.55) / 0.45));
+    if (glow <= 0) return;
+    const w = Math.round(W * (1 - q(v))), x0 = Math.round((W - w) / 2);
+    // der Bildrest verschwindet ganz im Licht (vorher schwarz darunter, sonst schimmern die Fugen durch)
+    ctx.globalAlpha = v > 0 ? 1 : glow;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, top - 1, W, hOpen + 2);
+    ctx.globalAlpha = 1;
+    const a = glow * (1 - 0.5 * q(v)), ha = a * (1 - v) * (1 - v);
+    const halo = lineH * 6;
+    const gU = ctx.createLinearGradient(0, cy - halo, 0, cy);
+    gU.addColorStop(0, 'rgba(236,214,178,0)');
+    gU.addColorStop(1, `rgba(236,214,178,${0.28 * ha})`);
+    ctx.fillStyle = gU;
+    ctx.fillRect(x0, cy - halo, w, halo);
+    const gD = ctx.createLinearGradient(0, cy, 0, cy + halo);
+    gD.addColorStop(0, `rgba(236,214,178,${0.28 * ha})`);
+    gD.addColorStop(1, 'rgba(236,214,178,0)');
+    ctx.fillStyle = gD;
+    ctx.fillRect(x0, cy, w, halo);
+    ctx.globalAlpha = a;
+    ctx.fillStyle = '#f4dfbb';
+    ctx.fillRect(x0, top, w, hOpen);
     ctx.globalAlpha = 1;
   }
 

@@ -82,7 +82,7 @@ function bandRect(format, frame) {
 /** Länge des Aufblende-Einstiegs in Beats: zwei Takte, bei sehr langsamen Songs einer (Aufbau 3–5 s). */
 /**
  * Kino-Rollladen: Ablauf in Zähleinheiten (ein Schlag, bei schnellen Songs zwei). Sechs Ausschnitte erscheinen im
- * Kinoband gleichmäßig im halben Takt (0–2,5), Farbe fließt hinein (3,5), der Rollladen zieht dreimal (5, 6, 7),
+ * Kinoband gleichmäßig im halben Takt (0–2,5), Farbe fließt hinein (3,5), das Band schließt zum Lichtschlitz (5), die Linie steht (6) und erlischt (7),
  * Schwarz mit Ortstitel (8–11), dann öffnet sich das Bild flüssig bis zum Einsatz (20 = Refrain/Drop).
  */
 const SHUTTER = { tiles: [0, 0.5, 1, 1.5, 2, 2.5], color: 3.5, pulls: [5, 6, 7], black: 8, open: 11, end: 20 };
