@@ -531,3 +531,15 @@ body.comparing .mini, body.comparing .mini-bar { display: none !important; }
 .mat-filter .us-mark[aria-pressed="true"] { background: var(--beige); color: var(--beige-ink); border-color: var(--beige); font-weight: 600; }
 .grid.marking .tile { outline: 1px dashed rgba(228, 213, 183, 0.35); outline-offset: -1px; }
 .grid.marking .tile .flag.us { left: 50%; top: 50%; transform: translate(-50%, -50%); font-size: 12px; padding: 6px 9px; }
+
+/* Beat-Studio */
+.beat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); grid-auto-rows: max-content; gap: 8px; max-height: 46vh; overflow-y: auto; padding: 2px; }
+.beat-card { position: relative; display: grid; gap: 3px; align-content: start; text-align: left; padding: 11px 12px 12px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--navy); color: var(--text); cursor: pointer; font: inherit; height: auto; min-height: 104px; }
+.beat-card b { font: 600 15px/1.2 var(--f-display); }
+.beat-card .bc-dot { width: 22px; height: 3px; border-radius: 2px; background: var(--c); margin-bottom: 4px; }
+.beat-card .bc-genre { font: 11px/1.3 var(--f-mono); color: var(--muted); letter-spacing: 0.02em; }
+.beat-card .bc-desc { font-size: 12.5px; line-height: 1.35; color: var(--muted); }
+.beat-card .bc-fit { justify-self: start; margin-top: 4px; font: 600 10.5px/1 var(--f-sans); color: var(--beige-ink); background: var(--beige); border-radius: 7px; padding: 4px 7px; }
+.beat-card[aria-checked="true"] { border-color: var(--beige); background: var(--navy-2); box-shadow: inset 0 0 0 1px var(--beige); }
+.beat-now { font: 12px/1.4 var(--f-mono); color: var(--beige); font-variant-numeric: tabular-nums; }
+.beat-actions { display: flex; gap: 8px; flex-wrap: wrap; }

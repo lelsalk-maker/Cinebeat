@@ -270,12 +270,16 @@ async function getSong(songId) {
     if (!r || r.type !== 'song') throw new Error('Song nicht geladen');
     busy('Lade Song …');
     try {
-      const buffer = r.pcm ? pcmBuffer(r.pcm, r.sampleRate) : await decodeAudioFile(await r.file.arrayBuffer());
+      // eigener Beat: aus dem Rezept neu erzeugt (gleiches Rezept = gleicher Ton), sonst die gespeicherte Datei
+      if (r.gen) busy('Erzeuge deinen Beat …');
+      const made = r.gen ? await renderBeat(r.gen) : null;
+      const buffer = made ? made.buffer : r.pcm ? pcmBuffer(r.pcm, r.sampleRate) : await decodeAudioFile(await r.file.arrayBuffer());
       // ältere Analysen (ungenauere Beats) einmal erneuern und zurückschreiben
       const fresh = r.an && r.an.ver === AN_VER;
-      const an = fresh ? r.an : await analyzeAudio(buffer, (p) => busy(`Analysiere Songaufbau … ${Math.round(p * 100)} %`));
+      const prog = (p) => busy(`Analysiere Songaufbau … ${Math.round(p * 100)} %`);
+      const an = fresh ? r.an : made ? await analyzeBeat(buffer, made.truth, prog) : await analyzeAudio(buffer, prog);
       if (!fresh) { r.an = an; S.store.put('work', r).catch(() => {}); }
-      const song = { id: r.id, name: r.name, buffer, an, mic: r.mic, offset: r.offset || 0 };
+      const song = { id: r.id, name: r.name, buffer, an, mic: r.mic, offset: r.offset || 0, gen: r.gen || null };
       keepSong(song);
       return song;
     } finally { busy(null); }
@@ -315,6 +319,98 @@ async function importSong(file) {
   keepSong(song);
   saveSong(song, file);
   return song;
+}
+
+/* ---------- Beat-Studio: eigene Beats, auf Format, Einstieg, Variante und Look abgestimmt ---------- */
+const beatPrev = { src: null, cache: new Map(), token: 0 };
+function stopBeatPreview() {
+  beatPrev.token++;
+  if (beatPrev.src) { try { beatPrev.src.stop(); } catch (e) { /* schon aus */ } beatPrev.src = null; }
+}
+const FORM_DE = { story: 'Story', reel: 'Reel', film: 'Film' };
+
+function openBeatSheet() {
+  const ctx = S.ctx;
+  if (!ctx) return;
+  engine.pause();
+  const st = ctx.rec.settings;
+  const sug = suggestBeats(st);
+  const top = sug.slice(0, 3).map((x) => x.id);
+  const cur = ctx.song && ctx.song.gen;
+  let pick = cur && BEAT_STYLES[cur.style] ? cur.style : sug[0].id;
+  let tempo = cur ? cur.tempo : null;
+  let seed = cur ? cur.seed : 1;
+  const recipe = () => beatRecipe(pick, st, { tempo: tempo || undefined, seed });
+  const card = (id) => {
+    const B = BEAT_STYLES[id], w = sug.find((x) => x.id === id);
+    return `<button type="button" class="beat-card" role="radio" data-style="${id}" aria-checked="${id === pick}" style="--c:${B.color}">
+      <span class="bc-dot" aria-hidden="true"></span><b>${esc(B.label)}</b><span class="bc-genre">${esc(B.genre)} · ${B.bpm[2]} BPM</span>
+      <span class="bc-desc">${esc(B.desc)}</span>${top.includes(id) ? `<span class="bc-fit">Passt: ${esc(w.why)}</span>` : ''}</button>`;
+  };
+  const order = [...top, ...Object.keys(BEAT_STYLES).filter((k) => !top.includes(k))];
+  const body = openSheet(`
+    <h3 id="sheetTitle">Beat-Studio</h3>
+    <p class="hint">Eigene Beats, komponiert auf deinem Gerät und auf deinen Film abgestimmt: Form und Länge für ${FORM_DE[recipe().form]}, der Drop genau dort, wo dein Einstieg ihn braucht, jeder Schlag exakt im Raster. Dein Ton – frei verwendbar, er wird mit exportiert.</p>
+    <div class="beat-grid" role="radiogroup" aria-label="Stil">${order.map(card).join('')}</div>
+    <div class="field"><span class="field-label">Tempo</span><div id="beatTempo">${radioHTML('Tempo', [['ruhig', 'Ruhiger'], ['normal', 'Normal'], ['schnell', 'Schneller']], recipe().tempo)}</div></div>
+    <div class="beat-now"><span id="beatNow"></span></div>
+    <div class="beat-actions">
+      <button class="btn" id="beatPlay" type="button">▶ Vorhören</button>
+      <button class="btn ghost" id="beatDice" type="button">Neue Melodie</button>
+    </div>
+    <button class="btn primary big" id="beatUse" type="button">Diesen Beat verwenden</button>`, stopBeatPreview);
+  const now = () => {
+    const r = recipe();
+    const bars = beatForm(r.form, r.pre).reduce((a, x) => a + x[1], 0);
+    body.querySelector('#beatNow').textContent = `${beatName(r)} · Melodie ${r.seed} · ${FORM_DE[r.form]} ${fmtClock((bars * 240) / r.bpm)}`;
+  };
+  const playBtn = body.querySelector('#beatPlay');
+  const play = async () => {
+    stopBeatPreview();
+    const my = beatPrev.token, r = recipe(), key = JSON.stringify(r);
+    const ac = engine.ensureAudio();
+    playBtn.textContent = 'Komponiere …';
+    let buf = beatPrev.cache.get(key);
+    if (!buf) {
+      try { buf = (await renderBeat(r, { preview: true })).buffer; } catch (e) { playBtn.textContent = '▶ Vorhören'; toast('Der Beat konnte nicht erzeugt werden.', true); return; }
+      beatPrev.cache.set(key, buf);
+      if (beatPrev.cache.size > 6) beatPrev.cache.delete(beatPrev.cache.keys().next().value);
+    }
+    if (my !== beatPrev.token) return;
+    const src = ac.createBufferSource();
+    src.buffer = buf; src.connect(ac.destination); src.start();
+    beatPrev.src = src;
+    playBtn.textContent = '■ Stopp';
+    src.onended = () => { if (beatPrev.src === src) { beatPrev.src = null; playBtn.textContent = '▶ Vorhören'; } };
+  };
+  now();
+  body.addEventListener('click', async (e) => {
+    const c = e.target.closest('.beat-card');
+    if (c) {
+      pick = c.dataset.style;
+      for (const b of body.querySelectorAll('.beat-card')) b.setAttribute('aria-checked', String(b === c));
+      now(); play();
+      return;
+    }
+    const t = e.target.closest('#beatTempo [data-v]');
+    if (t) { tempo = t.dataset.v; setRadio(body.querySelector('#beatTempo'), tempo); now(); if (beatPrev.src) play(); return; }
+    if (e.target.closest('#beatDice')) { seed = (seed % 999) + 1; now(); play(); return; }
+    if (e.target.closest('#beatPlay')) { if (beatPrev.src) { stopBeatPreview(); playBtn.textContent = '▶ Vorhören'; } else play(); return; }
+    if (e.target.closest('#beatUse')) {
+      stopBeatPreview();
+      const r = recipe();
+      closeSheet();
+      busy('Komponiere deinen Beat …');
+      try {
+        const sg = await beatSong(r, (p) => busy(`Lege das Raster an … ${Math.round(p * 100)} %`));
+        const song = { id: uid('b'), ...sg };
+        keepSong(song);
+        saveSong(song);
+        await useSong(song);
+        toast(`${BEAT_STYLES[r.style].label}: ${Math.round(sg.an.bpm)} BPM, Drop nach ${r.pre} Takten – jeder Schnitt sitzt exakt.`);
+      } catch (err) { console.error(err); busy(null); toast('Der Beat konnte nicht erzeugt werden: ' + err.message, true); }
+    }
+  });
 }
 
 /* ---------- Song mithören: Mikrofon, Analyse lokal, nie exportiert ---------- */
@@ -548,7 +644,8 @@ async function saveWork(m) {
 
 async function saveSong(song, file) {
   const rec = { id: song.id, type: 'song', name: song.name, an: song.an, mic: !!song.mic, offset: song.offset || 0, savedAt: Date.now() };
-  if (song.mic) { rec.pcm = song.buffer.getChannelData(0).slice(); rec.sampleRate = song.buffer.sampleRate; } else rec.file = file;
+  if (song.gen) rec.gen = song.gen;
+  else if (song.mic) { rec.pcm = song.buffer.getChannelData(0).slice(); rec.sampleRate = song.buffer.sampleRate; } else rec.file = file;
   try { await S.store.put('work', rec); } catch (e) {
     try { delete rec.an; await S.store.put('work', rec); } catch (e2) { workFull(); }
   }
@@ -1537,6 +1634,7 @@ function showFlow(media) {
       <p class="fs-text">${matLine} sind bereit. Geschnitten wird erst, wenn der Song feststeht: Dann analysiert die App Takt, Aufbau und Höhepunkte in Ruhe, sagt dir, wie viele Aufnahmen ideal sind, und legt jeden Schnitt auf die Musik.</p>
       <div class="fs-actions">
         <label class="btn primary" for="fileMusic">Song-Datei wählen</label>
+        <button class="btn" type="button" data-flow="beat">Eigenen Beat bauen</button>
         <button class="btn" type="button" data-flow="mic">Mithören</button>
         <button class="btn ghost" type="button" data-flow="demo">Beispiel-Beat nehmen</button>
       </div>
@@ -1637,7 +1735,7 @@ function updatePlanInfo() {
   $('sampleChip').hidden = !(ctx.kind === 'place' && ctx.rec.demo);
   $('exportBtn').disabled = !plan.usedMedia;
   const st = igStart();
-  $('igLine').innerHTML = `Füge <b>${esc(ctx.song.name)}</b> in Instagram ab <b>${st}</b> hinzu. Film: <b>${fmtClock(plan.duration)}</b>`;
+  $('igLine').innerHTML = ctx.song.gen ? `Eigener Beat aus dem Beat-Studio – im Video enthalten, auf Instagram ohne Musik-Sticker posten. Film: <b>${fmtClock(plan.duration)}</b>` : `Füge <b>${esc(ctx.song.name)}</b> in Instagram ab <b>${st}</b> hinzu. Film: <b>${fmtClock(plan.duration)}</b>`;
 }
 
 /* ---------- Zeitleiste ---------- */
@@ -3224,7 +3322,9 @@ function openExportSheet() {
   const prefs = (() => { try { return JSON.parse(localStorage.getItem('cinebeat.export') || '{}'); } catch (e) { return {}; } })();
   const micSong = !!S.ctx.song.mic;
   let fps = prefs.fps === 60 ? 60 : 30;
-  let audio = prefs.audio === 'with' && !micSong ? 'with' : 'without';
+  const genSong = !!S.ctx.song.gen;
+  // eigener Beat: gehört dir, also standardmäßig im Video
+  let audio = genSong || (prefs.audio === 'with' && !micSong) ? 'with' : 'without';
   let quality = QUALITY[prefs.quality] && prefs.quality !== '4k' ? prefs.quality : 'max';
   // (Tests rechnen mit kleiner Auflösung: S.sizeOverride)
   const sizeOf = () => S.sizeOverride || outputSize(st.format, QUALITY[quality].size);
@@ -3258,8 +3358,10 @@ function openExportSheet() {
       ? 'Genau das, was Instagram erwartet. Kleine Datei, schneller Upload.'
       : quality === 'max' ? 'Doppelte Datenrate: feinere Details und Verläufe, auch nachdem Instagram das Video neu komprimiert.'
         : 'Für dein Archiv und große Bildschirme. Braucht deutlich länger; Instagram verkleinert 4K wieder auf 1080p.';
-    const voiceNote = (engine.hasVoice ? ' Der Originalton deiner Videos ist in jedem Fall dabei.' : '') + (engine.hasSfx ? ' Die Rollladen-Geräusche sind immer dabei; am schönsten wirkt der Kino-Rollladen mit Song, weil der Song dann mit dem Öffnen aufblendet.' : '');
-    body.querySelector('#audHint').textContent = (micSong
+    const voiceNote = (engine.hasVoice ? ' Der Originalton deiner Videos ist in jedem Fall dabei.' : '') + (engine.hasSfx ? ' Das leise Projektor-Surren des Kino-Einstiegs ist immer dabei.' : '');
+    body.querySelector('#audHint').textContent = (genSong
+      ? (audio === 'with' ? 'Dein eigener Beat aus dem Beat-Studio ist im Video – frei verwendbar. Auf Instagram einfach ohne Musik-Sticker posten.' : 'Ohne Ton exportiert. Dein eigener Beat gehört dir: „Mit Song“ nimmt ihn direkt ins Video.')
+      : micSong
       ? `Der Song wurde nur mitgehört, deshalb exportiert die App ohne Ton. Füge „${S.ctx.song.name}“ in Instagram ab ${igStart()} hinzu.`
       : audio === 'without'
         ? `Lade das Video hoch und füge „${S.ctx.song.name}“ über Instagrams Musik-Sticker ab ${igStart()} hinzu. So ist der Song lizenziert und das Video wird nicht stummgeschaltet.`
@@ -3698,6 +3800,7 @@ async function init() {
   });
   for (const id of ['fileMedia', 'fileMedia2']) $(id).addEventListener('change', (e) => { const fl = Array.from(e.target.files || []); e.target.value = ''; addFiles(fl); });
   $('micSong').addEventListener('click', openMicSheet);
+  $('beatSong').addEventListener('click', openBeatSheet);
   $('regieDecisions').addEventListener('click', (e) => { const b = e.target.closest('[data-go]'); if (b) goDecision(b.dataset.go); });
   $('flowStage').addEventListener('click', async (e) => {
     const t = e.target.closest('[data-flow],[data-target]');
@@ -3711,6 +3814,7 @@ async function init() {
     }
     const a = t.dataset.flow;
     if (a === 'mic') openMicSheet();
+    else if (a === 'beat') openBeatSheet();
     else if (a === 'demo') { busy('Analysiere Songaufbau …'); await useSong(await getSong('demo')); }
     else if (a === 'cut') await cutFilm();
     else if (a === 'resong') { S.ctx.rec.flow = 'song'; commit(); savePlaceSoon(); await rebuild({ fresh: true }); }
@@ -3874,7 +3978,7 @@ async function init() {
 window.CineBeat = {
   get S() { return S; },
   get engine() { return engine; },
-  openPlace, openBestof, addFiles, ingestFiles, scoreWorkers, perfLog, _trips: { tripForStop, tripRange, autoTripName, switchTrip, renderTrip }, rebuild, newPlace, importSong,
+  openPlace, openBestof, addFiles, ingestFiles, scoreWorkers, perfLog, _trips: { tripForStop, tripRange, autoTripName, switchTrip, renderTrip }, rebuild, newPlace, importSong, getSong, openBeatSheet,
 };
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
