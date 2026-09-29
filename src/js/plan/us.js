@@ -2,16 +2,12 @@
  * die schnellen. Die Geschichte bleibt chronologisch: getauscht wird nur innerhalb einer Szene, und beide Gruppen
  * behalten für sich ihre Reihenfolge. */
 
-/** Wie sicher zeigt die Aufnahme euch? 1 = markiert oder Gesicht erkannt, 0 = markiert als „nicht wir“ bzw. keine Menschen. */
+/**
+ * Zeigt die Aufnahme euch? Nur, was ihr selbst als „Wir“ markiert (automatisch erkannt wird nichts mehr: Hautton-
+ * und Flächen-Schätzungen lagen zu oft daneben). 1 = markiert, sonst 0.
+ */
 function usScore(m) {
-  if (!m) return 0;
-  if (m.us === true) return 1;
-  if (m.us === false) return 0;
-  if (m.faces > 0) return 0.9;
-  // Hauterkennung: zusammenhängend und nicht großflächig (Sand, Holz, Wände fallen so heraus)
-  const p = m.people || 0, sf = m.skinFrac || 0;
-  if (p < 0.3 || sf > 0.22) return 0;
-  return Math.min(0.85, 0.35 + p * 0.5);
+  return m && m.us === true ? 1 : 0;
 }
 const isUs = (m) => usScore(m) >= 0.5;
 
@@ -41,11 +37,11 @@ function usPolish(clips, { byId, ov = {}, moved = new Set() }) {
     const a = clips[k];
     if (isUs(img(a))) continue;
     let best = -1, bd = Infinity;
-    for (let d = 1; d <= 4; d++) {
+    for (let d = 1; d <= 6; d++) {
       for (const j of [k - d, k + d]) {
         const b = clips[j];
         if (!plain(b) || scene[j] !== scene[k] || isCalmLabel(b.label) || !isUs(img(b))) continue;
-        if (Math.abs((img(b).time || 0) - (img(a).time || 0)) > 3 * 60000) continue;
+        if (Math.abs((img(b).time || 0) - (img(a).time || 0)) > 3 * 60000 && dayBlock(img(b)) !== dayBlock(img(a))) continue;
         if (d < bd) { bd = d; best = j; }
       }
       if (best >= 0) break;

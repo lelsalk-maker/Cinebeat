@@ -12,10 +12,9 @@ await p.goto('http://127.0.0.1:8124/test/pipeline.html');
 const wav = readFileSync(`${OUT}/us.wav`).toString('base64');
 const r = await p.evaluate(async (b64) => {
   const fails = [];
-  // Erkennung
+  // nur, was ihr markiert (keine automatische Erkennung mehr)
   if (usScore({ us: true }) !== 1 || usScore({ us: false, faces: 2 }) !== 0) fails.push('Markierung');
-  if (isUs({ people: 0.9, skinFrac: 0.4 })) fails.push('Sand gilt als Mensch');
-  if (!isUs({ people: 0.7, skinFrac: 0.05 })) fails.push('Mensch nicht erkannt');
+  if (isUs({ people: 0.9, skinFrac: 0.05, faces: 3 })) fails.push('automatisch erkannt statt nur markiert');
   const bin = atob(b64); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
   const buf = await new OfflineAudioContext(2, 1, 44100).decodeAudioData(u.buffer);
   const an = await analyzeAudio(buf);
@@ -51,6 +50,11 @@ const r = await p.evaluate(async (b64) => {
   const last = on.clips.filter((c) => !c.loop && byId.get(c.mediaId)).pop();
   if (last && !byId.get(last.mediaId).us) fails.push('Schlussbild nicht wir');
   if (!on.notes.some((n) => /Wir-Vorrang|Tageszeit/.test(n))) fails.push('keine Notiz');
+  // Wir-Moment: markierte Aufnahmen bekommen einen eigenen Moment (ruhige Kamera, weiches Scharfwerden)
+  const mom = on.clips.filter((c) => c.usMoment);
+  if (!mom.length || mom.some((c) => !byId.get(c.mediaId).us)) fails.push('kein Wir-Moment');
+  if (!mom.every((c) => on.fx.some((f) => f.type === 'focus' && Math.abs(f.start - c.start) < 0.05))) fails.push('Wir-Moment ohne Scharfwerden');
+  if (!on.notes.some((n) => /Wir-Moment/.test(n))) fails.push('Wir-Moment nicht erklärt');
   // Tagesblöcke: zwei Tage × zwei Tageshälften – Blöcke nie vertauscht, innerhalb frei; streng = Uhrzeit
   const T = new Date(2026, 4, 3, 9, 0).getTime(), H = 3600e3;
   const times = [0, 1, 2, 3, 6, 7, 8, 9, 24, 25, 26, 27, 30, 31, 32, 33].flatMap((h) => [T + h * H, T + h * H + 20 * 60000]);

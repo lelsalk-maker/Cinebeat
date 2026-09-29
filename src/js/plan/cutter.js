@@ -32,7 +32,7 @@ function cutterPolish(clips, ctx) {
     const m = img(c), size = shotSize(m);
     const q = sHi > sLo ? ((m.score || 0.5) - sLo) / (sHi - sLo) : 0.5;
     // Wir-Vorrang: eure Aufnahmen stehen länger
-    return (size === 0 ? 1.45 : size === 2 ? 0.72 : 1) * (0.85 + 0.3 * q) * (first && prev && (prev.burst || prev.rush || prev.miniRew) ? 1.2 : 1) * (us && isUs(m) ? 1.35 : 1);
+    return (size === 0 ? 1.45 : size === 2 ? 0.72 : 1) * (0.85 + 0.3 * q) * (first && prev && (prev.burst || prev.rush || prev.miniRew) ? 1.2 : 1) * (us && isUs(m) ? 1.6 : 1);
   };
   for (let i = 0; i < clips.length;) {
     if (!plain(clips[i])) { i++; continue; }

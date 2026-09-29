@@ -53,7 +53,7 @@ function percentile(arr, p) {
  * Taktphase (Downbeats), Energie je Beat und eine Hüllkurve für die Anzeige.
  */
 /** Version der Analyse: gespeicherte Songs mit älterer Version werden einmal neu analysiert. */
-const AN_VER = 6;
+const AN_VER = 8;
 
 /**
  * Mithören: findet in der Mikrofonaufnahme den genauen Einsatz des Songs nach dem Startsignal.
@@ -458,7 +458,7 @@ async function analyzeAudio(buffer, onProgress) {
   beats = fixHalfPhase(beats, pSec, lowE, toFrame, nFrames);
   // Schnittraster beruhigt; Struktur und Energie rechnen weiter mit dem gemessenen Raster (erkennt Abschnitte besser)
   // Schnittraster: auf die Anschläge im Bassband gezogen (Struktur und Energie rechnen mit dem Tracking-Raster)
-  const beatsSteady = alignToKick(beats, pSec, lowE, toFrame, frameTime, nFrames);
+  const beatsSteady = alignToKick(beats, pSec, lowE, toFrame, frameTime, nFrames, mono, sr);
 
   // RMS je Beat -> Energie 0..1
   const beatRms = new Float32Array(beats.length);
@@ -600,7 +600,7 @@ function drumRise(arr, f, nFrames) {
  * Versatz zwischen beiden Messungen kalibriert sich je Song selbst: dort, wo das Tracking-Raster ohnehin genau auf
  * dem Anschlag liegt, bleibt es unverändert; korrigiert werden nur die unsicheren Strecken (z. B. leise Strophen).
  */
-function alignToKick(beats, pSec, lowE, toFrame, frameTime, nFrames) {
+function alignToKick(beats, pSec, lowE, toFrame, frameTime, nFrames, mono = null, sr = 22050) {
   const rise = new Float32Array(nFrames);
   for (let j = 4; j < nFrames; j++) { let pre = 0; for (let k = j - 4; k < j; k++) pre = Math.max(pre, lowE[k]); rise[j] = Math.max(0, lowE[j] - pre); }
   const peaks = [];
@@ -621,12 +621,55 @@ function alignToKick(beats, pSec, lowE, toFrame, frameTime, nFrames) {
   const d = hit.map((h, i) => (h == null ? null : h - beats[i])).filter((x) => x != null && Math.abs(x) < 0.04);
   if (d.length < 8) return beats;
   const off = percentile(d, 0.5);
+  // Anschlag im Signal selbst, auf ≈ 1 ms: tiefe Frequenzen (zwei Tiefpass-Stufen bei 160 Hz), Hüllkurve mit
+  // schnellem Anstieg und 4 ms Abklingen; der Schlag liegt am Beginn des Anstiegs (20 % der Spitze) – nicht dort,
+  // wo das grobe Analyse-Raster (12-ms-Schritte) die Energie steigen sieht
+  let attackAt = null;
+  if (mono && mono.length) {
+    // Band des Bassdrum-Anschlags (≈ 90–250 Hz): darunter liegt der Bass, der lange klingt und den Anstieg verdeckt
+    const env = new Float32Array(mono.length);
+    const kl = 1 - Math.exp((-2 * Math.PI * 250) / sr), kh = 1 - Math.exp((-2 * Math.PI * 90) / sr), rel = Math.exp(-1 / (sr * 0.004));
+    let l1 = 0, l2 = 0, h1 = 0, h2 = 0, e = 0;
+    for (let i = 0; i < mono.length; i++) {
+      l1 += kl * (mono[i] - l1); l2 += kl * (l1 - l2);
+      h1 += kh * (l2 - h1); h2 += kh * (h1 - h2);
+      e = Math.max(Math.abs(l2 - h2), e * rel);
+      env[i] = e;
+    }
+    attackAt = (t) => {
+      const i0 = Math.max(1, Math.round((t - 0.045) * sr)), i1 = Math.min(env.length - 1, Math.round((t + 0.03) * sr));
+      let pk = i0, P = 0;
+      for (let i = i0; i <= i1; i++) if (env[i] > P) { P = env[i]; pk = i; }
+      // eindeutiger Anstieg über dem, was vorher klang
+      let base = Infinity;
+      for (let i = i0; i < pk; i++) base = Math.min(base, env[i]);
+      if (!(P > 0) || !(base < P * 0.55)) return null;
+      const thr = base + (P - base) * 0.2;
+      let j = pk;
+      while (j > i0 && env[j] > thr) j--;
+      return j > i0 ? j / sr : null;
+    };
+  }
+  // Feinlage je Treffer; wo kein klarer Anstieg messbar ist, gilt der grobe Wert plus der typische Unterschied
+  const fineT = hit.map((h) => (h == null || !attackAt ? null : attackAt(h - off)));
+  const fd = fineT.map((f, i) => (f != null && Math.abs(f - (hit[i] - off)) < 0.035 ? f - (hit[i] - off) : null)).filter((x) => x != null);
+  const fShift = fd.length >= 8 ? percentile(fd, 0.5) : 0;
   const out = beats.map((t, i) => {
     if (hit[i] == null) return t;
-    const a = hit[i] - off;
-    // nur wirklich neben dem Anschlag liegende Schläge verschieben; genaue bleiben unangetastet
+    const fine = fineT[i];
+    // gemessener Anschlag gilt immer (≈ 1 ms genau); der grobe Ersatzwert nur, wo das Raster deutlich daneben liegt
+    if (fine != null && Math.abs(fine - (hit[i] - off)) < 0.035) return fine;
+    const a = hit[i] - off + fShift;
     return Math.abs(a - t) > Math.max(0.012, fr * 1.2) ? a : t;
   });
+  // Ausreißer und unsichere Schläge: die lokale Tempo-Linie der sicher gemessenen Nachbarn (±8, bei Bedarf ±16 Schläge)
+  // gilt. Ein gemessener Schlag weicht nur, wenn er deutlich daneben liegt (falsch eingerastet); ein nicht gemessener
+  // (kein klarer Anstieg, weil Bass den Anschlag verdeckt) kommt immer auf die Linie und dort auf den Anschlag
+  // Schläge ohne eigenen Bassdrum-Anschlag lagen auf dem groben Raster: um den gemessenen typischen Versatz nachziehen
+  if (attackAt) {
+    const dl = out.map((x, i) => (hit[i] != null ? x - beats[i] : null)).filter((x) => x != null && Math.abs(x) < 0.04);
+    if (dl.length >= 8) { const md = percentile(dl, 0.5); for (let i = 0; i < out.length; i++) if (hit[i] == null) out[i] = beats[i] + md; }
+  }
   // Strecken ohne Bassdrum (Intro nur mit Flächen, Build mit Wirbeln, Break): weiche Einsätze (Akkordwechsel,
   // Triolen) ziehen das Raster dort weg. Die Schläge gehören aufs Tempo der Bassdrum links und rechts,
   // am Anfang/Ende auf das Tempo der nächsten sicheren Schläge. Anzahl und Reihenfolge bleiben gleich.
@@ -662,6 +705,49 @@ function alignToKick(beats, pSec, lowE, toFrame, frameTime, nFrames) {
   if (q1 - 6 >= 0) {
     const l = C[q1], perL = fit(C.slice(Math.max(0, q1 - 47), q1 + 1));
     if (out.length - 1 - l >= 2 && ok(perL)) for (let k = l + 1; k < out.length; k++) out[k] = out[l] + perL * (k - l);
+  }
+  // Messwerte je Schlag (Feinlage, sonst grob); einzelne davon irren (Bass/Flächen überlagern den Anschlag)
+  const meas = beats.map((t, i) => (hit[i] == null ? null : fineT[i] != null && Math.abs(fineT[i] - (hit[i] - off)) < 0.035 ? fineT[i] : hit[i] - off + fShift));
+  if (attackAt && meas.filter((x) => x != null).length >= 8) {
+    // robuste lokale Tempo-Linie (±8 Schläge, Ausreißer verworfen): gleicht einzelne Fehlmessungen aus, folgt aber
+    // langsamer Drift. Ein Messwert nah an der Linie bleibt (Feel), ein abweichender kommt auf die Linie.
+    const fitAt = (i, w, edge = false, at = null) => {
+      // ohne den Schlag selbst; innen nur mit Messungen auf beiden Seiten (sonst kippt die Linie)
+      let idx = [];
+      for (let j = Math.max(0, i - w); j <= Math.min(out.length - 1, i + w); j++) if (j !== i && meas[j] != null) idx.push(j);
+      if (!edge && !(idx.some((j) => j < i) && idx.some((j) => j > i))) return null;
+      if (idx.length < 6) return null;
+      // Theil-Sen (Median der paarweisen Steigungen): ein einzelner Fehlmesswert am Fensterrand kippt die Linie nicht;
+      // danach kleinste Quadrate über die Punkte nah an dieser Linie
+      const sl = [];
+      for (let p = 0; p < idx.length; p++) for (let q = p + 1; q < idx.length; q++) sl.push((meas[idx[q]] - meas[idx[p]]) / (idx[q] - idx[p]));
+      let bb = percentile(sl, 0.5), aa = percentile(idx.map((j) => meas[j] - bb * j), 0.5);
+      const res = idx.map((j) => Math.abs(meas[j] - aa - bb * j));
+      const lim = Math.max(0.004, percentile(res, 0.5) * 2.5);
+      idx = idx.filter((j, k) => res[k] <= lim);
+      if (idx.length < 6) return null;
+      if (!edge && !(idx.some((j) => j < i) && idx.some((j) => j > i))) return null;
+      let sx = 0, sy = 0, sxx = 0, sxy = 0;
+      for (const j of idx) { sx += j; sy += meas[j]; sxx += j * j; sxy += j * meas[j]; }
+      const n = idx.length, den = n * sxx - sx * sx;
+      if (Math.abs(den) > 1e-9) { bb = (n * sxy - sx * sy) / den; aa = (sy - bb * sx) / n; }
+      if (idx.length < 6 || Math.abs(bb - pSec) > pSec * 0.08) return null;
+      return at == null ? aa + bb * i : aa + bb * at;
+    };
+    const fixed = out.slice();
+    for (let i = 0; i < out.length; i++) {
+      const pred = fitAt(i, 8) ?? fitAt(i, 16) ?? fitAt(i, 16, true);
+      if (pred == null) continue;
+      if (meas[i] != null && Math.abs(meas[i] - pred) <= 0.006) { fixed[i] = meas[i]; continue; }
+      if (hit[i] == null && Math.abs(out[i] - pred) > pSec * 0.25) continue;
+      fixed[i] = pred;
+    }
+    // Anfang/Ende ohne Messung: Linie der ersten/letzten 16 sicheren Schläge weiterführen
+    const mi = meas.map((x, i) => (x != null ? i : -1)).filter((i) => i >= 0);
+    const f0 = mi[0], l0 = mi[mi.length - 1];
+    for (let i = 0; i < f0; i++) { const p = fitAt(f0, 16, true, i); if (p != null && Math.abs(p - out[i]) < pSec * 0.25) fixed[i] = Math.max(0, p); }
+    for (let i = l0 + 1; i < out.length; i++) { const p = fitAt(l0, 16, true, i); if (p != null && Math.abs(p - out[i]) < pSec * 0.25) fixed[i] = p; }
+    for (let i = 0; i < out.length; i++) out[i] = fixed[i];
   }
   return out;
 }

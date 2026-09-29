@@ -2368,7 +2368,10 @@ function renderMaterial() {
   const nIn = ctx.media.filter(inOf).length, nOut = ctx.media.filter(outOf).length;
   const filt = nOut || S.matFilter !== 'out' ? S.matFilter || 'all' : 'all';
   $('matFilter').hidden = !n || isFlight(ctx.rec);
-  $('matFilter').innerHTML = [['all', `Alle · ${n}`], ['in', `Im Film · ${nIn}`], ['out', `Draußen · ${nOut}`]].map(([v, l]) => `<button type="button" role="radio" data-v="${v}" aria-checked="${v === filt}">${l}</button>`).join('');
+  const nUs = ctx.media.filter((m) => m.us === true).length;
+  $('matFilter').innerHTML = [['all', `Alle · ${n}`], ['in', `Im Film · ${nIn}`], ['out', `Draußen · ${nOut}`]].map(([v, l]) => `<button type="button" role="radio" data-v="${v}" aria-checked="${v === filt}">${l}</button>`).join('')
+    + `<button type="button" class="us-mark" data-us-mark aria-pressed="${!!S.usMark}">${S.usMark ? 'Fertig markiert' : 'Wir markieren'}${nUs ? ` · ${nUs}` : ''}</button>`;
+  $('mediaGrid').classList.toggle('marking', !!S.usMark);
   const shown = ctx.media.filter((m) => (filt === 'in' ? inOf(m) : filt === 'out' ? outOf(m) : true));
   g.innerHTML = shown.map((m) => {
     const cls = ['tile', m.loading ? 'loading' : '', m.bad ? 'bad' : '', m.excluded ? 'excluded' : '', !m.fav && m.dupOf ? 'dim' : ''].join(' ');
@@ -2379,7 +2382,7 @@ function renderMaterial() {
       ${m.kind === 'video' && m.duration ? `<span class="badge${tooLong.has(m.id) ? ' warn' : ''}">▶ ${m.trim ? '✂ ' + fmtClock(videoSpan(m)) : fmtClock(m.duration)}</span>` : ''}
       ${m.excluded && !m.bad ? '<span class="out">von dir ausgeschlossen</span>' : !m.bad && autoOut(m) ? `<span class="out">aussortiert · ${autoOut(m)}</span>` : dropped.has(m.id) ? '<span class="out">passt nicht mehr hinein</span>' : ''}
       ${m.fav ? '<span class="flag fav">♥</span>' : ''}
-      ${!m.bad && !m.loading && isUs(m) ? `<span class="flag us${m.us === true ? ' set' : ''}" title="${m.us === true ? 'von dir als Wir markiert' : 'als Wir erkannt'}">WIR</span>` : ''}
+      ${!m.bad && !m.loading && m.us === true ? '<span class="flag us set" title="von dir als Wir markiert">WIR</span>' : ''}
       ${m.kind === 'video' && m.sound ? '<span class="flag snd" aria-label="Originalton an"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z" fill="currentColor"/><path d="M15.5 9a4 4 0 010 6M17.8 6.8a7 7 0 010 10.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>' : ''}
       ${isStart ? '<span class="flag start">START</span>' : ''}
       ${role ? `<span class="flag start">${role}</span>` : ''}
@@ -2414,8 +2417,8 @@ function openMediaSheet(id) {
     ${m.kind === 'video' && m.duration ? trimHTML(m) : ''}
     ${m.kind === 'video' ? `<div class="field"><span class="field-label">Originalton</span><div id="sndPick">${radioHTML('Originalton', VOICE_LEVELS, String(m.sound || 0))}</div>
       <p class="hint small">Mit Ton läuft das Video in Echtzeit, die Musik wird dort automatisch leiser.</p></div>` : ''}
-    <div class="field"><span class="field-label">Wir-Aufnahme</span><div id="usPick">${radioHTML('Wir-Aufnahme', [['auto', `Automatisch (${usScore({ ...m, us: undefined }) >= 0.5 ? 'erkannt' : 'nicht erkannt'})`], ['yes', 'Ja, wir'], ['no', 'Nein']], m.us === true ? 'yes' : m.us === false ? 'no' : 'auto')}</div>
-      <p class="hint small">Wir-Aufnahmen tragen die ruhigen Passagen und bekommen mehr Zeit; Natur, Häuser und Dinge die schnellen.</p></div>
+    <div class="field"><span class="field-label">Wir-Aufnahme</span><div id="usPick">${radioHTML('Wir-Aufnahme', [['yes', 'Ja, wir'], ['no', 'Nein']], m.us === true ? 'yes' : 'no')}</div>
+      <p class="hint small">Eure Aufnahmen bekommen einen besonderen Platz: die ruhigen Passagen, mehr Zeit, einen eigenen Wir-Moment und das Schlussbild. Schneller markieren: im Material „Wir markieren“ und Bilder antippen.</p></div>
     <div class="sheet-actions">
       <button class="btn" data-act="fav" type="button">${m.fav ? '♥ Nicht mehr sicher im Film' : '♡ Favorit: sicher im Film'}</button>
       ${flightRole ? `<button class="btn" data-act="takeoff" type="button">${flightRole === 'takeoff' ? '✓ Abflug' : 'Als Abflug verwenden'}</button>
@@ -2429,7 +2432,7 @@ function openMediaSheet(id) {
   if (m.kind === 'video' && m.duration) setupTrim(body, m);
   body.addEventListener('click', async (e) => {
     const u = e.target.closest('#usPick [role="radio"]');
-    if (u) { setRadio(u.closest('.chips'), u.dataset.v); m.us = u.dataset.v === 'yes' ? true : u.dataset.v === 'no' ? false : undefined; saveMediaFlags(m); commit(); scheduleRebuild(0); renderMaterial(); return; }
+    if (u) { setRadio(u.closest('.chips'), u.dataset.v); m.us = u.dataset.v === 'yes' ? true : undefined; saveMediaFlags(m); commit(); scheduleRebuild(0); renderMaterial(); return; }
     const r = e.target.closest('#sndPick [role="radio"]');
     if (r) { setRadio(r.closest('.chips'), r.dataset.v); await setVoice(m, +r.dataset.v); if (!m.audio) setRadio(r.closest('.chips'), '0'); return; }
     const a = e.target.closest('[data-act]');
@@ -3675,7 +3678,10 @@ async function init() {
     renderTabs();
     n.focus();
   });
-  $('matFilter').addEventListener('click', (e) => { const b = e.target.closest('[data-v]'); if (b) { S.matFilter = b.dataset.v; renderMaterial(); } });
+  $('matFilter').addEventListener('click', (e) => {
+    if (e.target.closest('[data-us-mark]')) { S.usMark = !S.usMark; renderMaterial(); if (!S.usMark) scheduleRebuild(0); else toast('Tippe auf eure Aufnahmen: WIR an oder aus. Danach „Fertig markiert“.'); return; }
+    const b = e.target.closest('[data-v]'); if (b) { S.matFilter = b.dataset.v; renderMaterial(); }
+  });
   $('mediaGrid').addEventListener('click', (e) => {
     const ch = e.target.closest('[data-chapter]');
     if (ch) {
@@ -3686,6 +3692,8 @@ async function init() {
       return;
     }
     const t = e.target.closest('.tile');
+    // Wir markieren: Antippen schaltet WIR an und aus (der Film wird nach „Fertig markiert“ neu geplant)
+    if (t && S.usMark) { const m = S.ctx.media.find((x) => x.id === t.dataset.id); if (m) { m.us = m.us === true ? undefined : true; saveMediaFlags(m); commit(); savePlaceSoon(); renderMaterial(); } return; }
     if (t) openMediaSheet(t.dataset.id);
   });
   for (const id of ['fileMedia', 'fileMedia2']) $(id).addEventListener('change', (e) => { const fl = Array.from(e.target.files || []); e.target.value = ''; addFiles(fl); });

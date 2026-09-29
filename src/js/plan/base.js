@@ -90,6 +90,24 @@ function shutterStep(an) {
   return an.beatPeriod < 0.36 ? 2 : 1;
 }
 
+/**
+ * Wie lange ein Einstiegs-Titel mindestens stehen muss (ab seinem Start): Wörter kommen auf den Schlägen, danach
+ * Datum und Koordinaten (die Koordinaten schreiben sich ≈ 1 s aus, ein Kilometerzähler läuft danach noch ≈ 1 s).
+ * Dann bleibt alles je nach Textmenge 1,2–2,6 s ruhig stehen, plus der Ausstieg (≈ 0,35 s).
+ */
+function titleReadTime(o, beatDur) {
+  const step = beatDur < 0.36 ? beatDur * 2 : beatDur;
+  const words = Math.max(1, String(o.text || '').trim().split(/\s+/).length);
+  let done = step * words + 0.5 + (o.sub ? step : 0);
+  const chars = String(o.text || '').length + String(o.sub || '').length + (o.geo ? 22 : 0);
+  const hold = Math.min(2.6, 1.2 + chars * 0.03);
+  if (o.geo) done = Math.max(done, o.geo.km != null ? Math.max(2.2, 0.9 / 0.55) : 1.2);
+  let need = done + hold + 0.35;
+  // Kilometerzähler: sein Einsatz hängt an der Titeldauer (45 %) – so lange, bis auch er gelesen werden kann
+  if (o.geo && o.geo.km != null) need = Math.max(need, (0.9 + hold + 0.35) / 0.55);
+  return need;
+}
+
 function revealBeats(an) {
   return an.beatPeriod * 8 <= 5.6 ? 8 : 4;
 }

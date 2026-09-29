@@ -83,7 +83,10 @@ function planOnce(opts) {
     const teaseEnd = atB(2 * bStep), end = atB(4 * bStep);
     const sub = beatDur / 2 >= 0.2 ? beatDur / 2 : beatDur;
     const pieces = [{ start: 0, end: teaseEnd, f: { pre: 'tease' } }];
-    for (let t0 = teaseEnd; t0 < end - 0.05; t0 += sub) pieces.push({ start: t0, end: Math.min(end, t0 + sub), f: { pre: 'rew' } });
+    // Stücke auf den tatsächlichen Schlägen (bei langsamem Tempo auch den halben dazwischen), nicht im festen Abstand
+    const marks = [];
+    for (let k = 2 * bStep; k < 4 * bStep; k++) { const a = atB(k), b = atB(k + 1); marks.push(a); if (sub < beatDur * 0.9) marks.push((a + b) / 2); }
+    marks.forEach((t0, i) => pieces.push({ start: t0, end: i + 1 < marks.length ? marks[i + 1] : end, f: { pre: 'rew' } }));
     pre = { kind: 'rewind', beats: 4 * bStep, end, teaseEnd, pieces };
   }
   // Kino-Rollladen: sechs Ausschnitte der stärksten Aufnahmen im Kinoband, drei Züge, Schwarz mit Ortstitel, dann öffnet sich das Bild
@@ -126,6 +129,13 @@ function planOnce(opts) {
     const step = bStep;
     const at = (k) => atB(k + pb);
     leader = { marks: [pb ? at(0) : 0, at(step), at(2 * step)], end: at(3 * step) };
+    // setzt Refrain/Drop kurz danach ein, endet der Countdown genau dort („1“ fällt auf den Einsatz, die „3“ steht länger)
+    const dropRel = (an.sections || []).map((x) => x.start - win.start).find((t) => t > leader.end + 0.05 && t <= at(5 * step) + 0.05 && ['drop', 'chorus'].includes(sectionAt(an, win.start + t + 0.02).label));
+    if (dropRel != null) {
+      let kd = 3 * step;
+      while (kd < 5 * step && Math.abs(at(kd) - dropRel) > beatDur * 0.3) kd++;
+      if (Math.abs(at(kd) - dropRel) <= beatDur * 0.3) leader = { marks: [pb ? at(0) : 0, at(kd - 2 * step), at(kd - step)], end: at(kd) };
+    }
     if (leader.end > D * 0.5 || leader.marks[1] - leader.marks[0] < 0.2) leader = null;
   }
 
@@ -397,6 +407,28 @@ function planOnce(opts) {
     for (let k = 0; k < 2 && allOn && res.dropped.length; k++) {
       const r2 = layoutChrono(chronoCtx, segs, queue, res.dropped.length * (k + 1));
       if (r2.dropped.length < res.dropped.length) res = r2;
+    }
+    // „Alle Aufnahmen“: fehlt danach noch ein Foto, teilt es sich den Platz mit seinem zeitlich nächsten Nachbarn
+    // (Split-Screen aus zwei Fotos, in Aufnahme-Reihenfolge) – so fällt nichts weg und der Aufbau bleibt
+    if (allOn && res.dropped.length && s.split !== 'off') {
+      const byQ0 = new Map(queue.map((m) => [m.id, m]));
+      const left = [];
+      for (const d of res.dropped) {
+        if (d.kind !== 'image') { left.push(d); continue; }
+        let best = null, bd = Infinity;
+        for (const g of res.segs) {
+          const w = g.mediaId && !g.splitIds && byQ0.get(g.mediaId);
+          if (!w || w.kind !== 'image' || w === hk || special(g) || g.vslot || g.repeat || g.replaySeg || g.end - g.start < beatDur * 1.8) continue;
+          if (dayBlock(w) !== dayBlock(d)) continue;
+          const dt = Math.abs((w.time || 0) - (d.time || 0));
+          if (dt < bd) { bd = dt; best = g; }
+        }
+        if (!best) { left.push(d); continue; }
+        const w = byQ0.get(best.mediaId);
+        best.splitIds = (w.time || 0) <= (d.time || 0) ? [w.id, d.id] : [d.id, w.id];
+        delete best.mediaId;
+      }
+      res = { ...res, dropped: left };
     }
     // Passt trotz Verdichten nicht alles hinein, fielen bisher schlicht die letzten weg. Jetzt bleibt der Aufbau des Films
     // (Schnitte, Split-Screens, Tempo) genau so, nur die Aufnahmen tauschen ihre Plätze: eine stärkere, draußen
@@ -1520,6 +1552,19 @@ function planOnce(opts) {
     accent = { kicks: kicksRel, snares: snaresRel, snare: s.accent === 'kicksnare', zones, amt: s.accentAuto ? 0.7 : 1 };
   }
 
+  // Wir-Moment: eure markierten Aufnahmen – die längsten, höchstens drei – bekommen einen eigenen Moment:
+  // die Kamera wird ruhiger und langsamer, das Bild wird am Anfang weich scharf (wie ein Blick, der sich fängt)
+  if (!flight && s.us !== 'off') {
+    const usC = clips.filter((c) => c.motion && !c.split && !c.grid && !c.burst && !c.rush && !c.stack && !c.strip && !c.pre && !c.reveal && !c.leader && !c.loop && !c.matchCut && c.role !== 'hook' && media[c.mediaIndex] && media[c.mediaIndex].us === true && media[c.mediaIndex].kind === 'image' && c.end - c.start >= beatDur * 1.8)
+      .sort((a, b) => (b.end - b.start) - (a.end - a.start)).slice(0, 3);
+    for (const c of usC) {
+      scaleMotion(c.motion, 0.6);
+      c.usMoment = true;
+      if (!fx.some((f) => f.type === 'focus' && Math.abs(f.start - c.start) < 0.2)) fx.push({ type: 'focus', start: c.start, end: c.start + Math.min(0.9, (c.end - c.start) * 0.35), amp: 0.55 });
+    }
+    if (usC.length) dir.notes.push(`Wir-Moment: ${usC.length === 1 ? 'eine eurer Aufnahmen steht' : `${usC.length} eurer Aufnahmen stehen`} besonders lang, mit ruhiger Kamera und weichem Scharfwerden.`);
+  }
+
   // Vorspann
   if (pre && pre.kind === 'countdown') {
     // im Look entsättigt (nicht hart schwarzweiß) und zum Einsatz hin weich in die Farbe: kein Bruch im Stil
@@ -1536,10 +1581,10 @@ function planOnce(opts) {
   if (pre && pre.kind === 'shutter' && shutter) {
     const u = shutter.u;
     overlays.push({ type: 'shutter', start: shutter.black - 0.03, open: shutter.open, end: shutter.end + 0.02 });
-    if (title) overlays.push({ type: 'city', text: title, sub: subtitle, geo, start: shutter.black + Math.min(0.25, u * 0.4), end: shutter.open + 2.2 * u });
+    if (title) overlays.push({ type: 'city', text: title, sub: subtitle, geo, start: shutter.black + Math.min(0.25, u * 0.4), end: shutter.open + 2.2 * u, cap: shutter.end - 0.3 });
     // Geräusche: leise läuft der Projektor, dann drei Züge am Rollladen (der letzte schließt schwer)
-    sfx.push({ kind: 'projector', t: 0, dur: Math.max(0.6, shutter.pulls[0] + 0.25), gain: 0.55 });
-    (shutter.moves || []).forEach((m, k) => sfx.push({ kind: 'pull', t: Math.max(0, m.t - 0.02), dur: +(m.dur + 0.12).toFixed(3), v: k, gain: 0.9 }));
+    // (kein Zieh-Geräusch mehr: der Rollladen schließt still, nur der Projektor läuft ganz leise)
+    sfx.push({ kind: 'projector', t: 0, dur: Math.max(0.6, shutter.pulls[0] + 0.25), gain: 0.35 });
     // Musik wie aus dem Kinosaal hinter dem Vorhang: vom ersten Bild an da (gedämpft, halb laut), jeder Zug am
     // Rollladen macht sie dumpfer und leiser, zum Titel bleibt nur ein leises Grollen; beim Öffnen gehen Filter und
     // Lautstärke gemeinsam auf – auf dem Einsatz steht der Song voll und klar
@@ -1548,7 +1593,7 @@ function planOnce(opts) {
     const t0 = (k) => (M[k] ? M[k].t : shutter.black);
     songEnv = [[0, 0], [Math.min(0.12, u * 0.25), 0.5], [t0(0), 0.5], [e(0), 0.38], [t0(1), 0.38], [e(1), 0.26], [t0(2), 0.26], [e(2), 0.1], [shutter.black + u * 0.5, 0.05], [shutter.open, 0.05], [shutter.end, 1, 'in']];
     songLp = [[0, 1100], [t0(0), 1100], [e(0), 750], [t0(1), 750], [e(1), 480], [t0(2), 480], [e(2), 260], [shutter.open, 260], [shutter.end, 18000, 'exp']];
-    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Kino-Rollladen: ${clips[0].split ? clips[0].split.ids.length : 6} Ausschnitte eurer stärksten Aufnahmen erscheinen nebeneinander im Kinoband, die ersten schnell, das stärkste vorn und gleich in Farbe, die anderen erst schwarzweiß; der Rollladen schließt in drei Zügen (unten, oben, ganz), auf Schwarz erscheint ${title ? `„${title}“` : 'der Ort'}${geo ? ' mit Koordinaten' : ''}; dann öffnet sich das Bild flüssig nach oben und unten. Die Musik klingt von Anfang an gedämpft wie hinter dem Vorhang, wird mit jedem Zug dumpfer und öffnet sich mit dem Bild – voll und klar auf dem Einsatz bei ${fmtMS(shutter.end)}.`);
+    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Kino-Rollladen: ${clips[0].split ? clips[0].split.ids.length : 6} Ausschnitte eurer stärksten Aufnahmen erscheinen nebeneinander im Kinoband, die ersten schnell, das stärkste vorn und gleich in Farbe, die anderen erst schwarzweiß; der Rollladen schließt still in drei Zügen (unten, oben, ganz), auf Schwarz erscheint ${title ? `„${title}“` : 'der Ort'}${geo ? ' mit Koordinaten' : ''}; dann öffnet sich das Bild flüssig nach oben und unten. Die Musik klingt von Anfang an gedämpft wie hinter dem Vorhang, wird mit jedem Zug dumpfer und öffnet sich mit dem Bild – voll und klar auf dem Einsatz bei ${fmtMS(shutter.end)}.`);
   }
   if (pre && pre.kind === 'countdown') dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, 'Vorspann Countdown: 3 · 2 · 1 wie im alten Kino, danach beginnt dein Einstieg.');
 
@@ -1771,6 +1816,31 @@ function planOnce(opts) {
     if (droppedIds.length) dir.notes.push(`${droppedIds.length} ${droppedIds.length === 1 ? 'Aufnahme passt' : 'Aufnahmen passen'} nicht mehr in ${capacity.story ? 'diese Story' : 'diesen Film'} (${fmtMS(D)}): zu diesem Song passen etwa ${imgFit} Fotos${capacity.videos ? ' neben den Videos' : ''}. Die schwächsten bleiben draußen, im Material markiert.${capacity.story ? ' Als Reel passen mehr.' : ''}`);
     for (const v of tooLong) dir.notes.push(`Video „${v.name}“ ist ${Math.round(v.dur)} s lang, im Film laufen höchstens ${Math.round(fr.vmax)} s: tippe es im Material an und wähle einen Ausschnitt.`);
     if (repeats) dir.notes.push(`Für die gewählte Länge sind es zu wenig Aufnahmen: ${repeats} ${repeats === 1 ? 'Einstellung wiederholt' : 'Einstellungen wiederholen'} ein Bild. Wähle die Länge „Auto“ oder füge Aufnahmen hinzu.`);
+  }
+
+  // Takt: jede Einblendung beginnt auf Schlag, halbem Schlag oder Schnitt (nächster Rasterpunkt, Dauer bleibt).
+  // Ausgenommen: eigene Texte/Sticker (Nutzer), Datumsstempel, Flug/Karte (laufen mit dem Bild), Rollladen selbst
+  {
+    const bw = Array.from(bts0), g = bw.concat(bw.slice(1).map((b, i) => (b + bw[i]) / 2), clips.map((c) => c.start)).filter((t) => t > 0.05 && t < D - 0.3);
+    for (const o of overlays) {
+      if (['shutter', 'sticker', 'usertext', 'datestamp', 'flight', 'routemap'].includes(o.type) || !(o.start > 0.05)) continue;
+      let best = o.start, bd = Infinity;
+      for (const t of g) { const d = Math.abs(t - o.start); if (d < bd - 1e-6 || (Math.abs(d - bd) < 1e-6 && t < best)) { bd = d; best = t; } }
+      if (bd < 0.02 || bd > beatDur * 0.5) continue;
+      const dt = best - o.start;
+      o.start = best;
+      if (o.end != null) o.end = Math.min(D, o.end + dt);
+      if (o.cap != null && o.end > o.cap) o.end = Math.max(o.start + 0.5, o.cap);
+    }
+  }
+
+  // Lesezeit: Ortsnamen und Titel der Einstiege bleiben nach dem Ausschreiben (Wörter, Datum, Koordinaten, Kilometer)
+  // so lange stehen, dass man sie in Ruhe lesen kann – erst dann gleiten sie hinaus
+  for (const o of overlays) {
+    if (!['city', 'lower', 'type'].includes(o.type) || o.start > D * 0.5 || !o.text) continue;
+    const need = o.start + titleReadTime(o, beatDur);
+    const cap = o.cap != null ? o.cap : D - 0.25;
+    if (o.end < need) o.end = Math.max(o.end, Math.min(need, cap));
   }
 
   const extraNeed = droppedIds.reduce((a, id) => { const m = good.find((x) => x.id === id); return a + (m.kind === 'video' ? videoPlay(m, fr.vmax) : fr.shotMin); }, 0);

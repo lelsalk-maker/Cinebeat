@@ -526,3 +526,8 @@ body.comparing .mini, body.comparing .mini-bar { display: none !important; }
 .pick-grid .flag, .pick-grid .badge { position: absolute; font: 600 10px/1 var(--f-sans); background: rgba(5, 6, 8, 0.78); border-radius: 999px; padding: 3px 5px; }
 .pick-grid .flag { top: 4px; right: 4px; color: var(--beige); }
 .pick-grid .badge { left: 4px; bottom: 4px; color: var(--text); }
+/* Wir markieren */
+.mat-filter .us-mark { border-color: rgba(228, 213, 183, 0.45); color: var(--beige); }
+.mat-filter .us-mark[aria-pressed="true"] { background: var(--beige); color: var(--beige-ink); border-color: var(--beige); font-weight: 600; }
+.grid.marking .tile { outline: 1px dashed rgba(228, 213, 183, 0.35); outline-offset: -1px; }
+.grid.marking .tile .flag.us { left: 50%; top: 50%; transform: translate(-50%, -50%); font-size: 12px; padding: 6px 9px; }

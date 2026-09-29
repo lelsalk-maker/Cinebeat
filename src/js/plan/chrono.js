@@ -143,9 +143,10 @@ function layoutChrono(ctx, segs0, queue, bias) {
         const back = [];
         while (r < hard && back.length < 4 && i > startI + 1 && g.w < 10 && !g.tap) {
           const pv = sg[i - 1];
-          const pm = pv && pv.mediaId && !pv.vslot && !pv.splitIds && !pv.tap && pv.w < 10 && (normal(pv) || pv.burst) ? byIdQ.get(pv.mediaId) : null;
-          if (!pm || pm.kind !== 'image' || !same(pm)) break;
-          if (!pv.repeat) back.push(pm);
+          // auch ein Split-Screen aus Fotos gibt seinen Platz her (seine Fotos kommen zurück in die Reihe)
+          const pms = pv && !pv.vslot && !pv.tap && pv.w < 10 && (normal(pv) || pv.burst) ? (pv.splitIds ? pv.splitIds.map((id) => byIdQ.get(id)) : pv.mediaId ? [byIdQ.get(pv.mediaId)] : []) : [];
+          if (!pms.length || pms.some((pm) => !pm || pm.kind !== 'image' || !same(pm))) break;
+          if (!pv.repeat) back.push(...pms.slice().reverse());
           g.start = pv.start; g.w = pv.w; g.tap = pv.tap; r += pv.end - pv.start;
           sg.splice(i - 1, 1); i--;
         }

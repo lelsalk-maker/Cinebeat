@@ -260,7 +260,7 @@ class OverlayPainter {
 
   /**
    * Kino-Rollladen, zweiter Teil: bis zum Öffnen ganz schwarz (darauf steht der Ortstitel), dann gleiten beide
-   * Behänge flüssig nach oben und unten auf – langsam lösen, gleiten, weich ankommen. Die Lamellen sind nur angedeutet.
+   * Behänge flüssig nach oben und unten auf – langsam lösen, gleiten, weich ankommen. Geschlossene Flächen ohne Fugen.
    */
   drawShutter(ctx, o, t, g) {
     const W = g.W, H = g.H;
@@ -272,15 +272,19 @@ class OverlayPainter {
     ctx.fillRect(0, 0, W, Math.ceil(half));
     ctx.fillRect(0, Math.floor(H - half), W, Math.ceil(half));
     if (e <= 0) return;
-    const slat = Math.max(6, H / 34), a = Math.min(1, e * 8) * Math.pow(1 - e, 0.6);
-    ctx.globalAlpha = 0.8 * a;
-    for (let k = 1; k * slat < half; k++) {
-      ctx.fillStyle = '#16181c';
-      ctx.fillRect(0, half - k * slat, W, Math.max(1, slat * 0.05));
-      ctx.fillRect(0, H - half + k * slat, W, Math.max(1, slat * 0.05));
+    // geschlossene Flächen (keine Fugen): feine Endleiste und ein weicher Schatten aufs freigegebene Bild
+    const a = Math.min(1, e * 8) * Math.pow(1 - e, 0.6);
+    const sh = Math.max(6, H * 0.02);
+    for (const [edge, dir] of [[half, 1], [H - half, -1]]) {
+      const g2 = ctx.createLinearGradient(0, edge, 0, edge + dir * sh);
+      g2.addColorStop(0, `rgba(0,0,0,${0.5 * a})`);
+      g2.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g2;
+      ctx.fillRect(0, dir > 0 ? edge : edge - sh, W, sh);
     }
+    ctx.globalAlpha = 0.85 * a;
     ctx.fillStyle = '#2a2d33';
-    const rail = Math.max(2, slat * 0.16);
+    const rail = Math.max(1.5, H * 0.0025);
     ctx.fillRect(0, half - rail, W, rail);
     ctx.fillRect(0, H - half, W, rail);
     ctx.globalAlpha = 1;

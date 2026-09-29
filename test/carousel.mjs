@@ -46,7 +46,8 @@ const r = await p.evaluate(async (b64) => {
     if (!sl.length || sl[0].kind !== 'photo') fails.push(`${name}: Titel ist kein Foto`);
     const photos = sl.filter((s) => s.kind === 'photo').map((s) => byId.get(s.id));
     const best = Math.max(...photos.map((m) => m.score || 0));
-    if (photos[0] && (photos[0].score || 0) < best - 1e-9 && !photos.some((m) => m.fav)) fails.push(`${name}: Titel nicht das stärkste Foto`);
+    // Titel: das stärkste Foto – oder ein als „Wir“ markiertes, das fast so stark ist (Wir bekommen den besonderen Platz)
+    if (photos[0] && (photos[0].score || 0) < best - (photos[0].us === true ? 0.2 : 1e-9) && !photos.some((m) => m.fav)) fails.push(`${name}: Titel nicht das stärkste Foto`);
     // nichts doppelt
     const all = sl.flatMap((s) => (s.kind === 'photo' ? [s.id] : s.ids));
     if (new Set(all).size !== all.length) fails.push(`${name}: Aufnahme doppelt`);

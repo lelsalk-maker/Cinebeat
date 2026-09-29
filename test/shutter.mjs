@@ -57,7 +57,10 @@ const r = await p.evaluate(async (b64) => {
   if (!sh || !city) fails.push('Rollladen/Titel fehlt');
   if (city && !(city.start >= sp.shutter.closedAt && city.end > sh.open && city.end < sh.end)) fails.push('Titel nicht auf Schwarz bis ins Öffnen');
   const pulls = plan.sfx.filter((x) => x.kind === 'pull');
-  if (pulls.length !== 3 || !plan.sfx.some((x) => x.kind === 'projector')) fails.push('Geräusche');
+  if (pulls.length || !plan.sfx.some((x) => x.kind === 'projector')) fails.push('Rollladen soll still schließen');
+  // Ortsname: nach dem Ausschreiben lange genug lesbar
+  if (city && city.end - city.start < Math.min(titleReadTime(city, an.beatPeriod), city.cap - city.start) - 0.01) fails.push('Ortsname zu kurz lesbar');
+  out.titleHold = city ? +(city.end - city.start).toFixed(2) : null;
   // Einsatz: das stärkste Bild auf einer Eins, Song dort voll
   const hook = plan.clips.find((c) => c.role === 'hook');
   const downs = Array.from(an.barStart).map((x) => x - plan.win.start);
@@ -132,7 +135,6 @@ const r = await p.evaluate(async (b64) => {
   if (!(out.audio.wall > out.audio.full * 0.12)) fails.push('Musik trägt am Anfang nicht');
   if (!(out.audio.wall < out.audio.full * 0.7)) fails.push('Musik am Anfang zu laut');
   if (!(out.audio.muffle < 0.35)) fails.push('Musik am Anfang nicht gedämpft');
-  if (!(out.audio.pull > 0.02)) fails.push('Zug nicht hörbar');
   if (!(out.audio.title < out.audio.full * 0.12)) fails.push('zum Titel nicht leise');
   if (!(out.audio.rise > out.audio.title && out.audio.rise < out.audio.full * 0.7)) fails.push('Song baut sich nicht auf');
   if (!(out.audio.full > 0.05)) fails.push('Song auf dem Einsatz nicht voll');

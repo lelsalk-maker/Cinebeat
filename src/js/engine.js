@@ -18,8 +18,6 @@ function panelTime(c, k, t) {
 
 /**
  * Geräusche für Einstiege, direkt auf dem Gerät erzeugt (reproduzierbar: fester Zufall, jeder Export klingt gleich).
- * pull: ein Rollladen wird gezogen – Gurt-Rauschen, darüber das Rattern der Lamellen (erst schneller, am Ende langsamer),
- * zum Schluss setzt er unten auf. v: 0/1/2 für den ersten bis dritten Zug (höher, der letzte schließt schwer).
  * projector: leises Laufen eines Filmprojektors (24 Bilder pro Sekunde) unter dem Kino-Auftakt.
  */
 function synthSfx(sr, kind, dur, v = 0) {
@@ -27,36 +25,7 @@ function synthSfx(sr, kind, dur, v = 0) {
   const out = new Float32Array(n);
   const rnd = mulberry32(0x5f3a + v * 977 + (kind === 'pull' ? 1 : 2));
   const noise = () => rnd() * 2 - 1;
-  if (kind === 'pull') {
-    const pitch = [0.92, 1.06, 0.98][v % 3], heavy = v === 2;
-    // Gurt: gefiltertes Rauschen, schwillt an und verebbt
-    let lp = 0, hp = 0, prev = 0;
-    const kLp = 1 - Math.exp(-2 * Math.PI * 2600 * pitch / sr), kHp = Math.exp(-2 * Math.PI * 420 / sr);
-    for (let i = 0; i < n; i++) {
-      const u = i / n;
-      const env = Math.min(1, u / 0.12) * Math.pow(1 - u, 0.7);
-      lp += kLp * (noise() - lp);
-      hp = kHp * (hp + lp - prev); prev = lp;
-      out[i] += hp * 0.22 * env;
-    }
-    // Lamellen: kurze Klicks, deren Abstand erst kleiner, dann wieder größer wird
-    let t = 0.02;
-    while (t < dur - 0.07) {
-      const u = t / dur;
-      const rate = (18 + 26 * Math.sin(Math.PI * Math.min(1, u * 1.1))) * pitch;
-      const i0 = Math.round(t * sr), len = Math.round(0.006 * sr), amp = (0.35 + 0.25 * rnd()) * Math.min(1, u / 0.1 + 0.3);
-      let f = 0;
-      for (let j = 0; j < len && i0 + j < n; j++) { f += 0.55 * (noise() - f); out[i0 + j] += f * amp * Math.exp(-j / (0.0012 * sr)); }
-      t += 1 / rate;
-    }
-    // Aufsetzen: dumpfer Schlag und ein trockenes Klacken
-    const hit = Math.round((dur - 0.075) * sr), f0 = (heavy ? 78 : 104) * pitch;
-    for (let j = 0; hit + j < n; j++) {
-      const x = j / sr;
-      out[hit + j] += Math.sin(2 * Math.PI * f0 * x) * Math.exp(-x * (heavy ? 22 : 34)) * (heavy ? 0.85 : 0.55);
-      if (j < 0.012 * sr) out[hit + j] += noise() * 0.5 * Math.exp(-x * 400);
-    }
-  } else if (kind === 'projector') {
+  if (kind === 'projector') {
     // Greifer im Takt von 24 Bildern, weiches Rauschen der Lampe, sanft ein- und ausgeblendet
     let lp = 0;
     const k = 1 - Math.exp(-2 * Math.PI * 1500 / sr);
@@ -405,42 +374,42 @@ class Engine {
     this.r.upload(s.tex, cv);
   }
 
-  /** Höhe eines Behangs (Anteil am Bild) zur Zeit t: jeder Zug fährt zügig, bremst und setzt mit leichtem Nachfedern auf. */
+  /** Höhe eines Behangs (Anteil am Band) zur Zeit t: jeder Zug gleitet weich an und setzt sanft auf. */
   _shutterPos(sh, t, side) {
     let h = 0;
     for (const m of sh.moves) {
       if (m.side !== side) continue;
       const u = clamp01((t - m.t) / m.dur);
       if (u <= 0) continue;
-      // zügig anziehen, auslaufen, leicht nachfedern
-      const base = u < 1 ? 1 - Math.pow(1 - u, 2.6) : 1;
-      const bounce = u < 1 ? 0 : 0.012 * Math.exp(-(t - m.t - m.dur) * 18) * Math.sin((t - m.t - m.dur) * 60);
-      h = m.from + (m.to - m.from) * base + bounce * (m.to - m.from);
+      // weich anfahren, gleiten, weich aufsetzen (ohne Nachfedern, ohne Stufen)
+      const e = u * u * u * (u * (6 * u - 15) + 10);
+      h = m.from + (m.to - m.from) * e;
     }
     return Math.max(0, Math.min(1, h));
   }
 
-  /** Lamellen eines Rollladens: dunkle Profile mit feinen Fugen und einer Endleiste an der Kante. */
+  /**
+   * Rollladen-Behang als geschlossene, tiefschwarze Fläche (keine Lamellen, keine Fugen): nur eine feine Endleiste
+   * mit einem Hauch Licht und ein weicher Schatten, den der Behang aufs Bild wirft – so wirkt er schwer und edel.
+   */
   _drawSlats(ctx, W, y0, h, side, seams, slat) {
     ctx.fillStyle = '#000';
     ctx.fillRect(0, y0, W, h);
-    if (seams > 0.01) {
-      // Fugen laufen mit dem Behang (Abstand von der Kante gemessen)
-      const edge = side === 'bottom' ? y0 : y0 + h;
-      ctx.globalAlpha = 0.9 * seams;
-      for (let k = 1; k * slat < h; k++) {
-        const y = side === 'bottom' ? edge + k * slat : edge - k * slat;
-        ctx.fillStyle = '#16181c';
-        ctx.fillRect(0, y - Math.max(1, slat * 0.05), W, Math.max(1, slat * 0.05));
-        ctx.fillStyle = '#0b0c0e';
-        ctx.fillRect(0, y, W, Math.max(1, slat * 0.08));
-      }
-      // Endleiste mit einem Hauch Licht
-      ctx.fillStyle = '#23262c';
-      const rail = Math.max(2, slat * 0.18);
-      ctx.fillRect(0, side === 'bottom' ? edge : edge - rail, W, rail);
-      ctx.globalAlpha = 1;
-    }
+    if (seams <= 0.01) return;
+    const edge = side === 'bottom' ? y0 : y0 + h;
+    const sh = Math.max(4, slat * 0.9);
+    // Schatten aufs Bild
+    const g = ctx.createLinearGradient(0, edge, 0, side === 'bottom' ? edge - sh : edge + sh);
+    g.addColorStop(0, `rgba(0,0,0,${0.55 * seams})`);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, side === 'bottom' ? edge - sh : edge, W, sh);
+    // Endleiste
+    const rail = Math.max(1.5, slat * 0.08);
+    ctx.globalAlpha = 0.9 * seams;
+    ctx.fillStyle = '#2a2d33';
+    ctx.fillRect(0, side === 'bottom' ? edge : edge - rail, W, rail);
+    ctx.globalAlpha = 1;
   }
 
   /* ---------- 9er-Raster ---------- */

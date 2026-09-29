@@ -14,7 +14,7 @@ function planCarousel({ an, media, count }) {
   const imgs = pool.filter((m) => m.kind === 'image'), vids = pool.filter((m) => m.kind === 'video');
   const notes = [];
   if (!pool.length) return { slides: [], notes: ['Keine Aufnahmen für ein Karussell.'], corr: new Map() };
-  const score = (m) => (m.score || 0.5) + (m.fav ? 0.25 : 0) + usScore(m) * 0.08;
+  const score = (m) => (m.score || 0.5) + (m.fav ? 0.25 : 0) + usScore(m) * 0.2;
   const colorD = (a, b) => (a.avg && b.avg ? Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) : 99);
   // zu ähnlich für zwei Slides: Beinahe-Doppel oder gleicher Aufbau im selben Tagesblock
   const tooClose = (a, b) => a.dupOf === b.id || b.dupOf === a.id || (a.hash && b.hash && hamming(a.hash, b.hash) < 12 && colorD(a, b) < 30) || (dayBlock(a) === dayBlock(b) && layoutSim(a.layout, b.layout) > 0.85 && colorD(a, b) < 40);

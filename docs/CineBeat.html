@@ -542,6 +542,11 @@ body.comparing .mini, body.comparing .mini-bar { display: none !important; }
 .pick-grid .flag, .pick-grid .badge { position: absolute; font: 600 10px/1 var(--f-sans); background: rgba(5, 6, 8, 0.78); border-radius: 999px; padding: 3px 5px; }
 .pick-grid .flag { top: 4px; right: 4px; color: var(--beige); }
 .pick-grid .badge { left: 4px; bottom: 4px; color: var(--text); }
+/* Wir markieren */
+.mat-filter .us-mark { border-color: rgba(228, 213, 183, 0.45); color: var(--beige); }
+.mat-filter .us-mark[aria-pressed="true"] { background: var(--beige); color: var(--beige-ink); border-color: var(--beige); font-weight: 600; }
+.grid.marking .tile { outline: 1px dashed rgba(228, 213, 183, 0.35); outline-offset: -1px; }
+.grid.marking .tile .flag.us { left: 50%; top: 50%; transform: translate(-50%, -50%); font-size: 12px; padding: 6px 9px; }
 </style>
 <div class="app">
   <!-- ================= Reise ================= -->
@@ -722,7 +727,7 @@ body.comparing .mini, body.comparing .mini-bar { display: none !important; }
               <span class="sw" aria-hidden="true"><i></i></span>
             </button>
             <button type="button" class="switch-row" id="usBtn" role="switch" aria-checked="true">
-              <span class="sw-text"><b>Wir-Vorrang</b><span>Ihr in den ruhigen Passagen und länger im Bild, Natur und Dinge in den schnellen</span></span>
+              <span class="sw-text"><b>Wir-Vorrang</b><span>Von euch als WIR markierte Aufnahmen: ruhige Passagen, mehr Zeit, eigener Wir-Moment und Schlussbild. Markieren im Material.</span></span>
               <span class="sw" aria-hidden="true"><i></i></span>
             </button>
             <button type="button" class="switch-row" id="orderBtn" role="switch" aria-checked="true">
@@ -1789,7 +1794,7 @@ function percentile(arr, p) {
  * Taktphase (Downbeats), Energie je Beat und eine Hüllkurve für die Anzeige.
  */
 /** Version der Analyse: gespeicherte Songs mit älterer Version werden einmal neu analysiert. */
-const AN_VER = 6;
+const AN_VER = 8;
 
 /**
  * Mithören: findet in der Mikrofonaufnahme den genauen Einsatz des Songs nach dem Startsignal.
@@ -2194,7 +2199,7 @@ async function analyzeAudio(buffer, onProgress) {
   beats = fixHalfPhase(beats, pSec, lowE, toFrame, nFrames);
   // Schnittraster beruhigt; Struktur und Energie rechnen weiter mit dem gemessenen Raster (erkennt Abschnitte besser)
   // Schnittraster: auf die Anschläge im Bassband gezogen (Struktur und Energie rechnen mit dem Tracking-Raster)
-  const beatsSteady = alignToKick(beats, pSec, lowE, toFrame, frameTime, nFrames);
+  const beatsSteady = alignToKick(beats, pSec, lowE, toFrame, frameTime, nFrames, mono, sr);
 
   // RMS je Beat -> Energie 0..1
   const beatRms = new Float32Array(beats.length);
@@ -2336,7 +2341,7 @@ function drumRise(arr, f, nFrames) {
  * Versatz zwischen beiden Messungen kalibriert sich je Song selbst: dort, wo das Tracking-Raster ohnehin genau auf
  * dem Anschlag liegt, bleibt es unverändert; korrigiert werden nur die unsicheren Strecken (z. B. leise Strophen).
  */
-function alignToKick(beats, pSec, lowE, toFrame, frameTime, nFrames) {
+function alignToKick(beats, pSec, lowE, toFrame, frameTime, nFrames, mono = null, sr = 22050) {
   const rise = new Float32Array(nFrames);
   for (let j = 4; j < nFrames; j++) { let pre = 0; for (let k = j - 4; k < j; k++) pre = Math.max(pre, lowE[k]); rise[j] = Math.max(0, lowE[j] - pre); }
   const peaks = [];
@@ -2357,12 +2362,55 @@ function alignToKick(beats, pSec, lowE, toFrame, frameTime, nFrames) {
   const d = hit.map((h, i) => (h == null ? null : h - beats[i])).filter((x) => x != null && Math.abs(x) < 0.04);
   if (d.length < 8) return beats;
   const off = percentile(d, 0.5);
+  // Anschlag im Signal selbst, auf ≈ 1 ms: tiefe Frequenzen (zwei Tiefpass-Stufen bei 160 Hz), Hüllkurve mit
+  // schnellem Anstieg und 4 ms Abklingen; der Schlag liegt am Beginn des Anstiegs (20 % der Spitze) – nicht dort,
+  // wo das grobe Analyse-Raster (12-ms-Schritte) die Energie steigen sieht
+  let attackAt = null;
+  if (mono && mono.length) {
+    // Band des Bassdrum-Anschlags (≈ 90–250 Hz): darunter liegt der Bass, der lange klingt und den Anstieg verdeckt
+    const env = new Float32Array(mono.length);
+    const kl = 1 - Math.exp((-2 * Math.PI * 250) / sr), kh = 1 - Math.exp((-2 * Math.PI * 90) / sr), rel = Math.exp(-1 / (sr * 0.004));
+    let l1 = 0, l2 = 0, h1 = 0, h2 = 0, e = 0;
+    for (let i = 0; i < mono.length; i++) {
+      l1 += kl * (mono[i] - l1); l2 += kl * (l1 - l2);
+      h1 += kh * (l2 - h1); h2 += kh * (h1 - h2);
+      e = Math.max(Math.abs(l2 - h2), e * rel);
+      env[i] = e;
+    }
+    attackAt = (t) => {
+      const i0 = Math.max(1, Math.round((t - 0.045) * sr)), i1 = Math.min(env.length - 1, Math.round((t + 0.03) * sr));
+      let pk = i0, P = 0;
+      for (let i = i0; i <= i1; i++) if (env[i] > P) { P = env[i]; pk = i; }
+      // eindeutiger Anstieg über dem, was vorher klang
+      let base = Infinity;
+      for (let i = i0; i < pk; i++) base = Math.min(base, env[i]);
+      if (!(P > 0) || !(base < P * 0.55)) return null;
+      const thr = base + (P - base) * 0.2;
+      let j = pk;
+      while (j > i0 && env[j] > thr) j--;
+      return j > i0 ? j / sr : null;
+    };
+  }
+  // Feinlage je Treffer; wo kein klarer Anstieg messbar ist, gilt der grobe Wert plus der typische Unterschied
+  const fineT = hit.map((h) => (h == null || !attackAt ? null : attackAt(h - off)));
+  const fd = fineT.map((f, i) => (f != null && Math.abs(f - (hit[i] - off)) < 0.035 ? f - (hit[i] - off) : null)).filter((x) => x != null);
+  const fShift = fd.length >= 8 ? percentile(fd, 0.5) : 0;
   const out = beats.map((t, i) => {
     if (hit[i] == null) return t;
-    const a = hit[i] - off;
-    // nur wirklich neben dem Anschlag liegende Schläge verschieben; genaue bleiben unangetastet
+    const fine = fineT[i];
+    // gemessener Anschlag gilt immer (≈ 1 ms genau); der grobe Ersatzwert nur, wo das Raster deutlich daneben liegt
+    if (fine != null && Math.abs(fine - (hit[i] - off)) < 0.035) return fine;
+    const a = hit[i] - off + fShift;
     return Math.abs(a - t) > Math.max(0.012, fr * 1.2) ? a : t;
   });
+  // Ausreißer und unsichere Schläge: die lokale Tempo-Linie der sicher gemessenen Nachbarn (±8, bei Bedarf ±16 Schläge)
+  // gilt. Ein gemessener Schlag weicht nur, wenn er deutlich daneben liegt (falsch eingerastet); ein nicht gemessener
+  // (kein klarer Anstieg, weil Bass den Anschlag verdeckt) kommt immer auf die Linie und dort auf den Anschlag
+  // Schläge ohne eigenen Bassdrum-Anschlag lagen auf dem groben Raster: um den gemessenen typischen Versatz nachziehen
+  if (attackAt) {
+    const dl = out.map((x, i) => (hit[i] != null ? x - beats[i] : null)).filter((x) => x != null && Math.abs(x) < 0.04);
+    if (dl.length >= 8) { const md = percentile(dl, 0.5); for (let i = 0; i < out.length; i++) if (hit[i] == null) out[i] = beats[i] + md; }
+  }
   // Strecken ohne Bassdrum (Intro nur mit Flächen, Build mit Wirbeln, Break): weiche Einsätze (Akkordwechsel,
   // Triolen) ziehen das Raster dort weg. Die Schläge gehören aufs Tempo der Bassdrum links und rechts,
   // am Anfang/Ende auf das Tempo der nächsten sicheren Schläge. Anzahl und Reihenfolge bleiben gleich.
@@ -2398,6 +2446,49 @@ function alignToKick(beats, pSec, lowE, toFrame, frameTime, nFrames) {
   if (q1 - 6 >= 0) {
     const l = C[q1], perL = fit(C.slice(Math.max(0, q1 - 47), q1 + 1));
     if (out.length - 1 - l >= 2 && ok(perL)) for (let k = l + 1; k < out.length; k++) out[k] = out[l] + perL * (k - l);
+  }
+  // Messwerte je Schlag (Feinlage, sonst grob); einzelne davon irren (Bass/Flächen überlagern den Anschlag)
+  const meas = beats.map((t, i) => (hit[i] == null ? null : fineT[i] != null && Math.abs(fineT[i] - (hit[i] - off)) < 0.035 ? fineT[i] : hit[i] - off + fShift));
+  if (attackAt && meas.filter((x) => x != null).length >= 8) {
+    // robuste lokale Tempo-Linie (±8 Schläge, Ausreißer verworfen): gleicht einzelne Fehlmessungen aus, folgt aber
+    // langsamer Drift. Ein Messwert nah an der Linie bleibt (Feel), ein abweichender kommt auf die Linie.
+    const fitAt = (i, w, edge = false, at = null) => {
+      // ohne den Schlag selbst; innen nur mit Messungen auf beiden Seiten (sonst kippt die Linie)
+      let idx = [];
+      for (let j = Math.max(0, i - w); j <= Math.min(out.length - 1, i + w); j++) if (j !== i && meas[j] != null) idx.push(j);
+      if (!edge && !(idx.some((j) => j < i) && idx.some((j) => j > i))) return null;
+      if (idx.length < 6) return null;
+      // Theil-Sen (Median der paarweisen Steigungen): ein einzelner Fehlmesswert am Fensterrand kippt die Linie nicht;
+      // danach kleinste Quadrate über die Punkte nah an dieser Linie
+      const sl = [];
+      for (let p = 0; p < idx.length; p++) for (let q = p + 1; q < idx.length; q++) sl.push((meas[idx[q]] - meas[idx[p]]) / (idx[q] - idx[p]));
+      let bb = percentile(sl, 0.5), aa = percentile(idx.map((j) => meas[j] - bb * j), 0.5);
+      const res = idx.map((j) => Math.abs(meas[j] - aa - bb * j));
+      const lim = Math.max(0.004, percentile(res, 0.5) * 2.5);
+      idx = idx.filter((j, k) => res[k] <= lim);
+      if (idx.length < 6) return null;
+      if (!edge && !(idx.some((j) => j < i) && idx.some((j) => j > i))) return null;
+      let sx = 0, sy = 0, sxx = 0, sxy = 0;
+      for (const j of idx) { sx += j; sy += meas[j]; sxx += j * j; sxy += j * meas[j]; }
+      const n = idx.length, den = n * sxx - sx * sx;
+      if (Math.abs(den) > 1e-9) { bb = (n * sxy - sx * sy) / den; aa = (sy - bb * sx) / n; }
+      if (idx.length < 6 || Math.abs(bb - pSec) > pSec * 0.08) return null;
+      return at == null ? aa + bb * i : aa + bb * at;
+    };
+    const fixed = out.slice();
+    for (let i = 0; i < out.length; i++) {
+      const pred = fitAt(i, 8) ?? fitAt(i, 16) ?? fitAt(i, 16, true);
+      if (pred == null) continue;
+      if (meas[i] != null && Math.abs(meas[i] - pred) <= 0.006) { fixed[i] = meas[i]; continue; }
+      if (hit[i] == null && Math.abs(out[i] - pred) > pSec * 0.25) continue;
+      fixed[i] = pred;
+    }
+    // Anfang/Ende ohne Messung: Linie der ersten/letzten 16 sicheren Schläge weiterführen
+    const mi = meas.map((x, i) => (x != null ? i : -1)).filter((i) => i >= 0);
+    const f0 = mi[0], l0 = mi[mi.length - 1];
+    for (let i = 0; i < f0; i++) { const p = fitAt(f0, 16, true, i); if (p != null && Math.abs(p - out[i]) < pSec * 0.25) fixed[i] = Math.max(0, p); }
+    for (let i = l0 + 1; i < out.length; i++) { const p = fitAt(l0, 16, true, i); if (p != null && Math.abs(p - out[i]) < pSec * 0.25) fixed[i] = p; }
+    for (let i = 0; i < out.length; i++) out[i] = fixed[i];
   }
   return out;
 }
@@ -3191,6 +3282,24 @@ function bandRect(format, frame) {
 const SHUTTER = { tiles: [0, 0.5, 1, 1.5, 2, 2.5], color: 3.5, pulls: [5, 6, 7], black: 8, open: 11, end: 20 };
 function shutterStep(an) {
   return an.beatPeriod < 0.36 ? 2 : 1;
+}
+
+/**
+ * Wie lange ein Einstiegs-Titel mindestens stehen muss (ab seinem Start): Wörter kommen auf den Schlägen, danach
+ * Datum und Koordinaten (die Koordinaten schreiben sich ≈ 1 s aus, ein Kilometerzähler läuft danach noch ≈ 1 s).
+ * Dann bleibt alles je nach Textmenge 1,2–2,6 s ruhig stehen, plus der Ausstieg (≈ 0,35 s).
+ */
+function titleReadTime(o, beatDur) {
+  const step = beatDur < 0.36 ? beatDur * 2 : beatDur;
+  const words = Math.max(1, String(o.text || '').trim().split(/\s+/).length);
+  let done = step * words + 0.5 + (o.sub ? step : 0);
+  const chars = String(o.text || '').length + String(o.sub || '').length + (o.geo ? 22 : 0);
+  const hold = Math.min(2.6, 1.2 + chars * 0.03);
+  if (o.geo) done = Math.max(done, o.geo.km != null ? Math.max(2.2, 0.9 / 0.55) : 1.2);
+  let need = done + hold + 0.35;
+  // Kilometerzähler: sein Einsatz hängt an der Titeldauer (45 %) – so lange, bis auch er gelesen werden kann
+  if (o.geo && o.geo.km != null) need = Math.max(need, (0.9 + hold + 0.35) / 0.55);
+  return need;
 }
 
 function revealBeats(an) {
@@ -4121,9 +4230,10 @@ function layoutChrono(ctx, segs0, queue, bias) {
         const back = [];
         while (r < hard && back.length < 4 && i > startI + 1 && g.w < 10 && !g.tap) {
           const pv = sg[i - 1];
-          const pm = pv && pv.mediaId && !pv.vslot && !pv.splitIds && !pv.tap && pv.w < 10 && (normal(pv) || pv.burst) ? byIdQ.get(pv.mediaId) : null;
-          if (!pm || pm.kind !== 'image' || !same(pm)) break;
-          if (!pv.repeat) back.push(pm);
+          // auch ein Split-Screen aus Fotos gibt seinen Platz her (seine Fotos kommen zurück in die Reihe)
+          const pms = pv && !pv.vslot && !pv.tap && pv.w < 10 && (normal(pv) || pv.burst) ? (pv.splitIds ? pv.splitIds.map((id) => byIdQ.get(id)) : pv.mediaId ? [byIdQ.get(pv.mediaId)] : []) : [];
+          if (!pms.length || pms.some((pm) => !pm || pm.kind !== 'image' || !same(pm))) break;
+          if (!pv.repeat) back.push(...pms.slice().reverse());
           g.start = pv.start; g.w = pv.w; g.tap = pv.tap; r += pv.end - pv.start;
           sg.splice(i - 1, 1); i--;
         }
@@ -4305,7 +4415,10 @@ function planOnce(opts) {
     const teaseEnd = atB(2 * bStep), end = atB(4 * bStep);
     const sub = beatDur / 2 >= 0.2 ? beatDur / 2 : beatDur;
     const pieces = [{ start: 0, end: teaseEnd, f: { pre: 'tease' } }];
-    for (let t0 = teaseEnd; t0 < end - 0.05; t0 += sub) pieces.push({ start: t0, end: Math.min(end, t0 + sub), f: { pre: 'rew' } });
+    // Stücke auf den tatsächlichen Schlägen (bei langsamem Tempo auch den halben dazwischen), nicht im festen Abstand
+    const marks = [];
+    for (let k = 2 * bStep; k < 4 * bStep; k++) { const a = atB(k), b = atB(k + 1); marks.push(a); if (sub < beatDur * 0.9) marks.push((a + b) / 2); }
+    marks.forEach((t0, i) => pieces.push({ start: t0, end: i + 1 < marks.length ? marks[i + 1] : end, f: { pre: 'rew' } }));
     pre = { kind: 'rewind', beats: 4 * bStep, end, teaseEnd, pieces };
   }
   // Kino-Rollladen: sechs Ausschnitte der stärksten Aufnahmen im Kinoband, drei Züge, Schwarz mit Ortstitel, dann öffnet sich das Bild
@@ -4348,6 +4461,13 @@ function planOnce(opts) {
     const step = bStep;
     const at = (k) => atB(k + pb);
     leader = { marks: [pb ? at(0) : 0, at(step), at(2 * step)], end: at(3 * step) };
+    // setzt Refrain/Drop kurz danach ein, endet der Countdown genau dort („1“ fällt auf den Einsatz, die „3“ steht länger)
+    const dropRel = (an.sections || []).map((x) => x.start - win.start).find((t) => t > leader.end + 0.05 && t <= at(5 * step) + 0.05 && ['drop', 'chorus'].includes(sectionAt(an, win.start + t + 0.02).label));
+    if (dropRel != null) {
+      let kd = 3 * step;
+      while (kd < 5 * step && Math.abs(at(kd) - dropRel) > beatDur * 0.3) kd++;
+      if (Math.abs(at(kd) - dropRel) <= beatDur * 0.3) leader = { marks: [pb ? at(0) : 0, at(kd - 2 * step), at(kd - step)], end: at(kd) };
+    }
     if (leader.end > D * 0.5 || leader.marks[1] - leader.marks[0] < 0.2) leader = null;
   }
 
@@ -4619,6 +4739,28 @@ function planOnce(opts) {
     for (let k = 0; k < 2 && allOn && res.dropped.length; k++) {
       const r2 = layoutChrono(chronoCtx, segs, queue, res.dropped.length * (k + 1));
       if (r2.dropped.length < res.dropped.length) res = r2;
+    }
+    // „Alle Aufnahmen“: fehlt danach noch ein Foto, teilt es sich den Platz mit seinem zeitlich nächsten Nachbarn
+    // (Split-Screen aus zwei Fotos, in Aufnahme-Reihenfolge) – so fällt nichts weg und der Aufbau bleibt
+    if (allOn && res.dropped.length && s.split !== 'off') {
+      const byQ0 = new Map(queue.map((m) => [m.id, m]));
+      const left = [];
+      for (const d of res.dropped) {
+        if (d.kind !== 'image') { left.push(d); continue; }
+        let best = null, bd = Infinity;
+        for (const g of res.segs) {
+          const w = g.mediaId && !g.splitIds && byQ0.get(g.mediaId);
+          if (!w || w.kind !== 'image' || w === hk || special(g) || g.vslot || g.repeat || g.replaySeg || g.end - g.start < beatDur * 1.8) continue;
+          if (dayBlock(w) !== dayBlock(d)) continue;
+          const dt = Math.abs((w.time || 0) - (d.time || 0));
+          if (dt < bd) { bd = dt; best = g; }
+        }
+        if (!best) { left.push(d); continue; }
+        const w = byQ0.get(best.mediaId);
+        best.splitIds = (w.time || 0) <= (d.time || 0) ? [w.id, d.id] : [d.id, w.id];
+        delete best.mediaId;
+      }
+      res = { ...res, dropped: left };
     }
     // Passt trotz Verdichten nicht alles hinein, fielen bisher schlicht die letzten weg. Jetzt bleibt der Aufbau des Films
     // (Schnitte, Split-Screens, Tempo) genau so, nur die Aufnahmen tauschen ihre Plätze: eine stärkere, draußen
@@ -5742,6 +5884,19 @@ function planOnce(opts) {
     accent = { kicks: kicksRel, snares: snaresRel, snare: s.accent === 'kicksnare', zones, amt: s.accentAuto ? 0.7 : 1 };
   }
 
+  // Wir-Moment: eure markierten Aufnahmen – die längsten, höchstens drei – bekommen einen eigenen Moment:
+  // die Kamera wird ruhiger und langsamer, das Bild wird am Anfang weich scharf (wie ein Blick, der sich fängt)
+  if (!flight && s.us !== 'off') {
+    const usC = clips.filter((c) => c.motion && !c.split && !c.grid && !c.burst && !c.rush && !c.stack && !c.strip && !c.pre && !c.reveal && !c.leader && !c.loop && !c.matchCut && c.role !== 'hook' && media[c.mediaIndex] && media[c.mediaIndex].us === true && media[c.mediaIndex].kind === 'image' && c.end - c.start >= beatDur * 1.8)
+      .sort((a, b) => (b.end - b.start) - (a.end - a.start)).slice(0, 3);
+    for (const c of usC) {
+      scaleMotion(c.motion, 0.6);
+      c.usMoment = true;
+      if (!fx.some((f) => f.type === 'focus' && Math.abs(f.start - c.start) < 0.2)) fx.push({ type: 'focus', start: c.start, end: c.start + Math.min(0.9, (c.end - c.start) * 0.35), amp: 0.55 });
+    }
+    if (usC.length) dir.notes.push(`Wir-Moment: ${usC.length === 1 ? 'eine eurer Aufnahmen steht' : `${usC.length} eurer Aufnahmen stehen`} besonders lang, mit ruhiger Kamera und weichem Scharfwerden.`);
+  }
+
   // Vorspann
   if (pre && pre.kind === 'countdown') {
     // im Look entsättigt (nicht hart schwarzweiß) und zum Einsatz hin weich in die Farbe: kein Bruch im Stil
@@ -5758,10 +5913,10 @@ function planOnce(opts) {
   if (pre && pre.kind === 'shutter' && shutter) {
     const u = shutter.u;
     overlays.push({ type: 'shutter', start: shutter.black - 0.03, open: shutter.open, end: shutter.end + 0.02 });
-    if (title) overlays.push({ type: 'city', text: title, sub: subtitle, geo, start: shutter.black + Math.min(0.25, u * 0.4), end: shutter.open + 2.2 * u });
+    if (title) overlays.push({ type: 'city', text: title, sub: subtitle, geo, start: shutter.black + Math.min(0.25, u * 0.4), end: shutter.open + 2.2 * u, cap: shutter.end - 0.3 });
     // Geräusche: leise läuft der Projektor, dann drei Züge am Rollladen (der letzte schließt schwer)
-    sfx.push({ kind: 'projector', t: 0, dur: Math.max(0.6, shutter.pulls[0] + 0.25), gain: 0.55 });
-    (shutter.moves || []).forEach((m, k) => sfx.push({ kind: 'pull', t: Math.max(0, m.t - 0.02), dur: +(m.dur + 0.12).toFixed(3), v: k, gain: 0.9 }));
+    // (kein Zieh-Geräusch mehr: der Rollladen schließt still, nur der Projektor läuft ganz leise)
+    sfx.push({ kind: 'projector', t: 0, dur: Math.max(0.6, shutter.pulls[0] + 0.25), gain: 0.35 });
     // Musik wie aus dem Kinosaal hinter dem Vorhang: vom ersten Bild an da (gedämpft, halb laut), jeder Zug am
     // Rollladen macht sie dumpfer und leiser, zum Titel bleibt nur ein leises Grollen; beim Öffnen gehen Filter und
     // Lautstärke gemeinsam auf – auf dem Einsatz steht der Song voll und klar
@@ -5770,7 +5925,7 @@ function planOnce(opts) {
     const t0 = (k) => (M[k] ? M[k].t : shutter.black);
     songEnv = [[0, 0], [Math.min(0.12, u * 0.25), 0.5], [t0(0), 0.5], [e(0), 0.38], [t0(1), 0.38], [e(1), 0.26], [t0(2), 0.26], [e(2), 0.1], [shutter.black + u * 0.5, 0.05], [shutter.open, 0.05], [shutter.end, 1, 'in']];
     songLp = [[0, 1100], [t0(0), 1100], [e(0), 750], [t0(1), 750], [e(1), 480], [t0(2), 480], [e(2), 260], [shutter.open, 260], [shutter.end, 18000, 'exp']];
-    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Kino-Rollladen: ${clips[0].split ? clips[0].split.ids.length : 6} Ausschnitte eurer stärksten Aufnahmen erscheinen nebeneinander im Kinoband, die ersten schnell, das stärkste vorn und gleich in Farbe, die anderen erst schwarzweiß; der Rollladen schließt in drei Zügen (unten, oben, ganz), auf Schwarz erscheint ${title ? `„${title}“` : 'der Ort'}${geo ? ' mit Koordinaten' : ''}; dann öffnet sich das Bild flüssig nach oben und unten. Die Musik klingt von Anfang an gedämpft wie hinter dem Vorhang, wird mit jedem Zug dumpfer und öffnet sich mit dem Bild – voll und klar auf dem Einsatz bei ${fmtMS(shutter.end)}.`);
+    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Kino-Rollladen: ${clips[0].split ? clips[0].split.ids.length : 6} Ausschnitte eurer stärksten Aufnahmen erscheinen nebeneinander im Kinoband, die ersten schnell, das stärkste vorn und gleich in Farbe, die anderen erst schwarzweiß; der Rollladen schließt still in drei Zügen (unten, oben, ganz), auf Schwarz erscheint ${title ? `„${title}“` : 'der Ort'}${geo ? ' mit Koordinaten' : ''}; dann öffnet sich das Bild flüssig nach oben und unten. Die Musik klingt von Anfang an gedämpft wie hinter dem Vorhang, wird mit jedem Zug dumpfer und öffnet sich mit dem Bild – voll und klar auf dem Einsatz bei ${fmtMS(shutter.end)}.`);
   }
   if (pre && pre.kind === 'countdown') dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, 'Vorspann Countdown: 3 · 2 · 1 wie im alten Kino, danach beginnt dein Einstieg.');
 
@@ -5995,6 +6150,31 @@ function planOnce(opts) {
     if (repeats) dir.notes.push(`Für die gewählte Länge sind es zu wenig Aufnahmen: ${repeats} ${repeats === 1 ? 'Einstellung wiederholt' : 'Einstellungen wiederholen'} ein Bild. Wähle die Länge „Auto“ oder füge Aufnahmen hinzu.`);
   }
 
+  // Takt: jede Einblendung beginnt auf Schlag, halbem Schlag oder Schnitt (nächster Rasterpunkt, Dauer bleibt).
+  // Ausgenommen: eigene Texte/Sticker (Nutzer), Datumsstempel, Flug/Karte (laufen mit dem Bild), Rollladen selbst
+  {
+    const bw = Array.from(bts0), g = bw.concat(bw.slice(1).map((b, i) => (b + bw[i]) / 2), clips.map((c) => c.start)).filter((t) => t > 0.05 && t < D - 0.3);
+    for (const o of overlays) {
+      if (['shutter', 'sticker', 'usertext', 'datestamp', 'flight', 'routemap'].includes(o.type) || !(o.start > 0.05)) continue;
+      let best = o.start, bd = Infinity;
+      for (const t of g) { const d = Math.abs(t - o.start); if (d < bd - 1e-6 || (Math.abs(d - bd) < 1e-6 && t < best)) { bd = d; best = t; } }
+      if (bd < 0.02 || bd > beatDur * 0.5) continue;
+      const dt = best - o.start;
+      o.start = best;
+      if (o.end != null) o.end = Math.min(D, o.end + dt);
+      if (o.cap != null && o.end > o.cap) o.end = Math.max(o.start + 0.5, o.cap);
+    }
+  }
+
+  // Lesezeit: Ortsnamen und Titel der Einstiege bleiben nach dem Ausschreiben (Wörter, Datum, Koordinaten, Kilometer)
+  // so lange stehen, dass man sie in Ruhe lesen kann – erst dann gleiten sie hinaus
+  for (const o of overlays) {
+    if (!['city', 'lower', 'type'].includes(o.type) || o.start > D * 0.5 || !o.text) continue;
+    const need = o.start + titleReadTime(o, beatDur);
+    const cap = o.cap != null ? o.cap : D - 0.25;
+    if (o.end < need) o.end = Math.max(o.end, Math.min(need, cap));
+  }
+
   const extraNeed = droppedIds.reduce((a, id) => { const m = good.find((x) => x.id === id); return a + (m.kind === 'video' ? videoPlay(m, fr.vmax) : fr.shotMin); }, 0);
   return {
     _m: { repeats, dropped: droppedIds.length, scale: usedScale, floor: (fr.shotMin / fr.shot) * (level >= 1 ? 0.5 : 1), D, max: fr.max, settings, extraNeed, level },
@@ -6045,16 +6225,12 @@ function layersAt(clips, t) {
  * die schnellen. Die Geschichte bleibt chronologisch: getauscht wird nur innerhalb einer Szene, und beide Gruppen
  * behalten für sich ihre Reihenfolge. */
 
-/** Wie sicher zeigt die Aufnahme euch? 1 = markiert oder Gesicht erkannt, 0 = markiert als „nicht wir“ bzw. keine Menschen. */
+/**
+ * Zeigt die Aufnahme euch? Nur, was ihr selbst als „Wir“ markiert (automatisch erkannt wird nichts mehr: Hautton-
+ * und Flächen-Schätzungen lagen zu oft daneben). 1 = markiert, sonst 0.
+ */
 function usScore(m) {
-  if (!m) return 0;
-  if (m.us === true) return 1;
-  if (m.us === false) return 0;
-  if (m.faces > 0) return 0.9;
-  // Hauterkennung: zusammenhängend und nicht großflächig (Sand, Holz, Wände fallen so heraus)
-  const p = m.people || 0, sf = m.skinFrac || 0;
-  if (p < 0.3 || sf > 0.22) return 0;
-  return Math.min(0.85, 0.35 + p * 0.5);
+  return m && m.us === true ? 1 : 0;
 }
 const isUs = (m) => usScore(m) >= 0.5;
 
@@ -6084,11 +6260,11 @@ function usPolish(clips, { byId, ov = {}, moved = new Set() }) {
     const a = clips[k];
     if (isUs(img(a))) continue;
     let best = -1, bd = Infinity;
-    for (let d = 1; d <= 4; d++) {
+    for (let d = 1; d <= 6; d++) {
       for (const j of [k - d, k + d]) {
         const b = clips[j];
         if (!plain(b) || scene[j] !== scene[k] || isCalmLabel(b.label) || !isUs(img(b))) continue;
-        if (Math.abs((img(b).time || 0) - (img(a).time || 0)) > 3 * 60000) continue;
+        if (Math.abs((img(b).time || 0) - (img(a).time || 0)) > 3 * 60000 && dayBlock(img(b)) !== dayBlock(img(a))) continue;
         if (d < bd) { bd = d; best = j; }
       }
       if (best >= 0) break;
@@ -6150,8 +6326,9 @@ function arrangeBlocks(clips, { byId, ov = {}, moved: userMoved = new Set(), us 
   const unary = (c, m, rank, pos, n) => {
     const calm = isCalmLabel(c.label);
     const durN = cl((c.end - c.start - avgDur) / Math.max(0.2, avgDur), -1, 1);
+    // Wir (von euch markiert): klar in die ruhigen Passagen und auf die langen Plätze
     const u = us ? usScore(m) : 0;
-    let v = u * (calm ? 1 : -0.7) + (1 - u) * (calm ? 0 : 0.25);
+    let v = u * (calm ? 1.6 : -1.2) + (1 - u) * (calm ? 0 : 0.25) + u * durN * 0.7;
     const size = sizeOf(m);
     v += durN * (size === 0 ? 0.35 : size === 2 ? -0.25 : 0);
     v += durN * ((m.score || 0.5) - meanScore) * 1.2;
@@ -6288,7 +6465,7 @@ function cutterPolish(clips, ctx) {
     const m = img(c), size = shotSize(m);
     const q = sHi > sLo ? ((m.score || 0.5) - sLo) / (sHi - sLo) : 0.5;
     // Wir-Vorrang: eure Aufnahmen stehen länger
-    return (size === 0 ? 1.45 : size === 2 ? 0.72 : 1) * (0.85 + 0.3 * q) * (first && prev && (prev.burst || prev.rush || prev.miniRew) ? 1.2 : 1) * (us && isUs(m) ? 1.35 : 1);
+    return (size === 0 ? 1.45 : size === 2 ? 0.72 : 1) * (0.85 + 0.3 * q) * (first && prev && (prev.burst || prev.rush || prev.miniRew) ? 1.2 : 1) * (us && isUs(m) ? 1.6 : 1);
   };
   for (let i = 0; i < clips.length;) {
     if (!plain(clips[i])) { i++; continue; }
@@ -6533,6 +6710,28 @@ function planQuality(plan, media, detail) {
  * Sucht den besten Schnitt: mehrere vollständige Varianten (je eigene Zufallsfolge: Bewegung, Übergänge, Stilmittel)
  * werden geplant und bewertet; die beste gewinnt. Gibt { plan, seed, score, tried } zurück.
  */
+/**
+ * Takt-Prüfer für alles, was nicht Schnitt ist: Effekte (Blitz, Zoom-Stoß, Spiegel, Scharfwerden), Einblendungen
+ * (Titel, Kapitel, Countdown …), Farbmomente (Schwarzweiß → Farbe) – jedes Ereignis muss auf einem Schlag, einem
+ * halben Schlag, einer Bassdrum oder einem Schnitt liegen (±25 ms). Liefert [{ kind, t, msg }].
+ */
+function planSyncAudit(plan, an) {
+  const w0 = plan.win.start, D = plan.duration;
+  const beats = Array.from(an.beats || []).map((b) => b - w0).filter((t) => t > -0.1 && t < D + 0.1);
+  const grid = beats.concat(beats.slice(1).map((b, i) => (b + beats[i]) / 2));
+  const kicks = Array.from(an.kicks || []).map((k) => k - w0);
+  const cuts = plan.clips.map((c) => c.start);
+  const ok = (t) => [grid, kicks, cuts].some((l) => l.some((x) => Math.abs(x - t) < 0.025));
+  const out = [];
+  const add = (kind, t, msg) => out.push({ kind, t: +t.toFixed(2), msg });
+  for (const f of plan.fx || []) if (['flash', 'punch', 'mirror', 'focus'].includes(f.type) && f.start > 0.05 && !ok(f.start)) add('fx', f.start, `${f.type} neben dem Schlag`);
+  for (const o of plan.overlays || []) if (!['shutter', 'sticker', 'usertext', 'datestamp', 'flight', 'routemap'].includes(o.type) && o.start > 0.05 && !ok(o.start)) add('overlay', o.start, `${o.type} beginnt neben dem Schlag`);
+  for (const c of plan.colorFx || []) {
+    for (const k of ['at', 'start', 'hit']) if (typeof c[k] === 'number' && c[k] > 0.05 && c[k] < D - 0.05 && !ok(c[k])) add('color', c[k], `Farbmoment (${c.mode || c.type || ''}) neben dem Schlag`);
+  }
+  return out;
+}
+
 /** Wie ähnlich sind zwei Schnitte (0–1)? Gleiche Aufnahme am gleichen Platz und gleiche Schnittstellen. */
 function cutSimilarity(a, b) {
   const seqA = a.clips.filter((c) => !c.loop).map((c) => c.mediaId || (c.split && c.split.ids.join('+')) || '');
@@ -6553,7 +6752,8 @@ async function bestCut(opts, n = 8, onProgress) {
   for (let k = 0; k < seeds.length; k++) {
     const plan = buildPlan({ ...opts, settings: { ...opts.settings, seed: seeds[k] } });
     // harte Regeln gegen den Song (Schlag, Drop, Mindestzeiten, Reihenfolge): jede Unstimmigkeit kostet deutlich
-    const audit = opts.an ? planAudit(plan, opts.media, opts.an) : [];
+    // dazu jedes Ereignis neben dem Takt (Effekt, Einblendung, Farbmoment)
+    const audit = opts.an ? planAudit(plan, opts.media, opts.an).concat(planSyncAudit(plan, opts.an)) : [];
     // „Neu schneiden“: eine Variante, die fast wie der bisherige Schnitt aussieht, zählt deutlich weniger
     const same = opts.avoid ? cutSimilarity(plan, opts.avoid) : 0;
     const score = planQuality(plan, opts.media) - audit.length * 4 - (same > 0.7 ? 30 * (same - 0.7) / 0.3 + 10 : 0);
@@ -6684,7 +6884,7 @@ function planAudit(plan, media, an) {
   // bewusst schnelle Serien (Bilderflut, Serie, Rückspulen) schneiden auf Achtel/Sechzehntel des Schlags
   const sub = [];
   for (let i = 0; i + 1 < beats.length; i++) for (let q = 1; q < 4; q++) sub.push(beats[i] + ((beats[i + 1] - beats[i]) * q) / 4);
-  const fast = (c) => c.burst || c.rush || c.miniRew || c.leader || c.knock;
+  const fast = (c) => c.burst || c.rush || c.miniRew || c.leader || c.knock || c.pre === 'rew';
   for (const c of clips) if (c.start > 0.05 && !near(beats, c.start) && !(fast(c) || fast(clips[c.i - 1] || {})) || (c.start > 0.05 && (fast(c) || fast(clips[c.i - 1] || {})) && !near(beats, c.start) && !near(sub, c.start))) add('beat', c.start, `Schnitt neben dem Schlag (Einstellung ${c.i + 1} ${flags(c)} ${c.label})`);
   // 3. jeder Einsatz eines Refrains/Drops im Film ist ein Schnitt
   for (const s of an.sections || []) {
@@ -6769,7 +6969,7 @@ function planCarousel({ an, media, count }) {
   const imgs = pool.filter((m) => m.kind === 'image'), vids = pool.filter((m) => m.kind === 'video');
   const notes = [];
   if (!pool.length) return { slides: [], notes: ['Keine Aufnahmen für ein Karussell.'], corr: new Map() };
-  const score = (m) => (m.score || 0.5) + (m.fav ? 0.25 : 0) + usScore(m) * 0.08;
+  const score = (m) => (m.score || 0.5) + (m.fav ? 0.25 : 0) + usScore(m) * 0.2;
   const colorD = (a, b) => (a.avg && b.avg ? Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) : 99);
   // zu ähnlich für zwei Slides: Beinahe-Doppel oder gleicher Aufbau im selben Tagesblock
   const tooClose = (a, b) => a.dupOf === b.id || b.dupOf === a.id || (a.hash && b.hash && hamming(a.hash, b.hash) < 12 && colorD(a, b) < 30) || (dayBlock(a) === dayBlock(b) && layoutSim(a.layout, b.layout) > 0.85 && colorD(a, b) < 40);
@@ -8173,7 +8373,7 @@ class OverlayPainter {
 
   /**
    * Kino-Rollladen, zweiter Teil: bis zum Öffnen ganz schwarz (darauf steht der Ortstitel), dann gleiten beide
-   * Behänge flüssig nach oben und unten auf – langsam lösen, gleiten, weich ankommen. Die Lamellen sind nur angedeutet.
+   * Behänge flüssig nach oben und unten auf – langsam lösen, gleiten, weich ankommen. Geschlossene Flächen ohne Fugen.
    */
   drawShutter(ctx, o, t, g) {
     const W = g.W, H = g.H;
@@ -8185,15 +8385,19 @@ class OverlayPainter {
     ctx.fillRect(0, 0, W, Math.ceil(half));
     ctx.fillRect(0, Math.floor(H - half), W, Math.ceil(half));
     if (e <= 0) return;
-    const slat = Math.max(6, H / 34), a = Math.min(1, e * 8) * Math.pow(1 - e, 0.6);
-    ctx.globalAlpha = 0.8 * a;
-    for (let k = 1; k * slat < half; k++) {
-      ctx.fillStyle = '#16181c';
-      ctx.fillRect(0, half - k * slat, W, Math.max(1, slat * 0.05));
-      ctx.fillRect(0, H - half + k * slat, W, Math.max(1, slat * 0.05));
+    // geschlossene Flächen (keine Fugen): feine Endleiste und ein weicher Schatten aufs freigegebene Bild
+    const a = Math.min(1, e * 8) * Math.pow(1 - e, 0.6);
+    const sh = Math.max(6, H * 0.02);
+    for (const [edge, dir] of [[half, 1], [H - half, -1]]) {
+      const g2 = ctx.createLinearGradient(0, edge, 0, edge + dir * sh);
+      g2.addColorStop(0, `rgba(0,0,0,${0.5 * a})`);
+      g2.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g2;
+      ctx.fillRect(0, dir > 0 ? edge : edge - sh, W, sh);
     }
+    ctx.globalAlpha = 0.85 * a;
     ctx.fillStyle = '#2a2d33';
-    const rail = Math.max(2, slat * 0.16);
+    const rail = Math.max(1.5, H * 0.0025);
     ctx.fillRect(0, half - rail, W, rail);
     ctx.fillRect(0, H - half, W, rail);
     ctx.globalAlpha = 1;
@@ -9831,8 +10035,6 @@ function panelTime(c, k, t) {
 
 /**
  * Geräusche für Einstiege, direkt auf dem Gerät erzeugt (reproduzierbar: fester Zufall, jeder Export klingt gleich).
- * pull: ein Rollladen wird gezogen – Gurt-Rauschen, darüber das Rattern der Lamellen (erst schneller, am Ende langsamer),
- * zum Schluss setzt er unten auf. v: 0/1/2 für den ersten bis dritten Zug (höher, der letzte schließt schwer).
  * projector: leises Laufen eines Filmprojektors (24 Bilder pro Sekunde) unter dem Kino-Auftakt.
  */
 function synthSfx(sr, kind, dur, v = 0) {
@@ -9840,36 +10042,7 @@ function synthSfx(sr, kind, dur, v = 0) {
   const out = new Float32Array(n);
   const rnd = mulberry32(0x5f3a + v * 977 + (kind === 'pull' ? 1 : 2));
   const noise = () => rnd() * 2 - 1;
-  if (kind === 'pull') {
-    const pitch = [0.92, 1.06, 0.98][v % 3], heavy = v === 2;
-    // Gurt: gefiltertes Rauschen, schwillt an und verebbt
-    let lp = 0, hp = 0, prev = 0;
-    const kLp = 1 - Math.exp(-2 * Math.PI * 2600 * pitch / sr), kHp = Math.exp(-2 * Math.PI * 420 / sr);
-    for (let i = 0; i < n; i++) {
-      const u = i / n;
-      const env = Math.min(1, u / 0.12) * Math.pow(1 - u, 0.7);
-      lp += kLp * (noise() - lp);
-      hp = kHp * (hp + lp - prev); prev = lp;
-      out[i] += hp * 0.22 * env;
-    }
-    // Lamellen: kurze Klicks, deren Abstand erst kleiner, dann wieder größer wird
-    let t = 0.02;
-    while (t < dur - 0.07) {
-      const u = t / dur;
-      const rate = (18 + 26 * Math.sin(Math.PI * Math.min(1, u * 1.1))) * pitch;
-      const i0 = Math.round(t * sr), len = Math.round(0.006 * sr), amp = (0.35 + 0.25 * rnd()) * Math.min(1, u / 0.1 + 0.3);
-      let f = 0;
-      for (let j = 0; j < len && i0 + j < n; j++) { f += 0.55 * (noise() - f); out[i0 + j] += f * amp * Math.exp(-j / (0.0012 * sr)); }
-      t += 1 / rate;
-    }
-    // Aufsetzen: dumpfer Schlag und ein trockenes Klacken
-    const hit = Math.round((dur - 0.075) * sr), f0 = (heavy ? 78 : 104) * pitch;
-    for (let j = 0; hit + j < n; j++) {
-      const x = j / sr;
-      out[hit + j] += Math.sin(2 * Math.PI * f0 * x) * Math.exp(-x * (heavy ? 22 : 34)) * (heavy ? 0.85 : 0.55);
-      if (j < 0.012 * sr) out[hit + j] += noise() * 0.5 * Math.exp(-x * 400);
-    }
-  } else if (kind === 'projector') {
+  if (kind === 'projector') {
     // Greifer im Takt von 24 Bildern, weiches Rauschen der Lampe, sanft ein- und ausgeblendet
     let lp = 0;
     const k = 1 - Math.exp(-2 * Math.PI * 1500 / sr);
@@ -10218,42 +10391,42 @@ class Engine {
     this.r.upload(s.tex, cv);
   }
 
-  /** Höhe eines Behangs (Anteil am Bild) zur Zeit t: jeder Zug fährt zügig, bremst und setzt mit leichtem Nachfedern auf. */
+  /** Höhe eines Behangs (Anteil am Band) zur Zeit t: jeder Zug gleitet weich an und setzt sanft auf. */
   _shutterPos(sh, t, side) {
     let h = 0;
     for (const m of sh.moves) {
       if (m.side !== side) continue;
       const u = clamp01((t - m.t) / m.dur);
       if (u <= 0) continue;
-      // zügig anziehen, auslaufen, leicht nachfedern
-      const base = u < 1 ? 1 - Math.pow(1 - u, 2.6) : 1;
-      const bounce = u < 1 ? 0 : 0.012 * Math.exp(-(t - m.t - m.dur) * 18) * Math.sin((t - m.t - m.dur) * 60);
-      h = m.from + (m.to - m.from) * base + bounce * (m.to - m.from);
+      // weich anfahren, gleiten, weich aufsetzen (ohne Nachfedern, ohne Stufen)
+      const e = u * u * u * (u * (6 * u - 15) + 10);
+      h = m.from + (m.to - m.from) * e;
     }
     return Math.max(0, Math.min(1, h));
   }
 
-  /** Lamellen eines Rollladens: dunkle Profile mit feinen Fugen und einer Endleiste an der Kante. */
+  /**
+   * Rollladen-Behang als geschlossene, tiefschwarze Fläche (keine Lamellen, keine Fugen): nur eine feine Endleiste
+   * mit einem Hauch Licht und ein weicher Schatten, den der Behang aufs Bild wirft – so wirkt er schwer und edel.
+   */
   _drawSlats(ctx, W, y0, h, side, seams, slat) {
     ctx.fillStyle = '#000';
     ctx.fillRect(0, y0, W, h);
-    if (seams > 0.01) {
-      // Fugen laufen mit dem Behang (Abstand von der Kante gemessen)
-      const edge = side === 'bottom' ? y0 : y0 + h;
-      ctx.globalAlpha = 0.9 * seams;
-      for (let k = 1; k * slat < h; k++) {
-        const y = side === 'bottom' ? edge + k * slat : edge - k * slat;
-        ctx.fillStyle = '#16181c';
-        ctx.fillRect(0, y - Math.max(1, slat * 0.05), W, Math.max(1, slat * 0.05));
-        ctx.fillStyle = '#0b0c0e';
-        ctx.fillRect(0, y, W, Math.max(1, slat * 0.08));
-      }
-      // Endleiste mit einem Hauch Licht
-      ctx.fillStyle = '#23262c';
-      const rail = Math.max(2, slat * 0.18);
-      ctx.fillRect(0, side === 'bottom' ? edge : edge - rail, W, rail);
-      ctx.globalAlpha = 1;
-    }
+    if (seams <= 0.01) return;
+    const edge = side === 'bottom' ? y0 : y0 + h;
+    const sh = Math.max(4, slat * 0.9);
+    // Schatten aufs Bild
+    const g = ctx.createLinearGradient(0, edge, 0, side === 'bottom' ? edge - sh : edge + sh);
+    g.addColorStop(0, `rgba(0,0,0,${0.55 * seams})`);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, side === 'bottom' ? edge - sh : edge, W, sh);
+    // Endleiste
+    const rail = Math.max(1.5, slat * 0.08);
+    ctx.globalAlpha = 0.9 * seams;
+    ctx.fillStyle = '#2a2d33';
+    ctx.fillRect(0, side === 'bottom' ? edge : edge - rail, W, rail);
+    ctx.globalAlpha = 1;
   }
 
   /* ---------- 9er-Raster ---------- */
@@ -14401,7 +14574,10 @@ function renderMaterial() {
   const nIn = ctx.media.filter(inOf).length, nOut = ctx.media.filter(outOf).length;
   const filt = nOut || S.matFilter !== 'out' ? S.matFilter || 'all' : 'all';
   $('matFilter').hidden = !n || isFlight(ctx.rec);
-  $('matFilter').innerHTML = [['all', `Alle · ${n}`], ['in', `Im Film · ${nIn}`], ['out', `Draußen · ${nOut}`]].map(([v, l]) => `<button type="button" role="radio" data-v="${v}" aria-checked="${v === filt}">${l}</button>`).join('');
+  const nUs = ctx.media.filter((m) => m.us === true).length;
+  $('matFilter').innerHTML = [['all', `Alle · ${n}`], ['in', `Im Film · ${nIn}`], ['out', `Draußen · ${nOut}`]].map(([v, l]) => `<button type="button" role="radio" data-v="${v}" aria-checked="${v === filt}">${l}</button>`).join('')
+    + `<button type="button" class="us-mark" data-us-mark aria-pressed="${!!S.usMark}">${S.usMark ? 'Fertig markiert' : 'Wir markieren'}${nUs ? ` · ${nUs}` : ''}</button>`;
+  $('mediaGrid').classList.toggle('marking', !!S.usMark);
   const shown = ctx.media.filter((m) => (filt === 'in' ? inOf(m) : filt === 'out' ? outOf(m) : true));
   g.innerHTML = shown.map((m) => {
     const cls = ['tile', m.loading ? 'loading' : '', m.bad ? 'bad' : '', m.excluded ? 'excluded' : '', !m.fav && m.dupOf ? 'dim' : ''].join(' ');
@@ -14412,7 +14588,7 @@ function renderMaterial() {
       ${m.kind === 'video' && m.duration ? `<span class="badge${tooLong.has(m.id) ? ' warn' : ''}">▶ ${m.trim ? '✂ ' + fmtClock(videoSpan(m)) : fmtClock(m.duration)}</span>` : ''}
       ${m.excluded && !m.bad ? '<span class="out">von dir ausgeschlossen</span>' : !m.bad && autoOut(m) ? `<span class="out">aussortiert · ${autoOut(m)}</span>` : dropped.has(m.id) ? '<span class="out">passt nicht mehr hinein</span>' : ''}
       ${m.fav ? '<span class="flag fav">♥</span>' : ''}
-      ${!m.bad && !m.loading && isUs(m) ? `<span class="flag us${m.us === true ? ' set' : ''}" title="${m.us === true ? 'von dir als Wir markiert' : 'als Wir erkannt'}">WIR</span>` : ''}
+      ${!m.bad && !m.loading && m.us === true ? '<span class="flag us set" title="von dir als Wir markiert">WIR</span>' : ''}
       ${m.kind === 'video' && m.sound ? '<span class="flag snd" aria-label="Originalton an"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z" fill="currentColor"/><path d="M15.5 9a4 4 0 010 6M17.8 6.8a7 7 0 010 10.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>' : ''}
       ${isStart ? '<span class="flag start">START</span>' : ''}
       ${role ? `<span class="flag start">${role}</span>` : ''}
@@ -14447,8 +14623,8 @@ function openMediaSheet(id) {
     ${m.kind === 'video' && m.duration ? trimHTML(m) : ''}
     ${m.kind === 'video' ? `<div class="field"><span class="field-label">Originalton</span><div id="sndPick">${radioHTML('Originalton', VOICE_LEVELS, String(m.sound || 0))}</div>
       <p class="hint small">Mit Ton läuft das Video in Echtzeit, die Musik wird dort automatisch leiser.</p></div>` : ''}
-    <div class="field"><span class="field-label">Wir-Aufnahme</span><div id="usPick">${radioHTML('Wir-Aufnahme', [['auto', `Automatisch (${usScore({ ...m, us: undefined }) >= 0.5 ? 'erkannt' : 'nicht erkannt'})`], ['yes', 'Ja, wir'], ['no', 'Nein']], m.us === true ? 'yes' : m.us === false ? 'no' : 'auto')}</div>
-      <p class="hint small">Wir-Aufnahmen tragen die ruhigen Passagen und bekommen mehr Zeit; Natur, Häuser und Dinge die schnellen.</p></div>
+    <div class="field"><span class="field-label">Wir-Aufnahme</span><div id="usPick">${radioHTML('Wir-Aufnahme', [['yes', 'Ja, wir'], ['no', 'Nein']], m.us === true ? 'yes' : 'no')}</div>
+      <p class="hint small">Eure Aufnahmen bekommen einen besonderen Platz: die ruhigen Passagen, mehr Zeit, einen eigenen Wir-Moment und das Schlussbild. Schneller markieren: im Material „Wir markieren“ und Bilder antippen.</p></div>
     <div class="sheet-actions">
       <button class="btn" data-act="fav" type="button">${m.fav ? '♥ Nicht mehr sicher im Film' : '♡ Favorit: sicher im Film'}</button>
       ${flightRole ? `<button class="btn" data-act="takeoff" type="button">${flightRole === 'takeoff' ? '✓ Abflug' : 'Als Abflug verwenden'}</button>
@@ -14462,7 +14638,7 @@ function openMediaSheet(id) {
   if (m.kind === 'video' && m.duration) setupTrim(body, m);
   body.addEventListener('click', async (e) => {
     const u = e.target.closest('#usPick [role="radio"]');
-    if (u) { setRadio(u.closest('.chips'), u.dataset.v); m.us = u.dataset.v === 'yes' ? true : u.dataset.v === 'no' ? false : undefined; saveMediaFlags(m); commit(); scheduleRebuild(0); renderMaterial(); return; }
+    if (u) { setRadio(u.closest('.chips'), u.dataset.v); m.us = u.dataset.v === 'yes' ? true : undefined; saveMediaFlags(m); commit(); scheduleRebuild(0); renderMaterial(); return; }
     const r = e.target.closest('#sndPick [role="radio"]');
     if (r) { setRadio(r.closest('.chips'), r.dataset.v); await setVoice(m, +r.dataset.v); if (!m.audio) setRadio(r.closest('.chips'), '0'); return; }
     const a = e.target.closest('[data-act]');
@@ -15708,7 +15884,10 @@ async function init() {
     renderTabs();
     n.focus();
   });
-  $('matFilter').addEventListener('click', (e) => { const b = e.target.closest('[data-v]'); if (b) { S.matFilter = b.dataset.v; renderMaterial(); } });
+  $('matFilter').addEventListener('click', (e) => {
+    if (e.target.closest('[data-us-mark]')) { S.usMark = !S.usMark; renderMaterial(); if (!S.usMark) scheduleRebuild(0); else toast('Tippe auf eure Aufnahmen: WIR an oder aus. Danach „Fertig markiert“.'); return; }
+    const b = e.target.closest('[data-v]'); if (b) { S.matFilter = b.dataset.v; renderMaterial(); }
+  });
   $('mediaGrid').addEventListener('click', (e) => {
     const ch = e.target.closest('[data-chapter]');
     if (ch) {
@@ -15719,6 +15898,8 @@ async function init() {
       return;
     }
     const t = e.target.closest('.tile');
+    // Wir markieren: Antippen schaltet WIR an und aus (der Film wird nach „Fertig markiert“ neu geplant)
+    if (t && S.usMark) { const m = S.ctx.media.find((x) => x.id === t.dataset.id); if (m) { m.us = m.us === true ? undefined : true; saveMediaFlags(m); commit(); savePlaceSoon(); renderMaterial(); } return; }
     if (t) openMediaSheet(t.dataset.id);
   });
   for (const id of ['fileMedia', 'fileMedia2']) $(id).addEventListener('change', (e) => { const fl = Array.from(e.target.files || []); e.target.value = ''; addFiles(fl); });

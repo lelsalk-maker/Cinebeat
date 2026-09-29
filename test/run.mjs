@@ -8,13 +8,15 @@
 import { spawn, execSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 const QUICK = ['analysis', 'smooth', 'flow', 'style', 'videos', 'allmedia', 'ui', 'e2e', 'features'];
-const ALL = ['meta', 'beats', 'longbeats', 'structure', 'score', 'mux', 'csp', 'offline', 'chapters', 'ui', 'e2e', 'trip', 'flight', 'overflow', 'features', 'flow', 'fastexport', 'ingest', 'adaptive', 'resume', 'sync', 'latency', 'quality', 'perf', 'style', 'stylevis', 'videos', 'allmedia', 'analysis', 'bgexport', 'smooth', 'judder', 'listen', 'workerscore', 'heat', 'grade', 'vsync', 'trips', 'levels', 'us', 'tap', 'hook', 'stimmig', 'carousel', 'carouselui', 'shutter', 'shutterui', 'diner', 'vplay', 'select'];
+const ALL = ['meta', 'beats', 'longbeats', 'structure', 'score', 'mux', 'csp', 'offline', 'chapters', 'ui', 'e2e', 'trip', 'flight', 'overflow', 'features', 'flow', 'fastexport', 'ingest', 'adaptive', 'resume', 'sync', 'latency', 'quality', 'perf', 'style', 'stylevis', 'videos', 'allmedia', 'analysis', 'bgexport', 'smooth', 'judder', 'listen', 'workerscore', 'heat', 'grade', 'vsync', 'trips', 'levels', 'us', 'tap', 'hook', 'stimmig', 'carousel', 'carouselui', 'shutter', 'shutterui', 'diner', 'vplay', 'select', 'takt'];
 // messen Zeit oder Bildrate: nie unter Last anderer Tests
 const SERIAL = new Set(['flight', 'ingest', 'perf', 'latency', 'sync', 'adaptive', 'fastexport', 'bgexport', 'tap', 'vplay']);
 // welche Tests eine Datei berühren
+// Planer-Änderungen prüfen die Planer-Tests; reine Bedien-Abläufe (features, select, shutterui, carouselui) hängen an
+// ui.js/engine.js und laufen vor jedem Veröffentlichen mit `all`
 const MAP = [
-  [/^src\/js\/plan\/|^src\/js\/director\.js/, ['analysis', 'smooth', 'flow', 'style', 'allmedia', 'videos', 'chapters', 'overflow', 'features', 'grade', 'vsync', 'us', 'tap', 'hook', 'stimmig', 'carousel', 'carouselui', 'shutter', 'shutterui', 'diner', 'vplay', 'select']],
-  [/^src\/js\/audio\.js/, ['beats', 'longbeats', 'structure', 'listen', 'analysis', 'stimmig']],
+  [/^src\/js\/plan\/|^src\/js\/director\.js/, ['analysis', 'smooth', 'flow', 'style', 'allmedia', 'videos', 'chapters', 'overflow', 'grade', 'vsync', 'us', 'tap', 'hook', 'stimmig', 'carousel', 'shutter', 'diner', 'vplay', 'takt']],
+  [/^src\/js\/audio\.js/, ['beats', 'longbeats', 'structure', 'listen', 'analysis', 'stimmig', 'takt']],
   [/^src\/js\/(score|scoreworker)\.js/, ['score', 'analysis', 'ingest', 'workerscore', 'vsync']],
   [/^src\/js\/perflog\.js/, ['heat', 'workerscore']],
   [/^src\/js\/(renderer|overlay)\.js/, ['judder', 'stylevis', 'quality', 'style', 'shutter', 'diner']],
@@ -80,10 +82,12 @@ const run = (t) => new Promise((r) => {
 });
 const par = list.filter((t) => !SERIAL.has(t)).sort((a, b) => (times[b] || 30) - (times[a] || 30));
 const ser = list.filter((t) => SERIAL.has(t));
-const jobs = Math.max(1, +(process.env.CB_JOBS || 3));
+const jobs = Math.max(1, +(process.env.CB_JOBS || 4));
 let failed = 0;
 await Promise.all(Array.from({ length: Math.min(jobs, par.length) }, async () => { while (par.length) if (await run(par.shift())) failed++; }));
 for (const t of ser) if (await run(t)) failed++;
+// nur bestehende Tests merken (Einträge umbenannter/aufgeteilter Tests fallen weg)
+for (const k of Object.keys(times)) if (!ALL.includes(k.split('/')[0]) || (SPLIT[k] && !k.includes('/'))) delete times[k];
 writeFileSync(TIMES, JSON.stringify(times));
 const el = Math.round((Date.now() - t0) / 1000);
 console.log(`${failed ? `${failed} von ${list.length} fehlgeschlagen` : `alle ${list.length} bestanden`} · ${Math.floor(el / 60)}:${String(el % 60).padStart(2, '0')} min · lint ${lintErr}/${lintWarn}`);

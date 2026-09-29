@@ -123,6 +123,28 @@ function planQuality(plan, media, detail) {
  * Sucht den besten Schnitt: mehrere vollständige Varianten (je eigene Zufallsfolge: Bewegung, Übergänge, Stilmittel)
  * werden geplant und bewertet; die beste gewinnt. Gibt { plan, seed, score, tried } zurück.
  */
+/**
+ * Takt-Prüfer für alles, was nicht Schnitt ist: Effekte (Blitz, Zoom-Stoß, Spiegel, Scharfwerden), Einblendungen
+ * (Titel, Kapitel, Countdown …), Farbmomente (Schwarzweiß → Farbe) – jedes Ereignis muss auf einem Schlag, einem
+ * halben Schlag, einer Bassdrum oder einem Schnitt liegen (±25 ms). Liefert [{ kind, t, msg }].
+ */
+function planSyncAudit(plan, an) {
+  const w0 = plan.win.start, D = plan.duration;
+  const beats = Array.from(an.beats || []).map((b) => b - w0).filter((t) => t > -0.1 && t < D + 0.1);
+  const grid = beats.concat(beats.slice(1).map((b, i) => (b + beats[i]) / 2));
+  const kicks = Array.from(an.kicks || []).map((k) => k - w0);
+  const cuts = plan.clips.map((c) => c.start);
+  const ok = (t) => [grid, kicks, cuts].some((l) => l.some((x) => Math.abs(x - t) < 0.025));
+  const out = [];
+  const add = (kind, t, msg) => out.push({ kind, t: +t.toFixed(2), msg });
+  for (const f of plan.fx || []) if (['flash', 'punch', 'mirror', 'focus'].includes(f.type) && f.start > 0.05 && !ok(f.start)) add('fx', f.start, `${f.type} neben dem Schlag`);
+  for (const o of plan.overlays || []) if (!['shutter', 'sticker', 'usertext', 'datestamp', 'flight', 'routemap'].includes(o.type) && o.start > 0.05 && !ok(o.start)) add('overlay', o.start, `${o.type} beginnt neben dem Schlag`);
+  for (const c of plan.colorFx || []) {
+    for (const k of ['at', 'start', 'hit']) if (typeof c[k] === 'number' && c[k] > 0.05 && c[k] < D - 0.05 && !ok(c[k])) add('color', c[k], `Farbmoment (${c.mode || c.type || ''}) neben dem Schlag`);
+  }
+  return out;
+}
+
 /** Wie ähnlich sind zwei Schnitte (0–1)? Gleiche Aufnahme am gleichen Platz und gleiche Schnittstellen. */
 function cutSimilarity(a, b) {
   const seqA = a.clips.filter((c) => !c.loop).map((c) => c.mediaId || (c.split && c.split.ids.join('+')) || '');
@@ -143,7 +165,8 @@ async function bestCut(opts, n = 8, onProgress) {
   for (let k = 0; k < seeds.length; k++) {
     const plan = buildPlan({ ...opts, settings: { ...opts.settings, seed: seeds[k] } });
     // harte Regeln gegen den Song (Schlag, Drop, Mindestzeiten, Reihenfolge): jede Unstimmigkeit kostet deutlich
-    const audit = opts.an ? planAudit(plan, opts.media, opts.an) : [];
+    // dazu jedes Ereignis neben dem Takt (Effekt, Einblendung, Farbmoment)
+    const audit = opts.an ? planAudit(plan, opts.media, opts.an).concat(planSyncAudit(plan, opts.an)) : [];
     // „Neu schneiden“: eine Variante, die fast wie der bisherige Schnitt aussieht, zählt deutlich weniger
     const same = opts.avoid ? cutSimilarity(plan, opts.avoid) : 0;
     const score = planQuality(plan, opts.media) - audit.length * 4 - (same > 0.7 ? 30 * (same - 0.7) / 0.3 + 10 : 0);
@@ -274,7 +297,7 @@ function planAudit(plan, media, an) {
   // bewusst schnelle Serien (Bilderflut, Serie, Rückspulen) schneiden auf Achtel/Sechzehntel des Schlags
   const sub = [];
   for (let i = 0; i + 1 < beats.length; i++) for (let q = 1; q < 4; q++) sub.push(beats[i] + ((beats[i + 1] - beats[i]) * q) / 4);
-  const fast = (c) => c.burst || c.rush || c.miniRew || c.leader || c.knock;
+  const fast = (c) => c.burst || c.rush || c.miniRew || c.leader || c.knock || c.pre === 'rew';
   for (const c of clips) if (c.start > 0.05 && !near(beats, c.start) && !(fast(c) || fast(clips[c.i - 1] || {})) || (c.start > 0.05 && (fast(c) || fast(clips[c.i - 1] || {})) && !near(beats, c.start) && !near(sub, c.start))) add('beat', c.start, `Schnitt neben dem Schlag (Einstellung ${c.i + 1} ${flags(c)} ${c.label})`);
   // 3. jeder Einsatz eines Refrains/Drops im Film ist ein Schnitt
   for (const s of an.sections || []) {

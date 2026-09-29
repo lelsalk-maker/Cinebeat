@@ -47,8 +47,9 @@ function arrangeBlocks(clips, { byId, ov = {}, moved: userMoved = new Set(), us 
   const unary = (c, m, rank, pos, n) => {
     const calm = isCalmLabel(c.label);
     const durN = cl((c.end - c.start - avgDur) / Math.max(0.2, avgDur), -1, 1);
+    // Wir (von euch markiert): klar in die ruhigen Passagen und auf die langen Plätze
     const u = us ? usScore(m) : 0;
-    let v = u * (calm ? 1 : -0.7) + (1 - u) * (calm ? 0 : 0.25);
+    let v = u * (calm ? 1.6 : -1.2) + (1 - u) * (calm ? 0 : 0.25) + u * durN * 0.7;
     const size = sizeOf(m);
     v += durN * (size === 0 ? 0.35 : size === 2 ? -0.25 : 0);
     v += durN * ((m.score || 0.5) - meanScore) * 1.2;
