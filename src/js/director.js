@@ -10,16 +10,20 @@
  */
 const FORMAT_RULES = {
   '9:16': { shot: 1.9, shotMin: 1.35, min: 8, max: 60, vmax: 7.5, kind: 'story', label: 'Story' },
-  reel: { shot: 1.9, shotMin: 1.35, min: 8, max: 90, vmax: 10, kind: 'story', label: 'Reel' },
+  // Reels dürfen bei Instagram bis 3 Minuten lang sein
+  reel: { shot: 1.9, shotMin: 1.35, min: 8, max: 180, vmax: 10, kind: 'story', label: 'Reel' },
   '4:5': { shot: 2.1, shotMin: 1.5, min: 10, max: 60, vmax: 8, kind: 'post', label: 'Beitrag' },
-  '16:9': { shot: 2.8, shotMin: 2, min: 15, max: 150, vmax: 15, kind: 'film', label: 'Film' },
-  '2.39': { shot: 3.0, shotMin: 2.2, min: 15, max: 150, vmax: 15, kind: 'film', label: 'Film' },
+  // Filme dürfen so lang sein wie der Song (bis 10 min)
+  '16:9': { shot: 2.8, shotMin: 2, min: 15, max: 600, vmax: 15, kind: 'film', label: 'Film' },
+  '2.39': { shot: 3.0, shotMin: 2.2, min: 15, max: 600, vmax: 15, kind: 'film', label: 'Film' },
 };
 /**
  * Menge der Aufnahmen: 'auto' folgt „Alle Aufnahmen“/„Beste Auswahl“; 'mehr' nimmt alle guten Aufnahmen und jedes zweite
  * Serienbild, Videos etwas kürzer (mehr Zeit für Fotos); 'max' nimmt alle Serienbilder (als Foto-Serien im Takt), Videos noch kürzer.
  */
 const mengeOf = (s) => (s && (s.menge === 'mehr' || s.menge === 'max') ? s.menge : 'auto');
+/** Höchstlänge bei „Passend zum Material“: Reels 90 s (mit Menge „Mehr“/„So viele wie möglich“ bis 3 min), sonst das Format. */
+const autoMax = (s) => (s.format === '9:16' && s.target === 'reel' && mengeOf(s) === 'auto' ? 90 : formatRule(s).max);
 const allMediaOn = (s) => s.allMedia !== 'off' || mengeOf(s) !== 'auto';
 const formatRule = (s) => {
   const r = s.format === '9:16' && s.target === 'reel' ? FORMAT_RULES.reel : FORMAT_RULES[s.format] || FORMAT_RULES['9:16'];
@@ -270,10 +274,12 @@ function direct(an, media, s, chapters, flight) {
   let T;
   if (s.length === 'full') T = songLen;
   else if (s.length === 'auto') {
-    if (chapters && chapters.length) T = Math.max(30, Math.min(fr.max, need * 0.85));
-    else T = Math.max(fr.min, Math.min(fr.max, need));
+    // Reisefilm (Kapitel): so lang wie der Song – die ganze Reise, jeder Ort mit seinen Höhepunkten
+    if (chapters && chapters.length) T = Math.min(fr.max, songLen);
+    // Reel „passend zum Material“: höchstens 90 s (länger nur, wenn gewählt – „Ganzer Song“ oder eine feste Länge bis 3 min)
+    else T = Math.max(fr.min, Math.min(autoMax(s), need));
     // Nachplanung: länger als der vorige Versuch, damit die übrigen Aufnahmen Platz finden
-    if (s._minT) T = Math.max(T, Math.min(fr.max, s._minT));
+    if (s._minT) T = Math.max(T, Math.min(autoMax(s), s._minT));
   } else T = +s.length;
   // Story: nie länger als Instagram am Stück zeigt
   if (fr.kind === 'story' && s.target !== 'reel' && s.format === '9:16') T = Math.min(T, fr.max);
@@ -289,9 +295,10 @@ function direct(an, media, s, chapters, flight) {
   // Songausschnitt
   // Story: der ganze Song passt nicht in 60 s – dann der beste 60-s-Ausschnitt
   const storyCap = fr.kind === 'story' && s.target !== 'reel' && s.format === '9:16';
-  // Instagram-Formate haben harte Grenzen (Story 60 s, Reel 90 s, Beitrag 60 s); nur der Film darf länger
+  // Instagram-Formate haben harte Grenzen (Story 60 s, Reel 3 min, Beitrag 60 s); nur der Film darf länger
   const hardCap = fr.kind !== 'film';
-  const full = s.length === 'full' && !(storyCap && songLen > fr.max);
+  // Reisefilm (Kapitel) bei „Auto“: der ganze Song
+  const full = (s.length === 'full' || (chapters && chapters.length && s.length === 'auto')) && !(storyCap && songLen > fr.max);
   if (s.length === 'full' && !full) notes.push(`Eine Story zeigt höchstens ${fr.max} s am Stück: der Film nimmt den besten ${fr.max}-s-Ausschnitt. Den ganzen Song bekommst du als Reel.`);
   let win;
   if (full || s.songStart === 'start') {

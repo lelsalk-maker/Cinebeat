@@ -322,7 +322,8 @@ function planAudit(plan, media, an) {
     if (c.rate && (c.rate < 0.34 || c.rate > 2.7)) add('video-tempo', c.start, `Video-Tempo ${c.rate}`);
   }
   // 6. Songausschnitt: beginnt auf einer Eins, endet auf einer Eins oder einem Abschnittsende; Länge im Format
-  if (bars.length && !near(bars, 0, 0.06)) add('start', 0, 'Songausschnitt beginnt nicht auf einer Eins');
+  // (beginnt der Film mit dem Song selbst – erster Ton –, ist das der natürliche Anfang, auch vor der ersten Eins)
+  if (bars.length && !near(bars, 0, 0.06) && !(plan.win.start <= (an.firstSound || 0) + 0.06)) add('start', 0, 'Songausschnitt beginnt nicht auf einer Eins');
   const secEnds = (an.sections || []).map((s) => s.end - win.start);
   // (am natürlichen Songende – nach der letzten Eins – ist Schluss richtig, auch wenn das Raster dort ausläuft)
   const songEnd = (an.lastSound != null && win.end >= Math.min(an.duration || Infinity, an.lastSound + 0.2) - 0.05) || (bars.length && D >= bars[bars.length - 1] - 0.1);

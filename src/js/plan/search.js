@@ -12,7 +12,17 @@
  */
 function buildPlan(opts) {
   let best = searchPlan(opts);
-  if (opts.flight || (opts.chapters && opts.chapters.length)) return best;
+  if (opts.flight) return best;
+  // Reisefilm (Kapitel): reicht die ruhige Schnittlänge nicht für die Zielmenge, verdichtet die Regie stufenweise
+  if (opts.chapters && opts.chapters.length) {
+    const maxLv = mengeOf(best.resolved) === 'auto' ? 3 : 4;
+    for (let lv = 1; lv <= maxLv && (best._m.short || best._m.repeats); lv++) {
+      const p = searchPlan({ ...opts, _level: lv });
+      const cost = (x) => x._m.short + x._m.repeats * 3;
+      if (cost(p) < cost(best)) best = p;
+    }
+    return best;
+  }
   // Alle Aufnahmen: reicht es nicht, verdichtet die Regie stufenweise – dichtere Schnitte und mehr Split-Screens,
   // dann Foto-Serien in den Refrains/Drops und gemeinsam laufende Videos, zuletzt längere Foto-Serien
   if (!allMediaOn(best.resolved)) return best;
@@ -31,7 +41,8 @@ function searchPlan(opts) {
   if (opts.flight) return best;
   // „Beste Auswahl“: Weglassen ist gewollt – es zählt nur, dass sich nichts wiederholt (das Tempo bleibt beim Song)
   const pick = !allMediaOn(best.resolved) && !(opts.chapters && opts.chapters.length);
-  const bad = (p) => p._m.repeats * 3 + (pick ? 0 : p._m.dropped);
+  const chap = !!(opts.chapters && opts.chapters.length);
+  const bad = (p) => p._m.repeats * 3 + (chap ? p._m.short : pick ? 0 : p._m.dropped);
   const better = (p, q) => bad(p) < bad(q) || (bad(p) === bad(q) && !p._m.repeats && p._m.scale < q._m.scale);
   let cur = best;
   for (let ext = 0; ext < 3 && bad(best); ext++) {

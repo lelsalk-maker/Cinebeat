@@ -1719,7 +1719,7 @@ function showFlow(media) {
     const [a, b] = adv.images, [va, vb] = adv.videos;
     const vTxt = vb ? (va ? `${va}–${vb} Videos` : `bis ${vb} ${vb === 1 ? 'Video' : 'Videos'}`) : 'keine Videos nötig';
     const allOn = allMediaOn(st) && ctx.kind === 'place' && !isFlight(ctx.rec);
-    const why = { story: 'kurzer Aufbau und der erste Höhepunkt ganz', reel: 'Aufbau und die Höhepunkte, bis 90 s', post: 'kurzer Aufbau und der erste Höhepunkt', film: 'der ganze Song' }[tg];
+    const why = { story: 'kurzer Aufbau und der erste Höhepunkt ganz', reel: 'Aufbau und die Höhepunkte, bis 90 s (als „Ganzer Song“ bis 3 min)', post: 'kurzer Aufbau und der erste Höhepunkt', film: 'der ganze Song' }[tg];
     let verdict;
     if (ctx.kind === 'bestof') verdict = 'Der Gesamtfilm nimmt aus jedem Ort die stärksten Momente, in Kapiteln.';
     else if (isFlight(ctx.rec)) verdict = 'Abflug, Flugroute und Landung ordnet die Regie selbst.';
