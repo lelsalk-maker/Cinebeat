@@ -74,6 +74,8 @@ if (s4.media.find((m) => m.id === c).ex) fails.push('Rückgängig wirkt nicht');
 // 4. Neu schneiden: neue Zusammensetzung, eigene Entscheidungen bleiben
 const favs = s4.media.filter((m) => m.fav).map((m) => m.id), excl = s4.media.filter((m) => m.ex).map((m) => m.id);
 await page.click('#remixBtn');
+await page.waitForSelector('#remixGo');
+await page.click('#remixGo');
 await page.waitForTimeout(800); await idle();
 const s5 = await st();
 const toast5 = await page.textContent('.toast');

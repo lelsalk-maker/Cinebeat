@@ -127,6 +127,20 @@ const res = await p.evaluate(async (b64) => {
   out.bestClips = pb.clips.map((c) => `${c.start.toFixed(1)}-${c.end.toFixed(1)} ${c.label}${c.vid ? ' V' : ''}${c.split ? ' S' : ''}${c.burst ? ' B' : ''} ${c.role}`).join(' | ');
   out.best = { dropped: dropped.length, avgDropped: +avg(dropped).toFixed(2), avgKept: +avg(kept).toFixed(2) };
   if (!dropped.length || avg(dropped) >= avg(kept)) fails.push('Beste Auswahl lässt nicht die schwächsten weg');
+  // Menge beim Neu schneiden: Serienbilder (wie beim Einlesen markiert) und lange Videos – jede Stufe nimmt mehr,
+  // „So viele wie möglich“ alle; alles bleibt stimmig zum Song (planAudit + planSyncAudit ohne Befund)
+  {
+    const bursty = make(80, [20, 35, 50, 15, 40, 25]).map((m, i) => (m.kind === 'image' && i % 5 >= 3 ? { ...m, dupOf: 'x' + i, dupD: 2, dupDt: 6000 } : m));
+    const cnt = {};
+    for (const [nm, st] of [['beste', { allMedia: 'off' }], ['alle', {}], ['mehr', { menge: 'mehr' }], ['max', { menge: 'max' }]]) {
+      const pl = plan(bursty, { target: 'reel', length: 90, ...st });
+      cnt[nm] = sequence(pl, bursty).length;
+      const iss = planAudit(pl, bursty, an).concat(planSyncAudit(pl, an));
+      if (iss.length) fails.push(`Menge ${nm}: ${iss.slice(0, 3).map((x) => x.msg).join(' | ')}`);
+    }
+    out.menge = cnt;
+    if (!(cnt.beste < cnt.alle && cnt.alle < cnt.mehr && cnt.mehr < cnt.max && cnt.max >= bursty.length - 1)) fails.push('Menge: Stufen nehmen nicht mehr auf ' + JSON.stringify(cnt));
+  }
   return { out, fails };
 }, wav);
 console.log(JSON.stringify(res.out, null, 1));

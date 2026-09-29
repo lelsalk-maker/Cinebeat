@@ -4052,7 +4052,7 @@ function buildPlan(opts) {
   if (opts.flight || (opts.chapters && opts.chapters.length)) return best;
   // Alle Aufnahmen: reicht es nicht, verdichtet die Regie stufenweise – dichtere Schnitte und mehr Split-Screens,
   // dann Foto-Serien in den Refrains/Drops und gemeinsam laufende Videos, zuletzt längere Foto-Serien
-  if (best.resolved.allMedia === 'off') return best;
+  if (!allMediaOn(best.resolved)) return best;
   // fehlt sehr viel, gleich auf einer höheren Stufe beginnen (spart Rechenzeit auf dem Handy)
   const nAll = best.capacity.images + best.capacity.videos;
   const start = best._m.dropped > nAll * 0.4 ? 3 : best._m.dropped > nAll * 0.2 ? 2 : 1;
@@ -4067,7 +4067,7 @@ function searchPlan(opts) {
   let best = planOnce(opts);
   if (opts.flight) return best;
   // „Beste Auswahl“: Weglassen ist gewollt – es zählt nur, dass sich nichts wiederholt (das Tempo bleibt beim Song)
-  const pick = best.resolved.allMedia === 'off' && !(opts.chapters && opts.chapters.length);
+  const pick = !allMediaOn(best.resolved) && !(opts.chapters && opts.chapters.length);
   const bad = (p) => p._m.repeats * 3 + (pick ? 0 : p._m.dropped);
   const better = (p, q) => bad(p) < bad(q) || (bad(p) === bad(q) && !p._m.repeats && p._m.scale < q._m.scale);
   let cur = best;
@@ -4369,7 +4369,9 @@ function planOnce(opts) {
   const usable = pool.filter((m) => !m.excluded);
   const intro = s.intro, outro = s.outro;
   // „Alle Aufnahmen verwenden“: jede Aufnahme kommt vor (auch Serienbilder); die Regie verdichtet dafür
-  const allOn = s.allMedia !== 'off' && !chapters && !flight;
+  const allOn = allMediaOn(s) && !chapters && !flight;
+  // „Mehr“/„So viele wie möglich“: auch Serienbilder (goodMedia mit 'mehr'/'max')
+  const gAll = allOn && mengeOf(s) !== 'auto' ? mengeOf(s) : allOn;
   // Chronologischer Durchlauf (Ortsfilme, Reels, Storys): Aufnahmen strikt nach Aufnahmezeit
   const chrono = !chapters && !flight;
   const level = opts._level || 0;
@@ -4379,7 +4381,7 @@ function planOnce(opts) {
   const shotBase = fr.shot / 1.7;
   // Schnittlänge nach Material: Videos bekommen (fast) ihre ganze Länge, die übrige Zeit teilen sich die Fotos.
   // Viel Material → dichter (nie kürzer als shotMin), wenig Material → ruhiger statt Bilder zu wiederholen.
-  const good = goodMedia(usable, allOn);
+  const good = goodMedia(usable, gAll);
   const vidT = good.filter((m) => m.kind === 'video').reduce((a, m) => a + videoPlay(m, fr.vmax), 0);
   const imgN = Math.max(1, good.filter((m) => m.kind === 'image').length);
   // Mindestlänge je Einstellung; müssen alle Aufnahmen hinein, darf es bis auf einen Beat dichter werden
@@ -4458,7 +4460,7 @@ function planOnce(opts) {
 
   let gridPlan = null;
   if (intro === 'grid') {
-    const n = goodMedia(usable, allOn).length >= 9 ? 3 : 2;
+    const n = goodMedia(usable, gAll).length >= 9 ? 3 : 2;
     const step = bStep;
     const at = (k) => atB(k + pb);
     const tiles = n * n;
@@ -4565,7 +4567,7 @@ function planOnce(opts) {
   const lastForced = forced[forced.length - 1];
   const introEnd = !lastForced ? segs[0].end : lastForced.leader ? lastForced.end : (segs[forced.length] || lastForced).end;
   // Bilderflut: nach der Ruhe wird es im Drop wieder schneller (Foto-Serie), aber nicht direkt nach der Flut
-  if ((s.burst === 'drop' || rush || level >= 2) && !flight && goodMedia(usable, allOn).length >= 5) {
+  if ((s.burst === 'drop' || rush || level >= 2) && !flight && goodMedia(usable, gAll).length >= 5) {
     const secs = (an.sections || []).map((x) => ({ ...x, rel: x.start - win.start }));
     const isPeak = (x) => x.label === 'drop' || x.label === 'chorus';
     let peak = secs.find((x) => isPeak(x) && x.rel > Math.max(1.2, introEnd - 0.05) && x.rel < D - 3);
@@ -4611,7 +4613,7 @@ function planOnce(opts) {
   const beatIdxAt = (t) => { let k = 0; for (let i = 0; i < bts0.length; i++) if (bts0[i] <= t + 0.03) k = i; return k; };
   const special = (g) => g.burst || g.leader || g.knock || g.gridSeg || g.gridMid || g.pre || g.reveal || g.vslot || g.miniRew || g.stackSeg || g.rush;
   let midGrid = null;
-  if (s.midGrid === 'on' && !flight && goodMedia(usable, allOn).length >= 5) {
+  if (s.midGrid === 'on' && !flight && goodMedia(usable, gAll).length >= 5) {
     const busy = (a, b) => segs.some((g) => (g.burst || g.gridSeg || g.pre || g.reveal || g.leader || g.knock) && g.start < b && g.end > a);
     const peaks = secsRel.filter((x) => isPeakSec(x) && x.rel > Math.max(introEnd, barDur) + barDur);
     // ohne weiteren Refrain: Anfang einer Phrase (4 Takte) mitten im Drop/Refrain
@@ -4620,7 +4622,7 @@ function planOnce(opts) {
       .map((x) => ({ rel: x.rel, end: x.rel + barDur * 4, start: win.start + x.rel }));
     // bevorzugt der zweite Refrain (der erste gehört oft dem Einstieg oder der Foto-Serie)
     for (const pk of [...(peaks.length > 1 ? [peaks[1], peaks[0], ...peaks.slice(2)] : peaks), ...phrases]) {
-      const n = goodMedia(usable, allOn).length >= 9 && pk.end - pk.start >= barDur * 4 ? 3 : 2;
+      const n = goodMedia(usable, gAll).length >= 9 && pk.end - pk.start >= barDur * 4 ? 3 : 2;
       const step = beatDur < 0.42 ? 2 : 1;
       const k0 = beatIdxAt(pk.rel), tiles = n * n;
       const at = (k) => (bts0[k0 + k] != null ? bts0[k0 + k] : bts0[k0] + k * beatDur);
@@ -4683,7 +4685,7 @@ function planOnce(opts) {
   const hitsRel = secsRel.filter((x) => isPeakSec(x) && x.rel > introEnd + barDur * 1.5 && x.rel < D - barDur * 2 && !isPeakSec(sectionAt(an, x.start - 0.05)) && !(countIn && Math.abs(countIn.end - x.rel) < 0.2)).map((x) => x.rel);
   const overlapsSpecial = (a, z) => segs.some((g) => special(g) && g.start < z - 0.02 && g.end > a + 0.02);
   let miniAt = null;
-  if (s.mini === 'on' && !flight && goodMedia(usable, allOn).length >= 6) {
+  if (s.mini === 'on' && !flight && goodMedia(usable, gAll).length >= 6) {
     const colorOn = s.color && s.color !== 'off';
     for (const h of colorOn && hitsRel.length > 1 ? hitsRel.slice(1).concat(hitsRel[0]) : hitsRel) {
       const k = beatIdxAt(h);
@@ -4703,7 +4705,7 @@ function planOnce(opts) {
     }
   }
   let stackAt = null;
-  if (s.stack === 'on' && !flight && goodMedia(usable, allOn).filter((m) => m.kind === 'image').length >= 6) {
+  if (s.stack === 'on' && !flight && goodMedia(usable, gAll).filter((m) => m.kind === 'image').length >= 6) {
     // Abzüge fallen alle zwei Beats (bei langsamen Songs jeden Beat), danach ein kurzer Moment Ruhe
     const step = beatDur > 0.7 ? 1 : 2;
     const barsRel = (an.barStart || []).map((b) => b - win.start).filter((t) => t > introEnd + barDur * 0.5 && t < D - barDur * 2);
@@ -4724,7 +4726,7 @@ function planOnce(opts) {
 
   // Videos: eigene, längere Plätze in ruhigen Songteilen (nicht bei Flügen: dort legt die Rolle die Videos fest)
   if (!flight) {
-    const all = orderChrono(goodMedia(usable, allOn));
+    const all = orderChrono(goodMedia(usable, gAll));
     // das vom Nutzer gewählte Startbild läuft als Einstieg, nicht zusätzlich auf einem eigenen Platz
     const vids = all.filter((m) => m.kind === 'video' && m.id !== settings.hookId);
     // erst nach dem Einstieg und seiner ersten Vollbild-Einstellung (dem Highlight)
@@ -4746,7 +4748,7 @@ function planOnce(opts) {
   // ---------- Chronologischer Durchlauf: Aufnahmen streng nach Aufnahmezeit auf die Schnitte legen ----------
   let chronoInfo = null;
   if (chrono) {
-    const all0 = orderChrono(goodMedia(usable, allOn));
+    const all0 = orderChrono(goodMedia(usable, gAll));
     // Startbild: das stärkste Foto der ersten Momente (die Reihenfolge verschiebt sich dafür höchstens um wenige Plätze)
     const early = all0.slice(0, Math.max(3, Math.ceil(all0.length * 0.15)));
     const hk = intro === 'split' ? null : (settings.hookId && all0.find((m) => m.id === settings.hookId)) || early.filter((m) => m.kind === 'image').sort((a, b) => (b.score || 0) - (a.score || 0))[0] || all0[0] || null;
@@ -4960,7 +4962,7 @@ function planOnce(opts) {
     const stackC = clips.find((c) => c.stack);
     let reserved = [];
     if (stackC) {
-      const imgsC = orderChrono(goodMedia(usable, allOn).filter((m) => m.kind === 'image' && !mustIds.has(m.id) && m.id !== settings.hookId));
+      const imgsC = orderChrono(goodMedia(usable, gAll).filter((m) => m.kind === 'image' && !mustIds.has(m.id) && m.id !== settings.hookId));
       const top = imgsC.slice().sort((a, b) => (b.score || 0) - (a.score || 0))[0];
       const cand = imgsC.filter((m) => m !== top);
       if (cand.length >= 7) { const at = Math.round((stackC.start / D) * (cand.length - 4)); reserved = cand.slice(at, at + 4); }
@@ -5033,7 +5035,7 @@ function planOnce(opts) {
       // Wand: immer die stärksten Aufnahmen, die stärkste vorn (hält den Blick) – nicht chronologisch.
       // Höchstens drei Videos (sonst ruckelt es auf dem Handy), keine Beinahe-Doppel nebeneinander.
       const strength = (m) => (m.score || 0.5) + (m.fav ? 0.25 : 0) + (m.kind === 'video' ? 0.04 : 0);
-      const rank = goodMedia(usable, allOn).slice().sort((a, b) => strength(b) - strength(a));
+      const rank = goodMedia(usable, gAll).slice().sort((a, b) => strength(b) - strength(a));
       const twin = (a, b) => a.dupOf === b.id || b.dupOf === a.id || (a.hash && b.hash && hamming(a.hash, b.hash) < 10);
       const pick = [];
       for (const m of rank) {
@@ -5089,8 +5091,8 @@ function planOnce(opts) {
   const rushC = clips.filter((c) => c.rush);
   if (rushC.length) {
     const hookC = clips.find((c) => c.role === 'hook');
-    const fotos = orderChrono(goodMedia(usable, allOn).filter((m) => m.kind === 'image' && (!hookC || m.id !== hookC.mediaId)));
-    const src = fotos.length ? fotos : goodMedia(usable, allOn).filter((m) => m.kind === 'image');
+    const fotos = orderChrono(goodMedia(usable, gAll).filter((m) => m.kind === 'image' && (!hookC || m.id !== hookC.mediaId)));
+    const src = fotos.length ? fotos : goodMedia(usable, gAll).filter((m) => m.kind === 'image');
     rushC.forEach((c, k) => {
       const m = src.length ? src[Math.floor((k * src.length) / rushC.length) % src.length] : null;
       c.mediaId = m ? m.id : c.mediaId; c.role = 'rush';
@@ -5103,7 +5105,7 @@ function planOnce(opts) {
   for (const si of splitClips.sort((a, b) => a - b)) {
     const c = clips[si];
     // Videos mit eigenem Platz nicht zusätzlich im Split-Screen
-    const pool2 = goodMedia(usable, allOn).filter((m) => !(m.kind === 'video' && clips.some((x) => x.vid === m.id)));
+    const pool2 = goodMedia(usable, gAll).filter((m) => !(m.kind === 'video' && clips.some((x) => x.vid === m.id)));
     const fitting = pool2.filter(splitFit);
     // nur Aufnahmen, die sonst nicht zu sehen sind (sonst wäre es eine Doppelung)
     const unusedFit = fitting.filter((m) => !useCount.get(m.id)), unused = pool2.filter((m) => !useCount.get(m.id));
@@ -5132,10 +5134,10 @@ function planOnce(opts) {
     if (!c.stack) continue;
     // chronologisch vorab zugeteilt: genau diese Fotos (auch wenn eine Vorschau wie die Bilderflut sie schon kurz zeigte)
     const res0 = (c.stack.reserved || []).map((id) => byId.get(id)).filter((m) => m && (chrono || !useCount.get(m.id)));
-    const free = res0.length >= 3 ? res0 : goodMedia(usable, allOn).filter((m) => m.kind === 'image' && !useCount.get(m.id)).sort((a, b) => (b.score || 0) - (a.score || 0));
+    const free = res0.length >= 3 ? res0 : goodMedia(usable, gAll).filter((m) => m.kind === 'image' && !useCount.get(m.id)).sort((a, b) => (b.score || 0) - (a.score || 0));
     if (free.length < 3) {
       c.stack = null;
-      const pick = goodMedia(usable, allOn).filter((m) => m.kind === 'image').sort((a, b) => (useCount.get(a.id) || 0) - (useCount.get(b.id) || 0) || (b.score || 0) - (a.score || 0))[0];
+      const pick = goodMedia(usable, gAll).filter((m) => m.kind === 'image').sort((a, b) => (useCount.get(a.id) || 0) - (useCount.get(b.id) || 0) || (b.score || 0) - (a.score || 0))[0];
       if (pick) { c.mediaId = pick.id; useCount.set(pick.id, (useCount.get(pick.id) || 0) + 1); }
       continue;
     }
@@ -5186,7 +5188,7 @@ function planOnce(opts) {
     if (!c0 || !next) return;
     const target = byId.get(next.mediaId);
     const tiles = gp.n * gp.n;
-    const pool2 = goodMedia(usable, allOn).filter((m) => m !== target && (m.kind === 'image' || m.poster));
+    const pool2 = goodMedia(usable, gAll).filter((m) => m !== target && (m.kind === 'image' || m.poster));
     const tt = target && target.time ? target.time : 0;
     const others = c0.gridIds && c0.gridIds.length ? c0.gridIds.map((id) => byId.get(id)).filter(Boolean).slice(0, tiles - 1)
       : pool2.sort((a, b) => (a.kind === 'image' ? 0 : 1) - (b.kind === 'image' ? 0 : 1) || (intro ? (b.score || 0) - (a.score || 0) : Math.abs((a.time || 0) - tt) - Math.abs((b.time || 0) - tt))).slice(0, tiles - 1);
@@ -6633,7 +6635,7 @@ function idealLength(an, s) {
 const ADVICE_CACHE = new WeakMap();
 function songAdvice(an, settings) {
   // je Song und Ziel nur einmal rechnen (der Musik-Tab fragt oft)
-  const key = [settings.format, settings.target, settings.pace, settings.variant, settings.allMedia].join('|');
+  const key = [settings.format, settings.target, settings.pace, settings.variant, settings.allMedia, settings.menge].join('|');
   let byKey = ADVICE_CACHE.get(an);
   if (!byKey) { byKey = new Map(); ADVICE_CACHE.set(an, byKey); }
   if (!byKey.has(key)) byKey.set(key, songAdviceRaw(an, settings));
@@ -6941,7 +6943,7 @@ function planAudit(plan, media, an) {
   // (ebenso, wenn der Film schon an der Formatgrenze oder am Songende steht – dann sagt die Notiz, was draußen bleibt)
   const bar = an.bpm ? 240 / an.bpm : 2;
   const atLimit = D >= fr.max - bar * 1.6 - 0.05 || songEnd;
-  if (plan.resolved.allMedia !== 'off' && cap.droppedIds && cap.droppedIds.length && !fixedLen && !atLimit) add('fehlt', 0, `${cap.droppedIds.length} Aufnahmen fehlen`);
+  if (allMediaOn(plan.resolved) && cap.droppedIds && cap.droppedIds.length && !fixedLen && !atLimit) add('fehlt', 0, `${cap.droppedIds.length} Aufnahmen fehlen`);
   // 8. Reihenfolge: Tagesblöcke nie vertauscht (Vorschau-Einstiege ausgenommen)
   if (plan.resolved.order !== 'streng') {
     // Startbild-Einstiege (Aufblende, Countdown, Raster) und Vorschauen zeigen bewusst das stärkste Bild der Reise vorab
@@ -7746,7 +7748,17 @@ const FORMAT_RULES = {
   '16:9': { shot: 2.8, shotMin: 2, min: 15, max: 150, vmax: 15, kind: 'film', label: 'Film' },
   '2.39': { shot: 3.0, shotMin: 2.2, min: 15, max: 150, vmax: 15, kind: 'film', label: 'Film' },
 };
-const formatRule = (s) => (s.format === '9:16' && s.target === 'reel' ? FORMAT_RULES.reel : FORMAT_RULES[s.format] || FORMAT_RULES['9:16']);
+/**
+ * Menge der Aufnahmen: 'auto' folgt „Alle Aufnahmen“/„Beste Auswahl“; 'mehr' nimmt alle guten Aufnahmen und jedes zweite
+ * Serienbild, Videos etwas kürzer (mehr Zeit für Fotos); 'max' nimmt alle Serienbilder (als Foto-Serien im Takt), Videos noch kürzer.
+ */
+const mengeOf = (s) => (s && (s.menge === 'mehr' || s.menge === 'max') ? s.menge : 'auto');
+const allMediaOn = (s) => s.allMedia !== 'off' || mengeOf(s) !== 'auto';
+const formatRule = (s) => {
+  const r = s.format === '9:16' && s.target === 'reel' ? FORMAT_RULES.reel : FORMAT_RULES[s.format] || FORMAT_RULES['9:16'];
+  const k = mengeOf(s) === 'max' ? 0.55 : mengeOf(s) === 'mehr' ? 0.75 : 1;
+  return k === 1 ? r : { ...r, vmax: Math.max(3.5, r.vmax * k) };
+};
 
 const SEC_DE = { intro: 'Intro', verse: 'Strophe', build: 'Aufbau', chorus: 'Refrain', drop: 'Drop', break: 'Break', outro: 'Outro' };
 
@@ -7760,18 +7772,21 @@ function fmtMS(s) {
  * fast schwarze oder ausgebrannte Bilder (Taschenauslöser), unscharf und zugleich schlecht belichtet,
  * und identische Serienbilder innerhalb weniger Sekunden. Liefert den Grund oder ''. Favoriten bleiben immer.
  */
-function autoOut(m) {
+/** keepBursts: true = alle Serienbilder behalten, 'half' = jedes zweite (fest nach Kennung), sonst aussortieren. */
+function autoOut(m, keepBursts = false) {
   if (m.fav || m.kind !== 'image') return '';
   if (/^(screenshot|bildschirmfoto|screen shot)/i.test(m.name || '')) return 'Bildschirmfoto';
   if (m.expo != null && m.expo < 0.04 && (m.luma < 0.08 || m.luma > 0.94)) return m.luma < 0.5 ? 'fast schwarz' : 'überbelichtet';
   if (m.sharp != null && m.sharp < 0.03 && m.expo != null && m.expo < 0.35) return 'unscharf';
-  if (m.dupOf && m.dupD != null && m.dupD <= 2 && m.dupDt != null && m.dupDt < 20000) return 'Serienbild';
+  if (keepBursts !== true && m.dupOf && m.dupD != null && m.dupD <= 2 && m.dupDt != null && m.dupDt < 20000 && !(keepBursts === 'half' && (hashStr(m.id) & 1) === 0)) return 'Serienbild';
   return '';
 }
 
-/** Verwendbare Aufnahmen; all: auch Serienbilder (Beinahe-Doppel), wenn alle Aufnahmen in den Film sollen. */
+/** Serienbilder je Menge: 'max' alle, 'mehr' jedes zweite. */
+const burstKeep = (all) => (all === 'max' ? true : all === 'mehr' ? 'half' : false);
+/** Verwendbare Aufnahmen; all: auch Beinahe-Doppel, wenn alle Aufnahmen in den Film sollen; 'mehr'/'max': auch Serienbilder. */
 function goodMedia(media, all) {
-  return media.filter((m) => !m.bad && !m.loading && !m.excluded && (all ? !autoOut(m) : !m.dupOf || m.fav));
+  return media.filter((m) => !m.bad && !m.loading && !m.excluded && (all ? !autoOut(m, burstKeep(all)) : !m.dupOf || m.fav));
 }
 
 function isLandscape(m) { return m.w && m.h && m.w > m.h * 1.15; }
@@ -7974,7 +7989,8 @@ function direct(an, media, s, chapters, flight) {
   const notes = [];
   s = withMusicVideo(withVariant(s));
   const rs = { ...s };
-  const list = goodMedia(media, s.allMedia !== 'off' && !(chapters && chapters.length) && !flight);
+  const listAll = allMediaOn(s) && !(chapters && chapters.length) && !flight;
+  const list = goodMedia(media, listAll && mengeOf(s) !== 'auto' ? mengeOf(s) : listAll);
   const all = media.filter((m) => !m.bad && !m.loading);
   const fr = formatRule(s);
   const first = Math.max(0, an.firstSound), last = Math.min(an.duration, an.lastSound + 0.2);
@@ -12762,6 +12778,7 @@ function normalizeSettings(st, defaults) {
     pre: pick1(s.pre, ['off', 'countdown', 'rewind'], 'off'),
     target: pick1(s.target, ['story', 'reel'], 'story'),
     allMedia: pick1(s.allMedia, ['on', 'off'], 'on'),
+    menge: pick1(s.menge, ['auto', 'mehr', 'max'], 'auto'),
     variant: pick1(s.variant, ['ausgewogen', 'ruhig', 'energisch'], 'ausgewogen'),
     us: pick1(s.us, ['auto', 'off'], 'auto'),
     order: pick1(s.order, ['tageszeit', 'streng'], 'tageszeit'),
@@ -12804,7 +12821,7 @@ function normalizeSettings(st, defaults) {
 }
 
 /* ---------- Stil-Vorlage: ein Stil für alle Filme der Reise ---------- */
-const STYLE_KEYS = ['variant', 'us', 'order', 'mv', 'look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'allMedia', 'color', 'accent', 'parallax', 'drift', 'echo', 'stack', 'mini', 'chapKnock', 'chapMap', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
+const STYLE_KEYS = ['variant', 'us', 'order', 'mv', 'look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'allMedia', 'menge', 'color', 'accent', 'parallax', 'drift', 'echo', 'stack', 'mini', 'chapKnock', 'chapMap', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
 const styleOf = (st) => Object.fromEntries(STYLE_KEYS.map((k) => [k, st[k]]));
 /** Einstellungen für neue Filme: Standard, darüber die Vorlage der Reise */
 function baseSettings(defaults) {
@@ -13044,6 +13061,74 @@ async function importSong(file) {
   keepSong(song);
   saveSong(song, file);
   return song;
+}
+
+/* ---------- Neu schneiden: mit Wahl der Menge (wie viele Aufnahmen in den Film kommen) ---------- */
+/** Wie viele Aufnahmen sind im Film, und warum fehlen die übrigen? */
+function filmCount() {
+  const ctx = S.ctx, plan = S.plan;
+  const media = ctx.media.filter((m) => !m.bad && !m.loading);
+  const used = new Set();
+  if (plan) for (const c of plan.clips) {
+    if (c.loop || ['rush', 'leader', 'rew', 'tease', 'reveal'].includes(c.role)) continue;
+    for (const id of c.split ? c.split.ids : c.stack ? c.stack.ids : c.grid && c.grid.ids ? c.grid.ids : c.strip ? c.strip.ids : [c.mediaId]) if (id) used.add(id);
+  }
+  const keepB = plan && mengeOf(plan.resolved) === 'max';
+  const out = media.filter((m) => !used.has(m.id));
+  const why = { ausgeschlossen: 0, Serienbild: 0, aussortiert: 0, passt: 0 };
+  for (const m of out) { const a = autoOut(m, keepB); if (m.excluded) why.ausgeschlossen++; else if (a === 'Serienbild') why.Serienbild++; else if (a) why.aussortiert++; else why.passt++; }
+  return { total: media.length, used: media.filter((m) => used.has(m.id)).length, why };
+}
+
+function openRemixSheet() {
+  const ctx = S.ctx;
+  if (!ctx) return;
+  const st = ctx.rec.settings;
+  let menge = mengeOf(st);
+  const fc = filmCount(), w = fc.why;
+  const whyTxt = [
+    w.passt ? `${w.passt} ${allMediaOn(st) ? 'passen nicht mehr hinein' : 'hat „Beste Auswahl“ weggelassen'}` : '',
+    w.Serienbild ? `${w.Serienbild} Serienbilder aussortiert` : '',
+    w.aussortiert ? `${w.aussortiert} unscharf/dunkel/Bildschirmfoto` : '',
+    w.ausgeschlossen ? `${w.ausgeschlossen} von dir ausgeschlossen` : '',
+  ].filter(Boolean).join(' · ');
+  const HINT = {
+    auto: `Wie eingestellt (${st.allMedia === 'off' ? 'Beste Auswahl' : 'Alle Aufnahmen'}).`,
+    mehr: 'Alle guten Aufnahmen und jedes zweite Serienbild kommen hinein. Videos laufen etwas kürzer, damit Fotos Platz haben; verdichtet wird zuerst im Refrain/Drop (Split-Screens, Foto-Serien) – jeder Schnitt bleibt auf dem Takt, ruhige Teile bleiben ruhig.',
+    max: 'Dazu alle Serienbilder – als schnelle Foto-Serien genau im Takt – und Videos noch kürzer. Draußen bleiben nur Bildschirmfotos, fast schwarze, überbelichtete und unscharfe Bilder (als Favorit ♥ kommen auch sie hinein).',
+  };
+  const body = openSheet(`
+    <h3 id="sheetTitle">Neu schneiden</h3>
+    <p class="hint">Die Regie setzt noch einmal an: neue Zusammensetzung, wieder die beste von mehreren Varianten, alles auf dem Song. Deine Auswahl, Reihenfolge und Texte bleiben.</p>
+    <div class="sel-box"><b>${fc.used} von ${fc.total} Aufnahmen im Film</b>${whyTxt ? `<span class="hint small">Draußen: ${esc(whyTxt)}</span>` : ''}</div>
+    <div class="field"><span class="field-label">Wie viele Aufnahmen?</span><div id="mengePick">${radioHTML('Menge', [['auto', 'Wie eingestellt'], ['mehr', 'Mehr Aufnahmen'], ['max', 'So viele wie möglich']], menge)}</div>
+      <p class="hint small" id="mengeHint">${HINT[menge]}</p></div>
+    <button class="btn primary big" id="remixGo" type="button">Neu schneiden</button>`);
+  body.addEventListener('click', async (e) => {
+    const r = e.target.closest('#mengePick [data-v]');
+    if (r) { menge = r.dataset.v; setRadio(body.querySelector('#mengePick'), menge); body.querySelector('#mengeHint').textContent = HINT[menge]; return; }
+    if (!e.target.closest('#remixGo')) return;
+    closeSheet();
+    await remixFilm(menge);
+  });
+}
+
+// Neu schneiden: die Regie setzt noch einmal an (neue Zusammensetzung, wieder die beste von mehreren Varianten).
+// Deine Entscheidungen bleiben: Auswahl (Favoriten/ausgeschlossen), Startbild, Reihenfolge, Mitgetipptes, Texte, Look.
+async function remixFilm(menge) {
+  const ctx = S.ctx;
+  if (!ctx) return;
+  const before = filmCount().used;
+  ctx.rec.settings.menge = menge || 'auto';
+  ctx.rec.settings.seed = ((ctx.rec.settings.seed * 1103515245 + 12345) >>> 0) % 1000000 || 1;
+  const perClip = Object.keys(ctx.rec.overrides.clips || {}).length;
+  if (ctx.kind !== 'place' || !ctx.song || !ctx.song.an) { commit(); savePlaceSoon(); engine.t = 0; scheduleRebuild(0); toast('Neu geschnitten.'); return; }
+  ctx.rec.overrides.clips = {};
+  // beim Neuschneiden darf die Regie innerhalb der Tagesabschnitte anders anordnen; zu ähnliche Varianten zählen nicht
+  ctx.rec.settings.recut = ((ctx.rec.settings.recut || 0) % 97) + 1;
+  await cutFilm(6, S.plan);
+  const fc = filmCount();
+  toast(`Neu geschnitten: ${fc.used} von ${fc.total} Aufnahmen im Film${fc.used !== before ? ` (vorher ${before})` : ''}, wieder die beste von mehreren Varianten. Deine Auswahl, Reihenfolge und Texte sind geblieben${perClip ? `; ${perClip} einzelne Einstellungs-Änderungen gehörten zum alten Schnitt` : ''}. Gefällt der alte besser: Rückgängig.`);
 }
 
 /* ---------- Beat-Studio: eigene Beats, auf Format, Einstieg, Variante und Look abgestimmt ---------- */
@@ -14374,7 +14459,7 @@ function showFlow(media) {
     const bar = (an.sections || []).map((x) => `<i style="flex:${Math.max(0.001, x.end - x.start).toFixed(2)};background:${SECTION_COLOR[x.label] || '#34507a'}" title="${SECTION_DE[x.label] || ''}"></i>`).join('');
     const [a, b] = adv.images, [va, vb] = adv.videos;
     const vTxt = vb ? (va ? `${va}–${vb} Videos` : `bis ${vb} ${vb === 1 ? 'Video' : 'Videos'}`) : 'keine Videos nötig';
-    const allOn = st.allMedia !== 'off' && ctx.kind === 'place' && !isFlight(ctx.rec);
+    const allOn = allMediaOn(st) && ctx.kind === 'place' && !isFlight(ctx.rec);
     const why = { story: 'kurzer Aufbau und der erste Höhepunkt ganz', reel: 'Aufbau und die Höhepunkte, bis 90 s', post: 'kurzer Aufbau und der erste Höhepunkt', film: 'der ganze Song' }[tg];
     let verdict;
     if (ctx.kind === 'bestof') verdict = 'Der Gesamtfilm nimmt aus jedem Ort die stärksten Momente, in Kapiteln.';
@@ -15186,7 +15271,8 @@ function renderMaterial() {
   const dropped = new Set(cap ? cap.droppedIds : []), tooLong = new Set(cap ? cap.tooLong.map((v) => v.id) : []);
   if (n && !isFlight(ctx.rec) && cap) $('mediaHint').textContent += ' ' + capacityText();
   // Auswahl im Blick: was ist im Film, was bleibt draußen (Platz, aussortiert, von dir ausgeschlossen)
-  const outOf = (m) => !m.bad && !m.loading && (m.excluded || dropped.has(m.id) || !!autoOut(m));
+  const keepB = S.plan ? burstKeep(mengeOf(S.plan.resolved)) : false;
+  const outOf = (m) => !m.bad && !m.loading && (m.excluded || dropped.has(m.id) || !!autoOut(m, keepB));
   const inOf = (m) => !m.bad && !m.loading && !outOf(m);
   const nIn = ctx.media.filter(inOf).length, nOut = ctx.media.filter(outOf).length;
   const filt = nOut || S.matFilter !== 'out' ? S.matFilter || 'all' : 'all';
@@ -15203,7 +15289,7 @@ function renderMaterial() {
     return `<button class="${cls}" type="button" data-id="${esc(m.id)}" aria-label="${esc(m.name)}${m.fav ? ', Favorit' : ''}${isStart ? ', Startbild' : ''}">
       ${m.thumb ? `<img src="${m.thumb}" alt="" draggable="false">` : ''}
       ${m.kind === 'video' && m.duration ? `<span class="badge${tooLong.has(m.id) ? ' warn' : ''}">▶ ${m.trim ? '✂ ' + fmtClock(videoSpan(m)) : fmtClock(m.duration)}</span>` : ''}
-      ${m.excluded && !m.bad ? '<span class="out">von dir ausgeschlossen</span>' : !m.bad && autoOut(m) ? `<span class="out">aussortiert · ${autoOut(m)}</span>` : dropped.has(m.id) ? '<span class="out">passt nicht mehr hinein</span>' : ''}
+      ${m.excluded && !m.bad ? '<span class="out">von dir ausgeschlossen</span>' : !m.bad && autoOut(m, keepB) ? `<span class="out">aussortiert · ${autoOut(m, keepB)}</span>` : dropped.has(m.id) ? '<span class="out">passt nicht mehr hinein</span>' : ''}
       ${m.fav ? '<span class="flag fav">♥</span>' : ''}
       ${!m.bad && !m.loading && m.us === true ? '<span class="flag us set" title="von dir als Wir markiert">WIR</span>' : ''}
       ${m.kind === 'video' && m.sound ? '<span class="flag snd" aria-label="Originalton an"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z" fill="currentColor"/><path d="M15.5 9a4 4 0 010 6M17.8 6.8a7 7 0 010 10.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>' : ''}
@@ -15223,8 +15309,9 @@ function openMediaSheet(id) {
   const quality = m.score != null ? Math.round(m.score * 100) : null;
   // Auswahl: ist die Aufnahme im Ergebnis, und wenn nicht, warum? Tauschen in beide Richtungen
   const capD = new Set(S.plan && S.plan.capacity ? S.plan.capacity.droppedIds : []);
-  const isOut = (x) => !x.bad && !x.loading && (x.excluded || capD.has(x.id) || !!autoOut(x));
-  const why = m.excluded ? 'Von dir ausgeschlossen.' : autoOut(m) ? `Aussortiert (${autoOut(m)}).` : capD.has(m.id) ? 'Passt nicht mehr in den Film.' : '';
+  const keepB = S.plan ? burstKeep(mengeOf(S.plan.resolved)) : false;
+  const isOut = (x) => !x.bad && !x.loading && (x.excluded || capD.has(x.id) || !!autoOut(x, keepB));
+  const why = m.excluded ? 'Von dir ausgeschlossen.' : autoOut(m, keepB) ? `Aussortiert (${autoOut(m, keepB)}).` : capD.has(m.id) ? 'Passt nicht mehr in den Film.' : '';
   const outs = ctx.media.filter((x) => x !== m && isOut(x));
   const selHTML = roles ? '' : isOut(m)
     ? `<div class="sel-box out"><b>Nicht im Film</b><span>${why} Du entscheidest, was ins Ergebnis kommt.</span>
@@ -15511,8 +15598,9 @@ function capacityText() {
   const parts = [`Zu diesem Song passen in ${c.story ? 'eine Story' : c.label === 'Reel' ? 'ein Reel' : 'diesen Film'} etwa ${c.imgFit} Fotos${c.videos ? ` neben ${c.videos} ${c.videos === 1 ? 'Video' : 'Videos'}` : ''}.`];
   if (c.droppedIds.length) parts.push(`${c.droppedIds.length} ${c.droppedIds.length === 1 ? 'Aufnahme bleibt' : 'Aufnahmen bleiben'} draußen (${len} voll)${c.story ? '; als Reel passen mehr' : ''}.`);
   else parts.push(`Alle ${c.images + c.videos} Aufnahmen sind im Film (${len}), in ihrer Aufnahme-Reihenfolge, keine doppelt.`);
-  const outs = S.ctx.media.filter((m) => !m.excluded && !m.bad && autoOut(m));
-  if (outs.length && S.plan.resolved.allMedia !== 'off') parts.push(`${outs.length} ${outs.length === 1 ? 'Aufnahme hat' : 'Aufnahmen hat'} die App aussortiert (${[...new Set(outs.map(autoOut))].join(', ')}); als Favorit (♥) kommt sie trotzdem hinein.`);
+  const keepB = burstKeep(mengeOf(S.plan.resolved));
+  const outs = S.ctx.media.filter((m) => !m.excluded && !m.bad && autoOut(m, keepB));
+  if (outs.length && allMediaOn(S.plan.resolved)) parts.push(`${outs.length} ${outs.length === 1 ? 'Aufnahme hat' : 'Aufnahmen hat'} die App aussortiert (${[...new Set(outs.map((m) => autoOut(m, keepB)))].join(', ')}); als Favorit (♥) kommt sie trotzdem hinein${outs.some((m) => autoOut(m) === 'Serienbild') ? ' – Serienbilder nimmt „Neu schneiden → So viele wie möglich“ mit' : ''}.`);
   const pk = c.packed || {};
   const how = [pk.split ? `${pk.split} Fotos im Split-Screen` : '', pk.vsplit ? `${pk.vsplit} Videos gleichzeitig` : '', pk.burst ? `${pk.burst} in Foto-Serien` : '', pk.stack ? `${pk.stack} im Polaroid-Stapel` : '', pk.grid ? `${pk.grid} im Raster` : ''].filter(Boolean);
   if (how.length) parts.push(`Verdichtet: ${how.join(', ')}.`);
@@ -16608,18 +16696,7 @@ async function init() {
   bindSetting('splitChips', 'split');
   // Neu schneiden: die Regie setzt noch einmal an (neue Zusammensetzung, wieder die beste von mehreren Varianten).
   // Deine Entscheidungen bleiben: Auswahl (Favoriten/ausgeschlossen), Startbild, Reihenfolge, Mitgetipptes, Texte, Look.
-  $('remixBtn').addEventListener('click', async () => {
-    const ctx = S.ctx;
-    if (!ctx) return;
-    ctx.rec.settings.seed = ((ctx.rec.settings.seed * 1103515245 + 12345) >>> 0) % 1000000 || 1;
-    const perClip = Object.keys(ctx.rec.overrides.clips || {}).length;
-    if (ctx.kind !== 'place' || !ctx.song || !ctx.song.an) { commit(); savePlaceSoon(); engine.t = 0; scheduleRebuild(0); toast('Neu geschnitten.'); return; }
-    ctx.rec.overrides.clips = {};
-    // beim Neuschneiden darf die Regie innerhalb der Tagesabschnitte anders anordnen; zu ähnliche Varianten zählen nicht
-    ctx.rec.settings.recut = ((ctx.rec.settings.recut || 0) % 97) + 1;
-    await cutFilm(6, S.plan);
-    toast(`Neu geschnitten: eine neue Zusammensetzung, wieder die beste von mehreren Varianten. Deine Auswahl, Reihenfolge und Texte sind geblieben${perClip ? `; ${perClip} einzelne Einstellungs-Änderungen gehörten zum alten Schnitt` : ''}. Gefällt der alte besser: Rückgängig.`);
-  });
+  $('remixBtn').addEventListener('click', openRemixSheet);
   $('songMap').addEventListener('click', (e) => {
     if (!S.ctx || !S.ctx.song) return;
     const r = e.currentTarget.getBoundingClientRect();

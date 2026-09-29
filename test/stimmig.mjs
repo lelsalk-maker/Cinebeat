@@ -36,7 +36,7 @@ const r = await p.evaluate(async (songs) => {
   const CONF = {
     'story-auto': { format: '9:16', target: 'story' }, 'story-15': { format: '9:16', target: 'story', length: 15 }, 'story-30': { format: '9:16', target: 'story', length: 30 },
     'reel-auto': { format: '9:16', target: 'reel' }, 'reel-90': { format: '9:16', target: 'reel', length: 90 },
-    beitrag: { format: '4:5' }, film: { format: '16:9' }, energisch: { format: '9:16', variant: 'energisch' }, ruhig: { format: '9:16', variant: 'ruhig' }, musikvideo: { format: '9:16', target: 'reel', mv: 'on' },
+    beitrag: { format: '4:5' }, film: { format: '16:9' }, energisch: { format: '9:16', variant: 'energisch' }, ruhig: { format: '9:16', variant: 'ruhig' }, musikvideo: { format: '9:16', target: 'reel', mv: 'on' }, 'reel-max': { format: '9:16', target: 'reel', menge: 'max' }, 'story-mehr': { format: '9:16', target: 'story', menge: 'mehr' },
   };
   const S0 = { look: 'auto', pace: 'auto', intro: 'auto', outro: 'auto', length: 'auto', songStart: 'auto', frame: 'auto', split: 'auto', seed: 7 };
   const res = {}, all = [];

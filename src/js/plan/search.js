@@ -15,7 +15,7 @@ function buildPlan(opts) {
   if (opts.flight || (opts.chapters && opts.chapters.length)) return best;
   // Alle Aufnahmen: reicht es nicht, verdichtet die Regie stufenweise – dichtere Schnitte und mehr Split-Screens,
   // dann Foto-Serien in den Refrains/Drops und gemeinsam laufende Videos, zuletzt längere Foto-Serien
-  if (best.resolved.allMedia === 'off') return best;
+  if (!allMediaOn(best.resolved)) return best;
   // fehlt sehr viel, gleich auf einer höheren Stufe beginnen (spart Rechenzeit auf dem Handy)
   const nAll = best.capacity.images + best.capacity.videos;
   const start = best._m.dropped > nAll * 0.4 ? 3 : best._m.dropped > nAll * 0.2 ? 2 : 1;
@@ -30,7 +30,7 @@ function searchPlan(opts) {
   let best = planOnce(opts);
   if (opts.flight) return best;
   // „Beste Auswahl“: Weglassen ist gewollt – es zählt nur, dass sich nichts wiederholt (das Tempo bleibt beim Song)
-  const pick = best.resolved.allMedia === 'off' && !(opts.chapters && opts.chapters.length);
+  const pick = !allMediaOn(best.resolved) && !(opts.chapters && opts.chapters.length);
   const bad = (p) => p._m.repeats * 3 + (pick ? 0 : p._m.dropped);
   const better = (p, q) => bad(p) < bad(q) || (bad(p) === bad(q) && !p._m.repeats && p._m.scale < q._m.scale);
   let cur = best;

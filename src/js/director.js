@@ -15,7 +15,17 @@ const FORMAT_RULES = {
   '16:9': { shot: 2.8, shotMin: 2, min: 15, max: 150, vmax: 15, kind: 'film', label: 'Film' },
   '2.39': { shot: 3.0, shotMin: 2.2, min: 15, max: 150, vmax: 15, kind: 'film', label: 'Film' },
 };
-const formatRule = (s) => (s.format === '9:16' && s.target === 'reel' ? FORMAT_RULES.reel : FORMAT_RULES[s.format] || FORMAT_RULES['9:16']);
+/**
+ * Menge der Aufnahmen: 'auto' folgt „Alle Aufnahmen“/„Beste Auswahl“; 'mehr' nimmt alle guten Aufnahmen und jedes zweite
+ * Serienbild, Videos etwas kürzer (mehr Zeit für Fotos); 'max' nimmt alle Serienbilder (als Foto-Serien im Takt), Videos noch kürzer.
+ */
+const mengeOf = (s) => (s && (s.menge === 'mehr' || s.menge === 'max') ? s.menge : 'auto');
+const allMediaOn = (s) => s.allMedia !== 'off' || mengeOf(s) !== 'auto';
+const formatRule = (s) => {
+  const r = s.format === '9:16' && s.target === 'reel' ? FORMAT_RULES.reel : FORMAT_RULES[s.format] || FORMAT_RULES['9:16'];
+  const k = mengeOf(s) === 'max' ? 0.55 : mengeOf(s) === 'mehr' ? 0.75 : 1;
+  return k === 1 ? r : { ...r, vmax: Math.max(3.5, r.vmax * k) };
+};
 
 const SEC_DE = { intro: 'Intro', verse: 'Strophe', build: 'Aufbau', chorus: 'Refrain', drop: 'Drop', break: 'Break', outro: 'Outro' };
 
@@ -29,18 +39,21 @@ function fmtMS(s) {
  * fast schwarze oder ausgebrannte Bilder (Taschenauslöser), unscharf und zugleich schlecht belichtet,
  * und identische Serienbilder innerhalb weniger Sekunden. Liefert den Grund oder ''. Favoriten bleiben immer.
  */
-function autoOut(m) {
+/** keepBursts: true = alle Serienbilder behalten, 'half' = jedes zweite (fest nach Kennung), sonst aussortieren. */
+function autoOut(m, keepBursts = false) {
   if (m.fav || m.kind !== 'image') return '';
   if (/^(screenshot|bildschirmfoto|screen shot)/i.test(m.name || '')) return 'Bildschirmfoto';
   if (m.expo != null && m.expo < 0.04 && (m.luma < 0.08 || m.luma > 0.94)) return m.luma < 0.5 ? 'fast schwarz' : 'überbelichtet';
   if (m.sharp != null && m.sharp < 0.03 && m.expo != null && m.expo < 0.35) return 'unscharf';
-  if (m.dupOf && m.dupD != null && m.dupD <= 2 && m.dupDt != null && m.dupDt < 20000) return 'Serienbild';
+  if (keepBursts !== true && m.dupOf && m.dupD != null && m.dupD <= 2 && m.dupDt != null && m.dupDt < 20000 && !(keepBursts === 'half' && (hashStr(m.id) & 1) === 0)) return 'Serienbild';
   return '';
 }
 
-/** Verwendbare Aufnahmen; all: auch Serienbilder (Beinahe-Doppel), wenn alle Aufnahmen in den Film sollen. */
+/** Serienbilder je Menge: 'max' alle, 'mehr' jedes zweite. */
+const burstKeep = (all) => (all === 'max' ? true : all === 'mehr' ? 'half' : false);
+/** Verwendbare Aufnahmen; all: auch Beinahe-Doppel, wenn alle Aufnahmen in den Film sollen; 'mehr'/'max': auch Serienbilder. */
 function goodMedia(media, all) {
-  return media.filter((m) => !m.bad && !m.loading && !m.excluded && (all ? !autoOut(m) : !m.dupOf || m.fav));
+  return media.filter((m) => !m.bad && !m.loading && !m.excluded && (all ? !autoOut(m, burstKeep(all)) : !m.dupOf || m.fav));
 }
 
 function isLandscape(m) { return m.w && m.h && m.w > m.h * 1.15; }
@@ -243,7 +256,8 @@ function direct(an, media, s, chapters, flight) {
   const notes = [];
   s = withMusicVideo(withVariant(s));
   const rs = { ...s };
-  const list = goodMedia(media, s.allMedia !== 'off' && !(chapters && chapters.length) && !flight);
+  const listAll = allMediaOn(s) && !(chapters && chapters.length) && !flight;
+  const list = goodMedia(media, listAll && mengeOf(s) !== 'auto' ? mengeOf(s) : listAll);
   const all = media.filter((m) => !m.bad && !m.loading);
   const fr = formatRule(s);
   const first = Math.max(0, an.firstSound), last = Math.min(an.duration, an.lastSound + 0.2);

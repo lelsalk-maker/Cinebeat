@@ -16,7 +16,9 @@ function planOnce(opts) {
   const usable = pool.filter((m) => !m.excluded);
   const intro = s.intro, outro = s.outro;
   // „Alle Aufnahmen verwenden“: jede Aufnahme kommt vor (auch Serienbilder); die Regie verdichtet dafür
-  const allOn = s.allMedia !== 'off' && !chapters && !flight;
+  const allOn = allMediaOn(s) && !chapters && !flight;
+  // „Mehr“/„So viele wie möglich“: auch Serienbilder (goodMedia mit 'mehr'/'max')
+  const gAll = allOn && mengeOf(s) !== 'auto' ? mengeOf(s) : allOn;
   // Chronologischer Durchlauf (Ortsfilme, Reels, Storys): Aufnahmen strikt nach Aufnahmezeit
   const chrono = !chapters && !flight;
   const level = opts._level || 0;
@@ -26,7 +28,7 @@ function planOnce(opts) {
   const shotBase = fr.shot / 1.7;
   // Schnittlänge nach Material: Videos bekommen (fast) ihre ganze Länge, die übrige Zeit teilen sich die Fotos.
   // Viel Material → dichter (nie kürzer als shotMin), wenig Material → ruhiger statt Bilder zu wiederholen.
-  const good = goodMedia(usable, allOn);
+  const good = goodMedia(usable, gAll);
   const vidT = good.filter((m) => m.kind === 'video').reduce((a, m) => a + videoPlay(m, fr.vmax), 0);
   const imgN = Math.max(1, good.filter((m) => m.kind === 'image').length);
   // Mindestlänge je Einstellung; müssen alle Aufnahmen hinein, darf es bis auf einen Beat dichter werden
@@ -105,7 +107,7 @@ function planOnce(opts) {
 
   let gridPlan = null;
   if (intro === 'grid') {
-    const n = goodMedia(usable, allOn).length >= 9 ? 3 : 2;
+    const n = goodMedia(usable, gAll).length >= 9 ? 3 : 2;
     const step = bStep;
     const at = (k) => atB(k + pb);
     const tiles = n * n;
@@ -212,7 +214,7 @@ function planOnce(opts) {
   const lastForced = forced[forced.length - 1];
   const introEnd = !lastForced ? segs[0].end : lastForced.leader ? lastForced.end : (segs[forced.length] || lastForced).end;
   // Bilderflut: nach der Ruhe wird es im Drop wieder schneller (Foto-Serie), aber nicht direkt nach der Flut
-  if ((s.burst === 'drop' || rush || level >= 2) && !flight && goodMedia(usable, allOn).length >= 5) {
+  if ((s.burst === 'drop' || rush || level >= 2) && !flight && goodMedia(usable, gAll).length >= 5) {
     const secs = (an.sections || []).map((x) => ({ ...x, rel: x.start - win.start }));
     const isPeak = (x) => x.label === 'drop' || x.label === 'chorus';
     let peak = secs.find((x) => isPeak(x) && x.rel > Math.max(1.2, introEnd - 0.05) && x.rel < D - 3);
@@ -258,7 +260,7 @@ function planOnce(opts) {
   const beatIdxAt = (t) => { let k = 0; for (let i = 0; i < bts0.length; i++) if (bts0[i] <= t + 0.03) k = i; return k; };
   const special = (g) => g.burst || g.leader || g.knock || g.gridSeg || g.gridMid || g.pre || g.reveal || g.vslot || g.miniRew || g.stackSeg || g.rush;
   let midGrid = null;
-  if (s.midGrid === 'on' && !flight && goodMedia(usable, allOn).length >= 5) {
+  if (s.midGrid === 'on' && !flight && goodMedia(usable, gAll).length >= 5) {
     const busy = (a, b) => segs.some((g) => (g.burst || g.gridSeg || g.pre || g.reveal || g.leader || g.knock) && g.start < b && g.end > a);
     const peaks = secsRel.filter((x) => isPeakSec(x) && x.rel > Math.max(introEnd, barDur) + barDur);
     // ohne weiteren Refrain: Anfang einer Phrase (4 Takte) mitten im Drop/Refrain
@@ -267,7 +269,7 @@ function planOnce(opts) {
       .map((x) => ({ rel: x.rel, end: x.rel + barDur * 4, start: win.start + x.rel }));
     // bevorzugt der zweite Refrain (der erste gehört oft dem Einstieg oder der Foto-Serie)
     for (const pk of [...(peaks.length > 1 ? [peaks[1], peaks[0], ...peaks.slice(2)] : peaks), ...phrases]) {
-      const n = goodMedia(usable, allOn).length >= 9 && pk.end - pk.start >= barDur * 4 ? 3 : 2;
+      const n = goodMedia(usable, gAll).length >= 9 && pk.end - pk.start >= barDur * 4 ? 3 : 2;
       const step = beatDur < 0.42 ? 2 : 1;
       const k0 = beatIdxAt(pk.rel), tiles = n * n;
       const at = (k) => (bts0[k0 + k] != null ? bts0[k0 + k] : bts0[k0] + k * beatDur);
@@ -330,7 +332,7 @@ function planOnce(opts) {
   const hitsRel = secsRel.filter((x) => isPeakSec(x) && x.rel > introEnd + barDur * 1.5 && x.rel < D - barDur * 2 && !isPeakSec(sectionAt(an, x.start - 0.05)) && !(countIn && Math.abs(countIn.end - x.rel) < 0.2)).map((x) => x.rel);
   const overlapsSpecial = (a, z) => segs.some((g) => special(g) && g.start < z - 0.02 && g.end > a + 0.02);
   let miniAt = null;
-  if (s.mini === 'on' && !flight && goodMedia(usable, allOn).length >= 6) {
+  if (s.mini === 'on' && !flight && goodMedia(usable, gAll).length >= 6) {
     const colorOn = s.color && s.color !== 'off';
     for (const h of colorOn && hitsRel.length > 1 ? hitsRel.slice(1).concat(hitsRel[0]) : hitsRel) {
       const k = beatIdxAt(h);
@@ -350,7 +352,7 @@ function planOnce(opts) {
     }
   }
   let stackAt = null;
-  if (s.stack === 'on' && !flight && goodMedia(usable, allOn).filter((m) => m.kind === 'image').length >= 6) {
+  if (s.stack === 'on' && !flight && goodMedia(usable, gAll).filter((m) => m.kind === 'image').length >= 6) {
     // Abzüge fallen alle zwei Beats (bei langsamen Songs jeden Beat), danach ein kurzer Moment Ruhe
     const step = beatDur > 0.7 ? 1 : 2;
     const barsRel = (an.barStart || []).map((b) => b - win.start).filter((t) => t > introEnd + barDur * 0.5 && t < D - barDur * 2);
@@ -371,7 +373,7 @@ function planOnce(opts) {
 
   // Videos: eigene, längere Plätze in ruhigen Songteilen (nicht bei Flügen: dort legt die Rolle die Videos fest)
   if (!flight) {
-    const all = orderChrono(goodMedia(usable, allOn));
+    const all = orderChrono(goodMedia(usable, gAll));
     // das vom Nutzer gewählte Startbild läuft als Einstieg, nicht zusätzlich auf einem eigenen Platz
     const vids = all.filter((m) => m.kind === 'video' && m.id !== settings.hookId);
     // erst nach dem Einstieg und seiner ersten Vollbild-Einstellung (dem Highlight)
@@ -393,7 +395,7 @@ function planOnce(opts) {
   // ---------- Chronologischer Durchlauf: Aufnahmen streng nach Aufnahmezeit auf die Schnitte legen ----------
   let chronoInfo = null;
   if (chrono) {
-    const all0 = orderChrono(goodMedia(usable, allOn));
+    const all0 = orderChrono(goodMedia(usable, gAll));
     // Startbild: das stärkste Foto der ersten Momente (die Reihenfolge verschiebt sich dafür höchstens um wenige Plätze)
     const early = all0.slice(0, Math.max(3, Math.ceil(all0.length * 0.15)));
     const hk = intro === 'split' ? null : (settings.hookId && all0.find((m) => m.id === settings.hookId)) || early.filter((m) => m.kind === 'image').sort((a, b) => (b.score || 0) - (a.score || 0))[0] || all0[0] || null;
@@ -607,7 +609,7 @@ function planOnce(opts) {
     const stackC = clips.find((c) => c.stack);
     let reserved = [];
     if (stackC) {
-      const imgsC = orderChrono(goodMedia(usable, allOn).filter((m) => m.kind === 'image' && !mustIds.has(m.id) && m.id !== settings.hookId));
+      const imgsC = orderChrono(goodMedia(usable, gAll).filter((m) => m.kind === 'image' && !mustIds.has(m.id) && m.id !== settings.hookId));
       const top = imgsC.slice().sort((a, b) => (b.score || 0) - (a.score || 0))[0];
       const cand = imgsC.filter((m) => m !== top);
       if (cand.length >= 7) { const at = Math.round((stackC.start / D) * (cand.length - 4)); reserved = cand.slice(at, at + 4); }
@@ -680,7 +682,7 @@ function planOnce(opts) {
       // Wand: immer die stärksten Aufnahmen, die stärkste vorn (hält den Blick) – nicht chronologisch.
       // Höchstens drei Videos (sonst ruckelt es auf dem Handy), keine Beinahe-Doppel nebeneinander.
       const strength = (m) => (m.score || 0.5) + (m.fav ? 0.25 : 0) + (m.kind === 'video' ? 0.04 : 0);
-      const rank = goodMedia(usable, allOn).slice().sort((a, b) => strength(b) - strength(a));
+      const rank = goodMedia(usable, gAll).slice().sort((a, b) => strength(b) - strength(a));
       const twin = (a, b) => a.dupOf === b.id || b.dupOf === a.id || (a.hash && b.hash && hamming(a.hash, b.hash) < 10);
       const pick = [];
       for (const m of rank) {
@@ -736,8 +738,8 @@ function planOnce(opts) {
   const rushC = clips.filter((c) => c.rush);
   if (rushC.length) {
     const hookC = clips.find((c) => c.role === 'hook');
-    const fotos = orderChrono(goodMedia(usable, allOn).filter((m) => m.kind === 'image' && (!hookC || m.id !== hookC.mediaId)));
-    const src = fotos.length ? fotos : goodMedia(usable, allOn).filter((m) => m.kind === 'image');
+    const fotos = orderChrono(goodMedia(usable, gAll).filter((m) => m.kind === 'image' && (!hookC || m.id !== hookC.mediaId)));
+    const src = fotos.length ? fotos : goodMedia(usable, gAll).filter((m) => m.kind === 'image');
     rushC.forEach((c, k) => {
       const m = src.length ? src[Math.floor((k * src.length) / rushC.length) % src.length] : null;
       c.mediaId = m ? m.id : c.mediaId; c.role = 'rush';
@@ -750,7 +752,7 @@ function planOnce(opts) {
   for (const si of splitClips.sort((a, b) => a - b)) {
     const c = clips[si];
     // Videos mit eigenem Platz nicht zusätzlich im Split-Screen
-    const pool2 = goodMedia(usable, allOn).filter((m) => !(m.kind === 'video' && clips.some((x) => x.vid === m.id)));
+    const pool2 = goodMedia(usable, gAll).filter((m) => !(m.kind === 'video' && clips.some((x) => x.vid === m.id)));
     const fitting = pool2.filter(splitFit);
     // nur Aufnahmen, die sonst nicht zu sehen sind (sonst wäre es eine Doppelung)
     const unusedFit = fitting.filter((m) => !useCount.get(m.id)), unused = pool2.filter((m) => !useCount.get(m.id));
@@ -779,10 +781,10 @@ function planOnce(opts) {
     if (!c.stack) continue;
     // chronologisch vorab zugeteilt: genau diese Fotos (auch wenn eine Vorschau wie die Bilderflut sie schon kurz zeigte)
     const res0 = (c.stack.reserved || []).map((id) => byId.get(id)).filter((m) => m && (chrono || !useCount.get(m.id)));
-    const free = res0.length >= 3 ? res0 : goodMedia(usable, allOn).filter((m) => m.kind === 'image' && !useCount.get(m.id)).sort((a, b) => (b.score || 0) - (a.score || 0));
+    const free = res0.length >= 3 ? res0 : goodMedia(usable, gAll).filter((m) => m.kind === 'image' && !useCount.get(m.id)).sort((a, b) => (b.score || 0) - (a.score || 0));
     if (free.length < 3) {
       c.stack = null;
-      const pick = goodMedia(usable, allOn).filter((m) => m.kind === 'image').sort((a, b) => (useCount.get(a.id) || 0) - (useCount.get(b.id) || 0) || (b.score || 0) - (a.score || 0))[0];
+      const pick = goodMedia(usable, gAll).filter((m) => m.kind === 'image').sort((a, b) => (useCount.get(a.id) || 0) - (useCount.get(b.id) || 0) || (b.score || 0) - (a.score || 0))[0];
       if (pick) { c.mediaId = pick.id; useCount.set(pick.id, (useCount.get(pick.id) || 0) + 1); }
       continue;
     }
@@ -833,7 +835,7 @@ function planOnce(opts) {
     if (!c0 || !next) return;
     const target = byId.get(next.mediaId);
     const tiles = gp.n * gp.n;
-    const pool2 = goodMedia(usable, allOn).filter((m) => m !== target && (m.kind === 'image' || m.poster));
+    const pool2 = goodMedia(usable, gAll).filter((m) => m !== target && (m.kind === 'image' || m.poster));
     const tt = target && target.time ? target.time : 0;
     const others = c0.gridIds && c0.gridIds.length ? c0.gridIds.map((id) => byId.get(id)).filter(Boolean).slice(0, tiles - 1)
       : pool2.sort((a, b) => (a.kind === 'image' ? 0 : 1) - (b.kind === 'image' ? 0 : 1) || (intro ? (b.score || 0) - (a.score || 0) : Math.abs((a.time || 0) - tt) - Math.abs((b.time || 0) - tt))).slice(0, tiles - 1);

@@ -37,6 +37,7 @@ function normalizeSettings(st, defaults) {
     pre: pick1(s.pre, ['off', 'countdown', 'rewind'], 'off'),
     target: pick1(s.target, ['story', 'reel'], 'story'),
     allMedia: pick1(s.allMedia, ['on', 'off'], 'on'),
+    menge: pick1(s.menge, ['auto', 'mehr', 'max'], 'auto'),
     variant: pick1(s.variant, ['ausgewogen', 'ruhig', 'energisch'], 'ausgewogen'),
     us: pick1(s.us, ['auto', 'off'], 'auto'),
     order: pick1(s.order, ['tageszeit', 'streng'], 'tageszeit'),
@@ -79,7 +80,7 @@ function normalizeSettings(st, defaults) {
 }
 
 /* ---------- Stil-Vorlage: ein Stil für alle Filme der Reise ---------- */
-const STYLE_KEYS = ['variant', 'us', 'order', 'mv', 'look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'allMedia', 'color', 'accent', 'parallax', 'drift', 'echo', 'stack', 'mini', 'chapKnock', 'chapMap', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
+const STYLE_KEYS = ['variant', 'us', 'order', 'mv', 'look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'allMedia', 'menge', 'color', 'accent', 'parallax', 'drift', 'echo', 'stack', 'mini', 'chapKnock', 'chapMap', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
 const styleOf = (st) => Object.fromEntries(STYLE_KEYS.map((k) => [k, st[k]]));
 /** Einstellungen für neue Filme: Standard, darüber die Vorlage der Reise */
 function baseSettings(defaults) {
@@ -319,6 +320,74 @@ async function importSong(file) {
   keepSong(song);
   saveSong(song, file);
   return song;
+}
+
+/* ---------- Neu schneiden: mit Wahl der Menge (wie viele Aufnahmen in den Film kommen) ---------- */
+/** Wie viele Aufnahmen sind im Film, und warum fehlen die übrigen? */
+function filmCount() {
+  const ctx = S.ctx, plan = S.plan;
+  const media = ctx.media.filter((m) => !m.bad && !m.loading);
+  const used = new Set();
+  if (plan) for (const c of plan.clips) {
+    if (c.loop || ['rush', 'leader', 'rew', 'tease', 'reveal'].includes(c.role)) continue;
+    for (const id of c.split ? c.split.ids : c.stack ? c.stack.ids : c.grid && c.grid.ids ? c.grid.ids : c.strip ? c.strip.ids : [c.mediaId]) if (id) used.add(id);
+  }
+  const keepB = plan && mengeOf(plan.resolved) === 'max';
+  const out = media.filter((m) => !used.has(m.id));
+  const why = { ausgeschlossen: 0, Serienbild: 0, aussortiert: 0, passt: 0 };
+  for (const m of out) { const a = autoOut(m, keepB); if (m.excluded) why.ausgeschlossen++; else if (a === 'Serienbild') why.Serienbild++; else if (a) why.aussortiert++; else why.passt++; }
+  return { total: media.length, used: media.filter((m) => used.has(m.id)).length, why };
+}
+
+function openRemixSheet() {
+  const ctx = S.ctx;
+  if (!ctx) return;
+  const st = ctx.rec.settings;
+  let menge = mengeOf(st);
+  const fc = filmCount(), w = fc.why;
+  const whyTxt = [
+    w.passt ? `${w.passt} ${allMediaOn(st) ? 'passen nicht mehr hinein' : 'hat „Beste Auswahl“ weggelassen'}` : '',
+    w.Serienbild ? `${w.Serienbild} Serienbilder aussortiert` : '',
+    w.aussortiert ? `${w.aussortiert} unscharf/dunkel/Bildschirmfoto` : '',
+    w.ausgeschlossen ? `${w.ausgeschlossen} von dir ausgeschlossen` : '',
+  ].filter(Boolean).join(' · ');
+  const HINT = {
+    auto: `Wie eingestellt (${st.allMedia === 'off' ? 'Beste Auswahl' : 'Alle Aufnahmen'}).`,
+    mehr: 'Alle guten Aufnahmen und jedes zweite Serienbild kommen hinein. Videos laufen etwas kürzer, damit Fotos Platz haben; verdichtet wird zuerst im Refrain/Drop (Split-Screens, Foto-Serien) – jeder Schnitt bleibt auf dem Takt, ruhige Teile bleiben ruhig.',
+    max: 'Dazu alle Serienbilder – als schnelle Foto-Serien genau im Takt – und Videos noch kürzer. Draußen bleiben nur Bildschirmfotos, fast schwarze, überbelichtete und unscharfe Bilder (als Favorit ♥ kommen auch sie hinein).',
+  };
+  const body = openSheet(`
+    <h3 id="sheetTitle">Neu schneiden</h3>
+    <p class="hint">Die Regie setzt noch einmal an: neue Zusammensetzung, wieder die beste von mehreren Varianten, alles auf dem Song. Deine Auswahl, Reihenfolge und Texte bleiben.</p>
+    <div class="sel-box"><b>${fc.used} von ${fc.total} Aufnahmen im Film</b>${whyTxt ? `<span class="hint small">Draußen: ${esc(whyTxt)}</span>` : ''}</div>
+    <div class="field"><span class="field-label">Wie viele Aufnahmen?</span><div id="mengePick">${radioHTML('Menge', [['auto', 'Wie eingestellt'], ['mehr', 'Mehr Aufnahmen'], ['max', 'So viele wie möglich']], menge)}</div>
+      <p class="hint small" id="mengeHint">${HINT[menge]}</p></div>
+    <button class="btn primary big" id="remixGo" type="button">Neu schneiden</button>`);
+  body.addEventListener('click', async (e) => {
+    const r = e.target.closest('#mengePick [data-v]');
+    if (r) { menge = r.dataset.v; setRadio(body.querySelector('#mengePick'), menge); body.querySelector('#mengeHint').textContent = HINT[menge]; return; }
+    if (!e.target.closest('#remixGo')) return;
+    closeSheet();
+    await remixFilm(menge);
+  });
+}
+
+// Neu schneiden: die Regie setzt noch einmal an (neue Zusammensetzung, wieder die beste von mehreren Varianten).
+// Deine Entscheidungen bleiben: Auswahl (Favoriten/ausgeschlossen), Startbild, Reihenfolge, Mitgetipptes, Texte, Look.
+async function remixFilm(menge) {
+  const ctx = S.ctx;
+  if (!ctx) return;
+  const before = filmCount().used;
+  ctx.rec.settings.menge = menge || 'auto';
+  ctx.rec.settings.seed = ((ctx.rec.settings.seed * 1103515245 + 12345) >>> 0) % 1000000 || 1;
+  const perClip = Object.keys(ctx.rec.overrides.clips || {}).length;
+  if (ctx.kind !== 'place' || !ctx.song || !ctx.song.an) { commit(); savePlaceSoon(); engine.t = 0; scheduleRebuild(0); toast('Neu geschnitten.'); return; }
+  ctx.rec.overrides.clips = {};
+  // beim Neuschneiden darf die Regie innerhalb der Tagesabschnitte anders anordnen; zu ähnliche Varianten zählen nicht
+  ctx.rec.settings.recut = ((ctx.rec.settings.recut || 0) % 97) + 1;
+  await cutFilm(6, S.plan);
+  const fc = filmCount();
+  toast(`Neu geschnitten: ${fc.used} von ${fc.total} Aufnahmen im Film${fc.used !== before ? ` (vorher ${before})` : ''}, wieder die beste von mehreren Varianten. Deine Auswahl, Reihenfolge und Texte sind geblieben${perClip ? `; ${perClip} einzelne Einstellungs-Änderungen gehörten zum alten Schnitt` : ''}. Gefällt der alte besser: Rückgängig.`);
 }
 
 /* ---------- Beat-Studio: eigene Beats, auf Format, Einstieg, Variante und Look abgestimmt ---------- */
@@ -1649,7 +1718,7 @@ function showFlow(media) {
     const bar = (an.sections || []).map((x) => `<i style="flex:${Math.max(0.001, x.end - x.start).toFixed(2)};background:${SECTION_COLOR[x.label] || '#34507a'}" title="${SECTION_DE[x.label] || ''}"></i>`).join('');
     const [a, b] = adv.images, [va, vb] = adv.videos;
     const vTxt = vb ? (va ? `${va}–${vb} Videos` : `bis ${vb} ${vb === 1 ? 'Video' : 'Videos'}`) : 'keine Videos nötig';
-    const allOn = st.allMedia !== 'off' && ctx.kind === 'place' && !isFlight(ctx.rec);
+    const allOn = allMediaOn(st) && ctx.kind === 'place' && !isFlight(ctx.rec);
     const why = { story: 'kurzer Aufbau und der erste Höhepunkt ganz', reel: 'Aufbau und die Höhepunkte, bis 90 s', post: 'kurzer Aufbau und der erste Höhepunkt', film: 'der ganze Song' }[tg];
     let verdict;
     if (ctx.kind === 'bestof') verdict = 'Der Gesamtfilm nimmt aus jedem Ort die stärksten Momente, in Kapiteln.';
@@ -2461,7 +2530,8 @@ function renderMaterial() {
   const dropped = new Set(cap ? cap.droppedIds : []), tooLong = new Set(cap ? cap.tooLong.map((v) => v.id) : []);
   if (n && !isFlight(ctx.rec) && cap) $('mediaHint').textContent += ' ' + capacityText();
   // Auswahl im Blick: was ist im Film, was bleibt draußen (Platz, aussortiert, von dir ausgeschlossen)
-  const outOf = (m) => !m.bad && !m.loading && (m.excluded || dropped.has(m.id) || !!autoOut(m));
+  const keepB = S.plan ? burstKeep(mengeOf(S.plan.resolved)) : false;
+  const outOf = (m) => !m.bad && !m.loading && (m.excluded || dropped.has(m.id) || !!autoOut(m, keepB));
   const inOf = (m) => !m.bad && !m.loading && !outOf(m);
   const nIn = ctx.media.filter(inOf).length, nOut = ctx.media.filter(outOf).length;
   const filt = nOut || S.matFilter !== 'out' ? S.matFilter || 'all' : 'all';
@@ -2478,7 +2548,7 @@ function renderMaterial() {
     return `<button class="${cls}" type="button" data-id="${esc(m.id)}" aria-label="${esc(m.name)}${m.fav ? ', Favorit' : ''}${isStart ? ', Startbild' : ''}">
       ${m.thumb ? `<img src="${m.thumb}" alt="" draggable="false">` : ''}
       ${m.kind === 'video' && m.duration ? `<span class="badge${tooLong.has(m.id) ? ' warn' : ''}">▶ ${m.trim ? '✂ ' + fmtClock(videoSpan(m)) : fmtClock(m.duration)}</span>` : ''}
-      ${m.excluded && !m.bad ? '<span class="out">von dir ausgeschlossen</span>' : !m.bad && autoOut(m) ? `<span class="out">aussortiert · ${autoOut(m)}</span>` : dropped.has(m.id) ? '<span class="out">passt nicht mehr hinein</span>' : ''}
+      ${m.excluded && !m.bad ? '<span class="out">von dir ausgeschlossen</span>' : !m.bad && autoOut(m, keepB) ? `<span class="out">aussortiert · ${autoOut(m, keepB)}</span>` : dropped.has(m.id) ? '<span class="out">passt nicht mehr hinein</span>' : ''}
       ${m.fav ? '<span class="flag fav">♥</span>' : ''}
       ${!m.bad && !m.loading && m.us === true ? '<span class="flag us set" title="von dir als Wir markiert">WIR</span>' : ''}
       ${m.kind === 'video' && m.sound ? '<span class="flag snd" aria-label="Originalton an"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z" fill="currentColor"/><path d="M15.5 9a4 4 0 010 6M17.8 6.8a7 7 0 010 10.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>' : ''}
@@ -2498,8 +2568,9 @@ function openMediaSheet(id) {
   const quality = m.score != null ? Math.round(m.score * 100) : null;
   // Auswahl: ist die Aufnahme im Ergebnis, und wenn nicht, warum? Tauschen in beide Richtungen
   const capD = new Set(S.plan && S.plan.capacity ? S.plan.capacity.droppedIds : []);
-  const isOut = (x) => !x.bad && !x.loading && (x.excluded || capD.has(x.id) || !!autoOut(x));
-  const why = m.excluded ? 'Von dir ausgeschlossen.' : autoOut(m) ? `Aussortiert (${autoOut(m)}).` : capD.has(m.id) ? 'Passt nicht mehr in den Film.' : '';
+  const keepB = S.plan ? burstKeep(mengeOf(S.plan.resolved)) : false;
+  const isOut = (x) => !x.bad && !x.loading && (x.excluded || capD.has(x.id) || !!autoOut(x, keepB));
+  const why = m.excluded ? 'Von dir ausgeschlossen.' : autoOut(m, keepB) ? `Aussortiert (${autoOut(m, keepB)}).` : capD.has(m.id) ? 'Passt nicht mehr in den Film.' : '';
   const outs = ctx.media.filter((x) => x !== m && isOut(x));
   const selHTML = roles ? '' : isOut(m)
     ? `<div class="sel-box out"><b>Nicht im Film</b><span>${why} Du entscheidest, was ins Ergebnis kommt.</span>
@@ -2786,8 +2857,9 @@ function capacityText() {
   const parts = [`Zu diesem Song passen in ${c.story ? 'eine Story' : c.label === 'Reel' ? 'ein Reel' : 'diesen Film'} etwa ${c.imgFit} Fotos${c.videos ? ` neben ${c.videos} ${c.videos === 1 ? 'Video' : 'Videos'}` : ''}.`];
   if (c.droppedIds.length) parts.push(`${c.droppedIds.length} ${c.droppedIds.length === 1 ? 'Aufnahme bleibt' : 'Aufnahmen bleiben'} draußen (${len} voll)${c.story ? '; als Reel passen mehr' : ''}.`);
   else parts.push(`Alle ${c.images + c.videos} Aufnahmen sind im Film (${len}), in ihrer Aufnahme-Reihenfolge, keine doppelt.`);
-  const outs = S.ctx.media.filter((m) => !m.excluded && !m.bad && autoOut(m));
-  if (outs.length && S.plan.resolved.allMedia !== 'off') parts.push(`${outs.length} ${outs.length === 1 ? 'Aufnahme hat' : 'Aufnahmen hat'} die App aussortiert (${[...new Set(outs.map(autoOut))].join(', ')}); als Favorit (♥) kommt sie trotzdem hinein.`);
+  const keepB = burstKeep(mengeOf(S.plan.resolved));
+  const outs = S.ctx.media.filter((m) => !m.excluded && !m.bad && autoOut(m, keepB));
+  if (outs.length && allMediaOn(S.plan.resolved)) parts.push(`${outs.length} ${outs.length === 1 ? 'Aufnahme hat' : 'Aufnahmen hat'} die App aussortiert (${[...new Set(outs.map((m) => autoOut(m, keepB)))].join(', ')}); als Favorit (♥) kommt sie trotzdem hinein${outs.some((m) => autoOut(m) === 'Serienbild') ? ' – Serienbilder nimmt „Neu schneiden → So viele wie möglich“ mit' : ''}.`);
   const pk = c.packed || {};
   const how = [pk.split ? `${pk.split} Fotos im Split-Screen` : '', pk.vsplit ? `${pk.vsplit} Videos gleichzeitig` : '', pk.burst ? `${pk.burst} in Foto-Serien` : '', pk.stack ? `${pk.stack} im Polaroid-Stapel` : '', pk.grid ? `${pk.grid} im Raster` : ''].filter(Boolean);
   if (how.length) parts.push(`Verdichtet: ${how.join(', ')}.`);
@@ -3883,18 +3955,7 @@ async function init() {
   bindSetting('splitChips', 'split');
   // Neu schneiden: die Regie setzt noch einmal an (neue Zusammensetzung, wieder die beste von mehreren Varianten).
   // Deine Entscheidungen bleiben: Auswahl (Favoriten/ausgeschlossen), Startbild, Reihenfolge, Mitgetipptes, Texte, Look.
-  $('remixBtn').addEventListener('click', async () => {
-    const ctx = S.ctx;
-    if (!ctx) return;
-    ctx.rec.settings.seed = ((ctx.rec.settings.seed * 1103515245 + 12345) >>> 0) % 1000000 || 1;
-    const perClip = Object.keys(ctx.rec.overrides.clips || {}).length;
-    if (ctx.kind !== 'place' || !ctx.song || !ctx.song.an) { commit(); savePlaceSoon(); engine.t = 0; scheduleRebuild(0); toast('Neu geschnitten.'); return; }
-    ctx.rec.overrides.clips = {};
-    // beim Neuschneiden darf die Regie innerhalb der Tagesabschnitte anders anordnen; zu ähnliche Varianten zählen nicht
-    ctx.rec.settings.recut = ((ctx.rec.settings.recut || 0) % 97) + 1;
-    await cutFilm(6, S.plan);
-    toast(`Neu geschnitten: eine neue Zusammensetzung, wieder die beste von mehreren Varianten. Deine Auswahl, Reihenfolge und Texte sind geblieben${perClip ? `; ${perClip} einzelne Einstellungs-Änderungen gehörten zum alten Schnitt` : ''}. Gefällt der alte besser: Rückgängig.`);
-  });
+  $('remixBtn').addEventListener('click', openRemixSheet);
   $('songMap').addEventListener('click', (e) => {
     if (!S.ctx || !S.ctx.song) return;
     const r = e.currentTarget.getBoundingClientRect();

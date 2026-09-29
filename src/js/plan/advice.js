@@ -30,7 +30,7 @@ function idealLength(an, s) {
 const ADVICE_CACHE = new WeakMap();
 function songAdvice(an, settings) {
   // je Song und Ziel nur einmal rechnen (der Musik-Tab fragt oft)
-  const key = [settings.format, settings.target, settings.pace, settings.variant, settings.allMedia].join('|');
+  const key = [settings.format, settings.target, settings.pace, settings.variant, settings.allMedia, settings.menge].join('|');
   let byKey = ADVICE_CACHE.get(an);
   if (!byKey) { byKey = new Map(); ADVICE_CACHE.set(an, byKey); }
   if (!byKey.has(key)) byKey.set(key, songAdviceRaw(an, settings));
@@ -338,7 +338,7 @@ function planAudit(plan, media, an) {
   // (ebenso, wenn der Film schon an der Formatgrenze oder am Songende steht – dann sagt die Notiz, was draußen bleibt)
   const bar = an.bpm ? 240 / an.bpm : 2;
   const atLimit = D >= fr.max - bar * 1.6 - 0.05 || songEnd;
-  if (plan.resolved.allMedia !== 'off' && cap.droppedIds && cap.droppedIds.length && !fixedLen && !atLimit) add('fehlt', 0, `${cap.droppedIds.length} Aufnahmen fehlen`);
+  if (allMediaOn(plan.resolved) && cap.droppedIds && cap.droppedIds.length && !fixedLen && !atLimit) add('fehlt', 0, `${cap.droppedIds.length} Aufnahmen fehlen`);
   // 8. Reihenfolge: Tagesblöcke nie vertauscht (Vorschau-Einstiege ausgenommen)
   if (plan.resolved.order !== 'streng') {
     // Startbild-Einstiege (Aufblende, Countdown, Raster) und Vorschauen zeigen bewusst das stärkste Bild der Reise vorab

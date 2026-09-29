@@ -55,6 +55,7 @@ Ablauf je Ort (`rec.flow`): `song` (Song wählen) → `advice` (Songprofil + Emp
 ## Regeln, die gelten müssen
 - Alles lokal: keine Netzwerkzugriffe, keine Uploads.
 - Chronologie in Tagesblöcken (Standard `order: 'tageszeit'`): je Tag „Morgen & Mittag“ (bis 14 Uhr) und „Nachmittag & Abend“ (Nacht bis 4 Uhr = Vorabend, `dayBlock`); Blöcke nie vertauscht, innerhalb ordnet `arrangeBlocks` (plan/arrange.js) frei. `order: 'streng'`: Uhrzeit (Ausnahmen: Startbild, Tausch innerhalb 3 min, Beinahe-Doppel versetzt).
+- Menge (`settings.menge`, Wahl beim „Neu schneiden“ mit Zählung „x von y im Film“ und Gründen): `auto` = wie eingestellt, `mehr` = alle guten + jedes zweite Serienbild, Videos ×0,75, `max` = alle Serienbilder, Videos ×0,55 (`mengeOf`, `allMediaOn`, `burstKeep`, `formatRule` in director.js). Stufen-Test in allmedia.mjs, `reel-max`/`story-mehr` in stimmig.mjs.
 - „Alle Aufnahmen“ (Standard): nichts weglassen; verdichten zuerst in Drop/Refrain; ruhige Teile ≥ 2 Beats. Bleibt nach dem Layout ein Foto übrig, teilt es sich mit dem zeitlich nächsten Foto einen Split-Screen.
 - Videos laufen wirklich (mind. ein Takt), bester Moment auf dem Schlag; nie in Sekundenbruchteil-Einstellungen.
 - Stimmigkeit: `test/stimmig.mjs` prüft `planAudit` über 3 Tempi × 3 Materialmengen × 10 Formate (Story, Reel 90 s …) – muss ohne Befund bleiben.
