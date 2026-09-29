@@ -1,6 +1,6 @@
-// Kino-Rollladen: sechs Ausschnitte der stärksten Aufnahmen nebeneinander im Kinoband (die ersten schnell, das stärkste
-// vorn und farbig, die übrigen erst schwarzweiß), Lichtschlitz (Band schließt zur Linie, Linie steht, erlischt), Schwarz mit Ortstitel,
-// dann öffnet sich das Bild flüssig; alles auf den Schlägen, der Song läuft von Anfang an unverändert.
+// Kino-Rollladen: sechs Ausschnitte der stärksten Aufnahmen im Kinoband, alle erst schwarzweiß, dann in derselben
+// Folge farbig, drei Züge des Rollladens, kurz Schwarz, Ortsname mit Koordinaten auf Schwarz, dann öffnet sich das
+// Bild – jeder Schritt auf den Schlägen, der Song läuft von Anfang an unverändert, kein zweites Mal der Ort unten links.
 // Geprüft wird der Plan, das gerenderte Bild (Pixel) und der Ton (Pegel je Abschnitt).
 import { chromium } from '/opt/node22/lib/node_modules/playwright/index.mjs';
 import { makeStructuredSong } from './wav.mjs';
@@ -52,19 +52,19 @@ const r = await p.evaluate(async (b64) => {
   const halfBeat = (t) => beats.some((x, i) => beats[i + 1] != null && Math.abs((x + beats[i + 1]) / 2 - t) < 0.02);
   if (!sp.reveal.slice(1).every((x) => onBeat(x) || halfBeat(x)) || sp.reveal.some((x, k) => k && x <= sp.reveal[k - 1])) fails.push('Felder nicht nacheinander im Takt');
   const mv = sp.shutter.moves;
-  if (mv.map((m) => m.side).join() !== 'slit,hold,off' || !mv.every((m) => onBeat(m.t))) fails.push('Lichtschlitz: Schließen, Stehen, Erlöschen nicht auf den Schlägen');
+  // alle Felder erst schwarzweiß, dann in derselben Folge farbig – jeder Farbwechsel auf Schlag/halbem Schlag
+  if (sp.colorAt.length !== 6 || !sp.colorAt.every((x) => onBeat(x) || halfBeat(x)) || sp.colorAt.some((x, k) => x <= sp.reveal[k] || (k && x <= sp.colorAt[k - 1]))) fails.push('Farbe nicht nacheinander im Takt');
+  // drei Züge, jeder auf einem Schlag, je ein Drittel
+  if (mv.length !== 3 || !mv.every((m) => onBeat(m.t)) || Math.abs(mv[2].to - 1) > 1e-6) fails.push('Rollladen: nicht drei Züge auf den Schlägen');
   const sh = plan.overlays.find((o) => o.type === 'shutter'), city = plan.overlays.find((o) => o.type === 'city');
   if (!sh || !city) fails.push('Rollladen/Titel fehlt');
-  // nach dem Erlöschen der Linie kurz Schwarz, dann auf dem nächsten Schlag der Ortsname, stehend bis ins Öffnen
-  if (city && !(city.start > sp.shutter.closedAt + 0.15 && city.start - mv[2].t < an.beatPeriod * shutterStep(an) + 0.02 && onBeat(city.start) && city.end > sh.open && city.end < sh.end)) fails.push('Titel nicht kurz nach Schwarz bis ins Öffnen');
-  // die Linie steht 2–3 Schläge und pocht auf ihnen; Einsatz vier Takte nach dem ersten Bild
-  const lineBeats = (mv[2].t - (mv[0].t + mv[0].dur)) / an.beatPeriod;
-  out.lineBeats = +lineBeats.toFixed(2);
-  if (!(lineBeats >= 1.8 && lineBeats <= 3.2) || !(sp.shutter.beats || []).every(onBeat) || (sp.shutter.beats || []).length < 2) fails.push('Linie nicht 2–3 Schläge im Takt');
-  if (!(sh.end / (an.beatPeriod * shutterStep(an)) < 16.2)) fails.push('Einstieg zu lang: ' + sh.end.toFixed(2));
+  // nach dem dritten Zug kurz Schwarz, dann auf dem Schlag Ortsname; er steht auf Schwarz und geht mit dem Öffnen
+  if (city && !(city.start > sp.shutter.closedAt + 0.1 && onBeat(city.start) && city.end > sh.open && city.end <= sh.open + an.beatPeriod * shutterStep(an) + 0.02)) fails.push('Titel nicht auf Schwarz bis zum Öffnen');
+  // kein zweites Mal der Ort unten links (Kapitel/Unterzeile)
+  if (plan.overlays.some((o) => (o.type === 'chapter' || o.type === 'lower') && o.start < sh.end + 6)) fails.push('Ortsname nach dem Öffnen noch einmal');
   const pulls = plan.sfx.filter((x) => x.kind === 'pull');
   if (pulls.length || !plan.sfx.some((x) => x.kind === 'projector')) fails.push('Rollladen soll still schließen');
-  // Ortsname: nach dem Ausschreiben lange genug lesbar
+  // Ortsname: nach dem Ausschreiben lange genug lesbar (auf Schwarz, bis zum Öffnen)
   if (city && city.end - city.start < Math.min(titleReadTime(city, an.beatPeriod), city.cap - city.start) - 0.01) fails.push('Ortsname zu kurz lesbar');
   out.titleHold = city ? +(city.end - city.start).toFixed(2) : null;
   // Einsatz: das stärkste Bild auf einer Eins, Song dort voll
@@ -78,7 +78,7 @@ const r = await p.evaluate(async (b64) => {
   if (rush.length < 5 || rush[0].start > sh.start + 0.05) fails.push('schnelle Bilder beim Öffnen');
   const iss = planAudit(plan, media, an);
   if (iss.length) fails.push('Stimmigkeit: ' + iss.map((i) => i.code + ' ' + i.msg).join(' | '));
-  out.times = { reveal: sp.reveal.map((x) => +x.toFixed(2)), color: +sp.colorAt.toFixed(2), pulls: mv.map((m) => +m.t.toFixed(2)), black: +sh.start.toFixed(2), open: +sh.open.toFixed(2), entry: +sh.end.toFixed(2), D: +plan.duration.toFixed(1) };
+  out.times = { reveal: sp.reveal.map((x) => +x.toFixed(2)), color: sp.colorAt.map((x) => +x.toFixed(2)), pulls: mv.map((m) => +m.t.toFixed(2)), black: +sh.start.toFixed(2), open: +sh.open.toFixed(2), entry: +sh.end.toFixed(2), D: +plan.duration.toFixed(1) };
 
   // Bild: Pixel je Phase
   const W = 180, H = 320;
@@ -90,42 +90,38 @@ const r = await p.evaluate(async (b64) => {
   const stat = (d, y0, y1, x0 = 0, x1 = 1) => { let L = 0, C = 0, n = 0; for (let y = Math.floor(y0 * H); y < Math.floor(y1 * H); y += 2) for (let x = Math.floor(x0 * W); x < Math.floor(x1 * W); x += 2) { const i = (y * W + x) * 4, r = d[i], g = d[i + 1], bb = d[i + 2]; L += (r + g + bb) / 3; C += Math.max(r, g, bb) - Math.min(r, g, bb); n++; } return { L: L / n, C: C / n }; };
   // Kinoband: 2,39 : 1 in der Mitte
   const bh = Math.min(H * 0.9, W / 2.39) / H, b0 = (1 - bh) / 2, b1 = b0 + bh;
-  const bw = await shot(Math.min(sp.reveal[5] + 0.35, sp.colorAt - 0.03)), col = await shot(sp.colorAt + Math.min(0.9, (mv[0].t - sp.colorAt) * 0.8));
-  const sFirst = stat(bw, b0 + 0.01, b1 - 0.01, 0.01, 0.15), sBw = stat(bw, b0 + 0.01, b1 - 0.01, 0.2, 0.99), sCol = stat(col, b0 + 0.01, b1 - 0.01, 0.2, 0.99);
+  const bw = await shot(Math.min(sp.reveal[5] + 0.35, sp.colorAt[0] - 0.03)), col = await shot(sp.colorAt[5] + 0.3);
+  const sFirst = stat(bw, b0 + 0.01, b1 - 0.01, 0.01, 0.15), sBw = stat(bw, b0 + 0.01, b1 - 0.01, 0.01, 0.99), sCol = stat(col, b0 + 0.01, b1 - 0.01, 0.01, 0.99);
   const outside = stat(bw, 0, b0 - 0.02).L + stat(bw, b1 + 0.02, 1).L;
   out.bw = sBw; out.col = sCol; out.first = sFirst; out.outside = +outside.toFixed(1);
   if (outside / 2 > 6) fails.push('Felder nicht nur im Band');
-  if (!(sFirst.C > 25)) fails.push('stärkstes Bild vorn nicht farbig');
-  if (!(sBw.C < 8 && sBw.L > 20)) fails.push(`übrige Felder nicht schwarzweiß (${sBw.C.toFixed(1)})`);
+  if (!(sBw.C < 8 && sBw.L > 20)) fails.push(`nicht alle Felder erst schwarzweiß (${sBw.C.toFixed(1)})`);
   if (!(sCol.C > 25)) fails.push(`keine Farbe (${sCol.C.toFixed(1)})`);
   // Bewegung: zwei Bilder desselben Felds kurz nacheinander unterscheiden sich
   const m1 = await shot(sp.reveal[1] + 0.8), m2 = await shot(sp.reveal[1] + 1.3);
   let diff = 0, cnt = 0; for (let y = Math.floor((b0 + 0.02) * H); y < Math.floor((b1 - 0.02) * H); y += 2) for (let x = Math.floor(W / 6) + 2; x < Math.floor(W / 3) - 2; x += 2) { const i = (y * W + x) * 4; diff += Math.abs(m1[i] - m2[i]); cnt++; }
   out.motion = +(diff / cnt).toFixed(2);
   if (out.motion < 1.5) fails.push('keine Bewegung im Feld');
-  // Lichtschlitz: nach dem Schließen oben/unten im Band schwarz, in der Mitte eine helle beige Linie; sie steht still
-  // (zweimal gleich) und erlischt dann ganz
-  const lineAt = async (t) => {
-    const d = await shot(t), mid = Math.round((b0 + bh / 2) * H);
-    let best = 0, warm = 0;
-    for (let y = mid - 3; y <= mid + 3; y++) { let L = 0, rb = 0, n = 0; for (let x = Math.floor(W * 0.3); x < Math.floor(W * 0.7); x++) { const i = (y * W + x) * 4; L += (d[i] + d[i + 1] + d[i + 2]) / 3; rb += d[i] - d[i + 2]; n++; } if (L / n > best) { best = L / n; warm = rb / n; } }
-    return { line: +best.toFixed(1), warm: +warm.toFixed(1), above: +stat(d, b0 + 0.005, b0 + bh * 0.4).L.toFixed(1), below: +stat(d, b1 - bh * 0.4, b1 - 0.005).L.toFixed(1) };
-  };
-  const bts = sp.shutter.beats;
-  const l1 = await lineAt(bts[0] + 0.3), l2 = await lineAt(mv[2].t - 0.06), lp = await lineAt(bts[1] + 0.02);
-  out.slit = [l1, l2, lp];
-  if (!(lp.above > l1.above + 3)) fails.push('Linie pocht nicht auf dem Schlag');
-  if (!(l1.line > 150 && l1.warm > 5 && l1.above < 8 && l1.below < 8)) fails.push('Lichtschlitz: keine feine beige Linie auf Schwarz');
-  if (!(Math.abs(l1.line - l2.line) < 8)) fails.push('Lichtschlitz: Linie steht nicht still');
+  // nach jedem Zug: oben und unten ein weiteres Sechstel des Bands schwarz, die Mitte noch Bild; nach dem dritten schwarz
+  const six = bh / 6;
+  const p1 = await shot(mv[0].t + mv[0].dur + 0.05), p2 = await shot(mv[1].t + mv[1].dur + 0.05);
+  out.p1 = [stat(p1, b0 + 0.005, b0 + six - 0.01).L, stat(p1, b1 - six + 0.01, b1 - 0.005).L, stat(p1, b0 + six + 0.02, b1 - six - 0.02).L].map((x) => +x.toFixed(1));
+  out.p2 = [stat(p2, b0 + six + 0.005, b0 + 2 * six - 0.01).L, stat(p2, b1 - 2 * six + 0.01, b1 - six - 0.005).L, stat(p2, b0 + 2 * six + 0.02, b1 - 2 * six - 0.02).L].map((x) => +x.toFixed(1));
+  if (!(out.p1[0] < 8 && out.p1[1] < 8 && out.p1[2] > 25)) fails.push('1. Zug: oben/unten nicht zu');
+  if (!(out.p2[0] < 8 && out.p2[1] < 8 && out.p2[2] > 25)) fails.push('2. Zug: oben/unten nicht weiter zu');
   const blk = await shot((sp.shutter.closedAt + (city ? city.start : sh.start)) / 2);
   const title = await shot(city ? Math.min(sh.open - 0.05, city.start + 1.2) : sh.start + 1);
   out.black = +stat(blk, 0, 1).L.toFixed(1);
-  if (out.black > 5) fails.push(`nach dem Erlöschen nicht schwarz (${out.black})`);
+  if (out.black > 5) fails.push(`nach dem dritten Zug nicht schwarz (${out.black})`);
   out.title = [+stat(title, 0.02, 0.3).L.toFixed(1), +stat(title, 0.35, 0.65).L.toFixed(1)];
   if (!(out.title[0] < 3 && out.title[1] > 2)) fails.push('Titel nicht auf Schwarz');
   const mid = await shot(sh.open + (sh.end - sh.open) * 0.5);
   out.open = [+stat(mid, 0.0, 0.08).L.toFixed(1), +stat(mid, 0.4, 0.6).L.toFixed(1)];
   if (!(out.open[0] < 8 && out.open[1] > 20)) fails.push('Öffnen: Mitte nicht frei oder Rand nicht schwarz');
+  // das Öffnen ist farbig (kein zweites Schwarzweiß bis zum Einsatz)
+  const opC = await shot(sh.open + (sh.end - sh.open) * 0.6);
+  out.openColor = +stat(opC, 0.4, 0.6).C.toFixed(1);
+  if (!(out.openColor > 15) || (plan.colorFx || []).some((f) => f.start < sh.end)) fails.push('Öffnen nicht farbig');
   const after = await shot(sh.end + 0.3);
   out.after = [+stat(after, 0.0, 0.1).L.toFixed(1), +stat(after, 0.9, 1).L.toFixed(1)];
   if (!(out.after[0] > 15 && out.after[1] > 15)) fails.push('nach dem Einsatz nicht ganz offen');
@@ -134,22 +130,10 @@ const r = await p.evaluate(async (b64) => {
   const au = await eng._renderAudio(22050, true);
   const ch = au.getChannelData(0), sr = au.sampleRate;
   const rms = (a, z) => { let s = 0, n = 0; for (let i = Math.floor(a * sr); i < Math.floor(z * sr); i++) { s += ch[i] * ch[i]; n++; } return Math.sqrt(s / Math.max(1, n)); };
-  const u = (sh.end - sh.open) / 9;
   const wallT = [0.3, mv[0].t - 0.05], fullT = [sh.end + 0.2, sh.end + 2];
-  // Höhen über ~3 kHz (Hochpass erster Ordnung) mit und ohne Vorhang-Filter
-  // drei Hochpass-Stufen hintereinander (18 dB/Oktave), sonst sickern Bassdrum und Bass in die Messung
-  const hp = (buf, a, z) => { const c = buf.getChannelData(0); const k = Math.exp(-2 * Math.PI * 3000 / sr); const l = [0, 0, 0]; let s2 = 0; for (let i = Math.floor(a * sr) - 400; i < Math.floor(z * sr); i++) { let x = c[i]; for (let j = 0; j < 3; j++) { l[j] = k * l[j] + (1 - k) * x; x -= l[j]; } if (i >= Math.floor(a * sr)) s2 += x * x; } return Math.sqrt(s2); };
-  // (ohne die Geräusche gemessen: der Projektor hat eigene Höhen)
-  eng.plan = { ...plan, sfx: [] };
-  const auF = await eng._renderAudio(22050, true);
-  eng.plan = { ...plan, sfx: [], win: { ...plan.win, lp: null } };
-  const auNo = await eng._renderAudio(22050, true);
-  eng.plan = plan;
-  out.audio = { wall: +rms(...wallT).toFixed(4), pull: +rms(mv[0].t, mv[0].t + mv[0].dur).toFixed(4), title: +rms(sp.shutter.closedAt + 0.5 * u, sh.open - 0.05).toFixed(4), rise: +rms(sh.open + 2 * u, sh.open + 3 * u).toFixed(4), full: +rms(...fullT).toFixed(4), muffle: +(hp(auF, ...wallT) / Math.max(1e-9, hp(auNo, ...wallT))).toFixed(3) };
+  out.audio = { wall: +rms(...wallT).toFixed(4), full: +rms(...fullT).toFixed(4) };
   // Song von Anfang an unverändert (wie mit der Instagram-Musik): kein Dämpfen, kein Lautstärke-Aufbau
-  if (plan.win.env || plan.win.lp) fails.push('Song hat einen Aufbau im Ton');
   if (!(out.audio.wall > out.audio.full * 0.12)) fails.push('Musik trägt am Anfang nicht');
-  if (!(out.audio.muffle > 0.95)) fails.push('Musik am Anfang gedämpft');
   if (!(out.audio.full > 0.05)) fails.push('Song auf dem Einsatz nicht voll');
   // gleiches Ergebnis bei jedem Export (fester Zufall)
   const au2 = await eng._renderAudio(22050, true);

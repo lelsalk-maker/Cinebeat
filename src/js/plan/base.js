@@ -81,13 +81,13 @@ function bandRect(format, frame) {
 
 /** Länge des Aufblende-Einstiegs in Beats: zwei Takte, bei sehr langsamen Songs einer (Aufbau 3–5 s). */
 /**
- * Kino-Rollladen: Ablauf in Zähleinheiten (ein Schlag, bei schnellen Songs zwei). Alles liegt auf den
- * Schlägen des Songs (er läuft von Anfang an unverändert, wie später mit der Instagram-Musik): sechs Ausschnitte im
- * halben Takt (0–2,5), Farbe (3), das Band schließt zum Lichtschlitz (4), die Linie steht zwei Schläge als
- * Cliffhanger und pocht auf jedem (5, 6), erlischt zur Mitte (7), kurz Schwarz, Ortsname (8),
- * das Bild öffnet sich (10) bis zum Einsatz (16 = Refrain/Drop, vier Takte nach dem ersten Bild).
+ * Kino-Rollladen: Ablauf in Zähleinheiten (ein Schlag, bei schnellen Songs zwei), alles auf den Schlägen des Songs
+ * (er läuft von Anfang an unverändert, wie später mit der Instagram-Musik): sechs Ausschnitte erscheinen schwarzweiß
+ * im halben Takt (0–2,5), werden in derselben Folge farbig (3–5,5), der Rollladen schließt in drei Zügen von oben
+ * und unten (6, 7, 8), kurz Schwarz, Ortsname mit Koordinaten auf Schwarz (9), das Bild öffnet sich (15) bis zum
+ * Einsatz (20 = Refrain/Drop, fünf Takte nach dem ersten Bild).
  */
-const SHUTTER = { tiles: [0, 0.5, 1, 1.5, 2, 2.5], color: 3, pulls: [4, 5, 7], beats: [5, 6], black: 8, open: 10, end: 16 };
+const SHUTTER = { tiles: [0, 0.5, 1, 1.5, 2, 2.5], colors: [3, 3.5, 4, 4.5, 5, 5.5], pulls: [6, 7, 8], black: 9, open: 15, end: 20 };
 function shutterStep(an) {
   return an.beatPeriod < 0.36 ? 2 : 1;
 }

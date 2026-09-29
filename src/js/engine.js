@@ -297,8 +297,8 @@ class Engine {
   /**
    * Kino-Auftakt: im Band in der Bildmitte erscheinen sechs schmale Ausschnitte nebeneinander – die ersten schnell –,
    * jeder setzt mit einem Zoom ein und fährt danach sichtbar weiter (abwechselnd auf und ab). Das stärkste Bild steht
-   * vorn und ist sofort farbig, die übrigen sind erst schwarzweiß, dann fließt die Farbe hinein. Danach schließt sich das
-   * Band zum Lichtschlitz: eine feine Linie, die zwei Schläge im Takt pocht und dann erlischt.
+   * vorn; alle sind erst schwarzweiß und werden auf den Schlägen farbig. Danach schließt ein Rollladen das Band in drei
+   * Zügen auf den Schlägen.
    */
   composeWall(s, t) {
     const c = s.clip, sp = c.split, cv = s.canvas;
@@ -348,8 +348,8 @@ class Engine {
       ctx.clip();
       ctx.globalAlpha = easeOutCubic(a);
       ctx.drawImage(src, sx, sy, vw, vh, x, y0, pw, bh);
-      // Schwarzweiß, bis die Farbe hineinfließt (je Feld leicht versetzt); das stärkste Bild vorn ist sofort farbig
-      const cp = k === 0 && sp.colorFirst ? 1 : smooth(clamp01((t - sp.colorAt - k * 0.06) / 0.5));
+      // alle Felder erst schwarzweiß; jedes wird auf seinem Schlag farbig (in der Folge, in der sie erschienen sind)
+      const cp = smooth(clamp01((t - sp.colorAt[k]) / 0.22));
       if (cp < 1) {
         ctx.globalCompositeOperation = 'saturation';
         ctx.globalAlpha = (1 - cp) * easeOutCubic(a);
@@ -365,60 +365,35 @@ class Engine {
     ctx.fillStyle = '#000';
     ctx.fillRect(0, y0, W, bh);
     ctx.globalAlpha = 1;
-    // Lichtschlitz: das Band schließt sich zur Mitte zu einer feinen Lichtlinie, die zwei Schläge pocht und dann erlischt
-    this._drawSlit(ctx, W, y0, bh, sp.shutter, t);
+    // Rollladen: drei Züge auf den Schlägen, von oben und unten zugleich
+    this._drawShutter(ctx, W, y0, bh, sp.shutter, t);
     this.r.upload(s.tex, cv);
   }
 
   /**
-   * Lichtschlitz: Schwarz schiebt sich von oben und unten weich zur Mitte, im letzten Stück glüht der Rest des Bilds
-   * zu einer feinen beigen Linie auf (mit weichem Schein). Die Linie steht zwei Schläge und pocht auf jedem, dann
-   * zieht sie sich zur Mitte zusammen und erlischt; kurz Schwarz, dann kommt der Ortsname.
+   * Rollladen im Band: jeder Zug schließt ein Drittel (je ein Sechstel von oben und unten), kurz und weich aufgesetzt,
+   * als geschlossene schwarze Fläche mit weichem Schatten auf dem Bild; nach dem dritten Zug ist alles schwarz.
    */
-  _drawSlit(ctx, W, y0, bh, sh, t) {
-    const [close, , off] = sh.moves;
-    const u = clamp01((t - close.t) / close.dur);
-    if (u <= 0) return;
-    const q = (x) => x * x * x * (x * (6 * x - 15) + 10);
-    const lineH = Math.max(2, Math.round(bh * 0.012));
-    // auf ganze Pixelzeilen: keine halb durchscheinenden Ränder (die Fugen der Felder blieben sonst als Striche sichtbar)
-    const hOpen = Math.max(lineH, Math.round(bh - (bh - lineH) * q(u)));
-    const cy = y0 + bh / 2, top = Math.round(cy - hOpen / 2);
+  _drawShutter(ctx, W, y0, bh, sh, t) {
+    let f = 0;
+    for (const m of sh.moves) {
+      const u = clamp01((t - m.t) / m.dur);
+      if (u > 0) f = m.from + (m.to - m.from) * u * u * u * (u * (6 * u - 15) + 10);
+    }
+    if (f <= 0) return;
     ctx.fillStyle = '#000';
-    ctx.fillRect(0, y0, W, top - y0);
-    ctx.fillRect(0, top + hOpen, W, y0 + bh - top - hOpen);
-    const v = clamp01((t - off.t) / off.dur);
-    if (v >= 1) { ctx.fillRect(0, y0, W, bh); return; }
-    // Aufglühen im letzten Stück des Schließens: der Bildrest wird zu Licht
-    const glow = q(clamp01((u - 0.55) / 0.45));
-    if (glow <= 0) return;
-    const w = Math.round(W * (1 - q(v))), x0 = Math.round((W - w) / 2);
-    // der Bildrest verschwindet ganz im Licht (vorher schwarz darunter, sonst schimmern die Fugen durch)
-    ctx.globalAlpha = v > 0 ? 1 : glow;
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0, top - 1, W, hOpen + 2);
-    ctx.globalAlpha = 1;
-    // Cliffhanger im Takt: auf jedem Schlag pocht die Linie kurz (heller Schein, einen Hauch dicker), dann ruhig
-    let beat = 0;
-    for (const b of sh.beats || []) { const d = t - b; if (d >= 0 && d < 0.3) beat = Math.max(beat, Math.exp(-d / 0.07)); }
-    const a = glow * (1 - 0.5 * q(v)), ha = a * (1 - v) * (1 - v) * (1 + 1.6 * beat);
-    const halo = lineH * (6 + 5 * beat);
-    if (beat > 0.02 && v <= 0) { const grow = Math.round(lineH * 0.6 * beat); ctx.fillStyle = '#000'; ctx.fillRect(0, top - grow - 1, W, hOpen + 2 * grow + 2); }
-    const gU = ctx.createLinearGradient(0, cy - halo, 0, cy);
-    gU.addColorStop(0, 'rgba(236,214,178,0)');
-    gU.addColorStop(1, `rgba(236,214,178,${0.28 * ha})`);
-    ctx.fillStyle = gU;
-    ctx.fillRect(x0, cy - halo, w, halo);
-    const gD = ctx.createLinearGradient(0, cy, 0, cy + halo);
-    gD.addColorStop(0, `rgba(236,214,178,${0.28 * ha})`);
-    gD.addColorStop(1, 'rgba(236,214,178,0)');
-    ctx.fillStyle = gD;
-    ctx.fillRect(x0, cy, w, halo);
-    ctx.globalAlpha = a;
-    ctx.fillStyle = '#f4dfbb';
-    const gr = v <= 0 ? Math.round(lineH * 0.6 * beat) : 0;
-    ctx.fillRect(x0, top - gr, w, hOpen + 2 * gr);
-    ctx.globalAlpha = 1;
+    if (f >= 1) { ctx.fillRect(0, y0 - 1, W, bh + 2); return; }
+    const h = Math.min(bh / 2, Math.round((f * bh) / 2));
+    ctx.fillRect(0, y0, W, h);
+    ctx.fillRect(0, y0 + bh - h, W, h);
+    // weicher Schatten der Kanten aufs Bild
+    const sd = Math.max(4, bh * 0.05);
+    const gT = ctx.createLinearGradient(0, y0 + h, 0, y0 + h + sd);
+    gT.addColorStop(0, 'rgba(0,0,0,0.5)'); gT.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = gT; ctx.fillRect(0, y0 + h, W, sd);
+    const gB = ctx.createLinearGradient(0, y0 + bh - h, 0, y0 + bh - h - sd);
+    gB.addColorStop(0, 'rgba(0,0,0,0.5)'); gB.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = gB; ctx.fillRect(0, y0 + bh - h - sd, W, sd);
   }
 
   /* ---------- 9er-Raster ---------- */
@@ -1246,21 +1221,6 @@ class Engine {
 
   _gainCurve(g, when, offset) {
     const w = this.plan.win, D = this.plan.duration;
-    // Hüllkurve des Einstiegs (Song baut sich leise auf): eine Kurve über den ganzen Film
-    if (w.env && w.env.length) {
-      const fo = Math.max(0.05, Math.min(w.fadeOut || 1, D * 0.3));
-      const out = (u) => Math.pow(Math.cos(clamp01(u) * Math.PI / 2), 1.6);
-      const envAt = (x) => { const e = w.env; if (x <= e[0][0]) return e[0][1]; for (let k = 1; k < e.length; k++) if (x <= e[k][0]) { const [a, ga] = e[k - 1], [b, gb] = e[k]; const u = (x - a) / Math.max(1e-6, b - a); return ga + (gb - ga) * (e[k][2] === 'in' ? u * u * u * (u * (6 * u - 15) + 10) : u); } return e[e.length - 1][1]; };
-      const gAt = (x) => envAt(x) * (x > D - fo ? out((x - (D - fo)) / fo) : 1);
-      const len = Math.max(0.02, D - offset);
-      const n = Math.max(2, Math.min(8000, Math.ceil(len * 60)));
-      const curve = new Float32Array(n);
-      for (let k = 0; k < n; k++) curve[k] = gAt(offset + (len * k) / (n - 1));
-      curve[n - 1] = 0;
-      g.gain.setValueAtTime(curve[0], when);
-      g.gain.setValueCurveAtTime(curve, when, len);
-      return;
-    }
     const fi = Math.max(0.005, w.fadeIn || 0.02);
     const fo = Math.max(0.05, Math.min(w.fadeOut || 1, D * 0.3));
     // Ausblenden nach dem Gehör: erst sanft, dann weich ins Leise (Kosinus statt gerader Linie, kein hörbares Abreißen)
@@ -1275,38 +1235,6 @@ class Engine {
     if (D - foStart > 0.02) g.gain.setValueCurveAtTime(curve, when + (foStart - offset), D - foStart);
   }
 
-  /** Song → (Tiefpass nach Hüllkurve, z. B. „hinter dem Vorhang“) → Gain. Ohne Kurve direkt. */
-  _songChain(ctx, src, g, when, offset) {
-    const lp = this.plan.win.lp;
-    if (!lp || !lp.length) { src.connect(g); return; }
-    const D = this.plan.duration;
-    const f = ctx.createBiquadFilter();
-    f.type = 'lowpass';
-    f.Q.value = 0.6;
-    const top = Math.min(20000, ctx.sampleRate * 0.45);
-    const at = (x) => {
-      if (x <= lp[0][0]) return lp[0][1];
-      for (let k = 1; k < lp.length; k++) if (x <= lp[k][0]) {
-        const [a, fa] = lp[k - 1], [b, fb] = lp[k];
-        const u = (x - a) / Math.max(1e-6, b - a);
-        // Öffnen des Filters nach dem Gehör: logarithmisch, zum Ende hin schneller (wie ein Filter-Sweep)
-        return lp[k][2] === 'exp' ? fa * Math.pow(fb / fa, u * u) : fa + (fb - fa) * u;
-      }
-      return lp[lp.length - 1][1];
-    };
-    const endT = lp[lp.length - 1][0];
-    const len = Math.max(0.02, Math.min(D, endT + 0.05) - offset);
-    if (len > 0.03) {
-      const n = Math.max(2, Math.min(4000, Math.ceil(len * 60)));
-      const curve = new Float32Array(n);
-      for (let k = 0; k < n; k++) curve[k] = Math.min(top, at(offset + (len * k) / (n - 1)));
-      f.frequency.setValueAtTime(curve[0], when);
-      f.frequency.setValueCurveAtTime(curve, when, len);
-      f.frequency.setValueAtTime(top, when + len + 0.01);
-    } else f.frequency.setValueAtTime(top, when);
-    src.connect(f).connect(g);
-  }
-
   _startAudio(offset, out, extraOut, withSong = true) {
     const ac = this.ac;
     const D = this.plan.duration;
@@ -1315,7 +1243,7 @@ class Engine {
     const g = ac.createGain();
     const duck = ac.createGain();
     const when = ac.currentTime + 0.08;
-    this._songChain(ac, src, g, when, offset);
+    src.connect(g);
     g.connect(duck);
     if (withSong) {
       duck.connect(out);
@@ -1679,7 +1607,7 @@ class Engine {
       src.buffer = this.audioBuffer;
       const g = ctx.createGain();
       const duck = ctx.createGain();
-      this._songChain(ctx, src, g, 0, 0);
+      src.connect(g);
       g.connect(duck).connect(ctx.destination);
       this._gainCurve(g, 0, 0);
       this._duckCurve(duck.gain, 0, 0);

@@ -226,16 +226,7 @@ function hookScore(plan, media, an) {
   const med = en.length ? en.slice().sort((a, b) => a - b)[en.length >> 1] : 0.5;
   const firstE = bt.map((b, i) => [b, en[i] || 0]).filter(([b]) => b >= plan.win.start - 0.05 && b < plan.win.start + W).map(([, e]) => e);
   const eAvg = firstE.length ? firstE.reduce((a, b) => a + b, 0) / firstE.length : med;
-  // ehrlich: ist der Song am Anfang leiser gemischt (Hüllkurve eines Einstiegs), zählt er entsprechend weniger
-  const env = plan.win.env;
-  let envG = 1;
-  if (env && env.length) {
-    const gAt = (x) => { if (x <= env[0][0]) return env[0][1]; for (let k = 1; k < env.length; k++) if (x <= env[k][0]) { const [a, ga] = env[k - 1], [b, gb] = env[k]; return ga + (gb - ga) * ((x - a) / Math.max(1e-6, b - a)); } return env[env.length - 1][1]; };
-    let sum = 0;
-    for (let k = 0; k < 15; k++) sum += gAt((k + 0.5) * W / 15);
-    envG = Math.min(1, (sum / 15) / 0.5);
-  }
-  add('music', 'Musik trägt sofort', ((eAvg / Math.max(0.05, med) - 0.6) / 0.6) * envG, 0.15, 'Der Song beginnt leise: „Ab Refrain“ oder „Kurz davor“ als Songstart.');
+  add('music', 'Musik trägt sofort', ((eAvg / Math.max(0.05, med) - 0.6) / 0.6), 0.15, 'Der Song beginnt leise: „Ab Refrain“ oder „Kurz davor“ als Songstart.');
   // 6. kein langsamer Anlauf aus Schwarz
   const black = (plan.fx || []).some((f) => (f.type === 'black' || f.type === 'dim') && f.start < 0.3 && f.end > 0.45);
   const slow = plan.intro === 'cinema' || (plan.win.fadeIn || 0) > 0.3;

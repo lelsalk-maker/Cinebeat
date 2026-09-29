@@ -21,15 +21,14 @@ const info = await page.evaluate(() => {
   const p = CineBeat.S.plan;
   return {
     intro: p.intro, setting: CineBeat.S.ctx.rec.settings.intro, wall: !!(p.clips[0].split && p.clips[0].split.orient === 'wall'),
-    sfx: CineBeat.engine.hasSfx, env: !!(p.win.env && p.win.env.length),
+    sfx: CineBeat.engine.hasSfx,
     preLocked: [...document.querySelectorAll('#preChips [data-v]')].filter((b) => b.dataset.v !== 'off').every((b) => b.disabled),
     regie: document.getElementById('regieDecisions').textContent, notes: p.notes.some((n) => /Kino-Rollladen/.test(n)),
   };
 });
 console.log(JSON.stringify(info));
 if (info.setting !== 'shutter' || info.intro !== 'shutter') fails.push('Einstieg nicht übernommen');
-// der Song läuft unverändert von Anfang an (kein Aufbau im Ton, wie mit der Instagram-Musik)
-if (!info.wall || !info.sfx || info.env) fails.push('Wand/Geräusche fehlen oder Song mit Aufbau');
+if (!info.wall || !info.sfx) fails.push('Wand/Geräusche fehlen');
 if (!info.preLocked) fails.push('Vorspann nicht gesperrt');
 if (!/Kino-Rollladen/.test(info.regie) || !info.notes) fails.push('Regie nennt den Einstieg nicht');
 // Vorschau: ein paar Sekunden abspielen (Projektor, erster Zug)

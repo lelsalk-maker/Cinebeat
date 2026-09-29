@@ -95,7 +95,7 @@ function planOnce(opts) {
     const st = shutterStep(an), u = beatDur * st;
     // Zeit einer (auch halben) Zählzeit auf dem Beat-Raster
     const at = (x) => { const k = x * st, k0 = Math.floor(k + 1e-6), f = k - k0; return f > 1e-6 ? atB(k0) + (atB(k0 + 1) - atB(k0)) * f : atB(k0); };
-    shutter = { u, reveal: SHUTTER.tiles.map((x, k) => (k === 0 ? 0 : at(x))), colorAt: at(SHUTTER.color), pulls: SHUTTER.pulls.map(at), beats: SHUTTER.beats.map(at), black: at(SHUTTER.black), open: at(SHUTTER.open), end: at(SHUTTER.end) };
+    shutter = { u, reveal: SHUTTER.tiles.map((x, k) => (k === 0 ? 0 : at(x))), colorAt: SHUTTER.colors.map(at), pulls: SHUTTER.pulls.map(at), black: at(SHUTTER.black), open: at(SHUTTER.open), end: at(SHUTTER.end) };
     if (shutter.end > D - Math.max(3, barDur * 2)) shutter = null;
     else pre = { kind: 'shutter', beats: SHUTTER.black * st, end: shutter.black, pieces: [{ start: 0, end: shutter.black, f: { pre: 'wall' } }] };
   }
@@ -693,15 +693,11 @@ function planOnce(opts) {
       const all = pick.length ? pick : (first ? [first] : []);
       while (all.length && all.length < SHUTTER.tiles.length) all.push(all[all.length % Math.max(1, pick.length)]);
       const ids = all.map((m) => m.id);
-      // Lichtschlitz: schließen (1. Zählzeit), Linie steht still (2.), erlischt (3.) – danach Schwarz mit Ortsnamen
-      const u = shutter.u, mvC = Math.min(0.8, u * 0.9), mvO = Math.min(0.25, u * 0.45);
-      const moves = [
-        { side: 'slit', t: shutter.pulls[0], dur: mvC },
-        { side: 'hold', t: shutter.pulls[1], dur: Math.max(0.05, shutter.pulls[2] - shutter.pulls[1]) },
-        { side: 'off', t: shutter.pulls[2], dur: mvO },
-      ];
+      // drei Züge auf den Schlägen, je ein Drittel von oben und unten zugleich; jeder Zug kurz und weich aufgesetzt
+      const mv = Math.min(0.3, shutter.u * 0.55);
+      const moves = shutter.pulls.map((t, k) => ({ t, dur: mv, from: k / 3, to: (k + 1) / 3 }));
       const c = clips[0];
-      c.split = { ids, orient: 'wall', reveal: shutter.reveal.slice(0, ids.length), colorAt: shutter.colorAt, colorFirst: true, shutter: { moves, beats: shutter.beats, closedAt: shutter.pulls[2] + mvO } };
+      c.split = { ids, orient: 'wall', reveal: shutter.reveal.slice(0, ids.length), colorAt: shutter.colorAt.slice(0, ids.length), shutter: { moves, closedAt: shutter.pulls[2] + mv } };
       c.mediaId = ids[0];
       c.role = 'wall';
       shutter.moves = moves;
@@ -1358,7 +1354,6 @@ function planOnce(opts) {
   }
   const overlays = [];
   const sfx = [];
-  let songEnv = null, songLp = null;
   // Nichts ist fest: Titel, Kapitel und Statistik lassen sich einzeln ausschalten
   const title = s.showTitle === false ? '' : (settings.title || '').trim();
   const subtitle = s.showTitle === false ? '' : (settings.subtitle || '').trim();
@@ -1450,6 +1445,8 @@ function planOnce(opts) {
     const colSteps = (h) => (colorMode === 'steps' ? beatsRel.filter((b) => b > h - barDur + 0.02 && b < h - 0.02) : colorMode === 'strobe' ? strobeFlips(h) : colorMode === 'pulse' ? pulseHits(h) : []);
     const popOf = { drop: 0.42, steps: 0.4, strobe: 0.42, pulse: 0.42, bloom: 0.25, sweep: 0.25, pop: 0.3 };
     for (const h of hs) {
+      // der Kino-Rollladen hat sein Schwarzweiß → Farbe schon in den Feldern: das Öffnen bleibt farbig
+      if (shutter && pre && pre.kind === 'shutter' && h < shutter.end + 0.1) continue;
       if (h === revHit) {
         const r0 = clips.find((c) => c.reveal);
         const d0 = colorMode === 'bloom' ? Math.min(beatDur * 2, 1.1) : colorMode === 'sweep' ? Math.min(beatDur * 1.5, 0.85) : 0;
@@ -1582,13 +1579,14 @@ function planOnce(opts) {
   if (pre && pre.kind === 'shutter' && shutter) {
     const u = shutter.u;
     overlays.push({ type: 'shutter', start: shutter.black - 0.03, open: shutter.open, end: shutter.end + 0.02 });
-    // nach dem Erlöschen der Linie kurz ganz Schwarz, dann auf dem nächsten Schlag der Ortsname
-    if (title) overlays.push({ type: 'city', text: title, sub: subtitle, geo, start: shutter.black, end: shutter.open + 2.2 * u, cap: shutter.end - 0.3 });
-    // Geräusch: nur der Projektor läuft ganz leise, der Lichtschlitz schließt still
+    // nach dem dritten Zug kurz Schwarz, dann auf dem Schlag Ortsname und Koordinaten; sie stehen auf Schwarz und
+    // gehen mit dem Öffnen (danach kein zweites Mal als Kapitel)
+    if (title) overlays.push({ type: 'city', text: title, sub: subtitle, geo, start: shutter.black, end: shutter.open + 0.5 * u, cap: shutter.open + 0.5 * u });
+    // Geräusch: nur der Projektor läuft ganz leise, der Rollladen schließt still
     sfx.push({ kind: 'projector', t: 0, dur: Math.max(0.6, shutter.pulls[0] + 0.25), gain: 0.35 });
-    // Musik: läuft von Anfang an unverändert (kein Aufbau im Ton – auf Instagram kommt der Song ohnehin so);
-    // der Einstieg lebt allein davon, dass jedes Bild, die Linie und der Ortsname auf den Schlägen sitzen
-    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Kino-Rollladen: ${clips[0].split ? clips[0].split.ids.length : 6} Ausschnitte eurer stärksten Aufnahmen erscheinen nebeneinander im Kinoband, die ersten schnell, das stärkste vorn und gleich in Farbe, die anderen erst schwarzweiß; das Band schließt sich zu einer feinen Lichtlinie, die zwei Schläge lang im Takt pocht und dann zur Mitte erlischt; nach einem Moment Schwarz erscheint auf dem nächsten Schlag ${title ? `„${title}“` : 'der Ort'}${geo ? ' mit Koordinaten' : ''}; dann öffnet sich das Bild flüssig nach oben und unten. Alles sitzt auf den Schlägen des Songs, der von Anfang an voll läuft; der Einsatz kommt vier Takte nach dem ersten Bild (${fmtMS(shutter.end)}).`);
+    // Musik: läuft von Anfang an unverändert (auf Instagram kommt der Song ohnehin so); der Einstieg lebt davon,
+    // dass jedes Bild, jeder Farbwechsel, jeder Zug und der Ortsname auf den Schlägen sitzen
+    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Kino-Rollladen: ${clips[0].split ? clips[0].split.ids.length : 6} Ausschnitte eurer stärksten Aufnahmen erscheinen nebeneinander im Kinoband, schwarzweiß im halben Takt, das stärkste vorn, und werden in derselben Folge farbig; der Rollladen schließt in drei Zügen auf den Schlägen, kurz Schwarz, dann erscheint ${title ? `„${title}“` : 'der Ort'}${geo ? ' mit Koordinaten' : ''} auf Schwarz und geht mit dem Öffnen. Alles sitzt auf den Schlägen des Songs, der von Anfang an voll läuft; der Einsatz kommt fünf Takte nach dem ersten Bild (${fmtMS(shutter.end)}).`);
   }
   if (pre && pre.kind === 'countdown') dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, 'Vorspann Countdown: 3 · 2 · 1 wie im alten Kino, danach beginnt dein Einstieg.');
 
@@ -1658,6 +1656,8 @@ function planOnce(opts) {
     const st = Math.max(c.start + 0.3, introOvEnd + 0.2);
     if (chEnd - st < 1.4) continue;
     if (s.showChapters === false) continue;
+    // der Kino-Rollladen hat den Ort schon groß auf Schwarz gezeigt: nicht gleich noch einmal unten links
+    if (shutter && pre && pre.kind === 'shutter' && title && (c.chapterNo === 1 || String(c.chapter).toLowerCase() === String(title).toLowerCase())) continue;
     const chIdx = trip && trip.stops ? trip.stops.findIndex((x) => x.name === c.chapter) : -1;
     // Kapitel steht über zwei Einstellungen (mindestens 3,4 s), damit Ort und Kilometer in Ruhe lesbar sind
     const second = clips.slice(ci + 1, ci + 3).filter((x) => x.start < chEnd).pop();
@@ -1842,7 +1842,7 @@ function planOnce(opts) {
   return {
     _m: { repeats, dropped: droppedIds.length, scale: usedScale, floor: (fr.shotMin / fr.shot) * (level >= 1 ? 0.5 : 1), D, max: fr.max, settings, extraNeed, level },
     capacity,
-    duration: D, win: songEnv ? { ...win, env: songEnv, lp: songLp } : win, clips: all, visibleClips: clips.length,
+    duration: D, win, clips: all, visibleClips: clips.length,
     look: s.look, format: s.format, frame: s.frame, band, pace: s.pace, split: s.split, font: s.font || 'klassisch', motion: s.motion || 'ken', motionAmt: s.motionAmt || 'medium',
     intro, outro, fx, overlays, sfx, notes: dir.notes, resolved: s, voice,
     beats: beatsRel, downs, beatEnergy, beatDur,
