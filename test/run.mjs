@@ -61,7 +61,7 @@ if (lintErr || lintWarn) console.log(lint.split('\n').filter((l) => /error|warni
 await new Promise((r) => setTimeout(r, 1500));
 // lange Tests in unabhängige Teile zerlegen, damit sie parallel laufen (Name „test/teil“)
 const SPLIT = {
-  judder: { story: '[["story",{}]]', musikvideo: '[["musikvideo",{"mv":"on","variant":"energisch"}]]', film: '[["film",{"format":"16:9","variant":"ruhig"}]]' },
+  judder: { story: '[["story",{}]]', musikvideo: '[["musikvideo",{"mv":"on","variant":"energisch"}]]', film: '[["film",{"format":"16:9","variant":"ruhig"}]]', einstieg: '[["shutter",{"intro":"shutter","title":"Lissabon"}],["reveal",{"intro":"reveal"}]]' },
 };
 list = list.flatMap((t) => (SPLIT[t] ? Object.keys(SPLIT[t]).map((k) => `${t}/${k}`) : [t]));
 const run = (t) => new Promise((r) => {

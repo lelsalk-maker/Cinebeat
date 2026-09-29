@@ -70,7 +70,9 @@ const res = await p.evaluate(async ({ b64, CONF }) => {
       if (c.freezeAt != null || c.split || c.grid || c.stack || c.strip || c.contain) continue;
       const a = Math.ceil((c.start + 0.15) * fps), z = Math.floor((c.end - 0.15) * fps);
       let run = 0;
-      for (let n = a; n <= z && n < diffs.length; n++) { if (diffs[n] < 0.02) run++; else run = 0; if (run === 6) stalls.push({ clip: c.i, t: +((n + 0.5) / fps).toFixed(2) }); }
+      // Schwarz des Kino-Rollladens (Ortsname steht ruhig auf Schwarz bis zum Öffnen) ist gewollter Stillstand
+      const still = (t) => plan.overlays.some((o) => o.type === 'shutter' && t >= o.start - 0.05 && t <= o.open + 0.1);
+      for (let n = a; n <= z && n < diffs.length; n++) { if (diffs[n] < 0.02 && !still((n + 0.5) / fps)) run++; else run = 0; if (run === 6) stalls.push({ clip: c.i, t: +((n + 0.5) / fps).toFixed(2) }); }
     }
     const inShot = diffs.filter((_, n) => !expected((n + 0.5) / fps));
     out[name] = { N, flagged: flagged.slice(0, 12), nFlag: flagged.length, stalls: stalls.slice(0, 8), accMax: +accMax.toFixed(2), meanMotion: +(inShot.reduce((a, v) => a + v, 0) / Math.max(1, inShot.length)).toFixed(2) };

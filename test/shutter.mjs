@@ -126,6 +126,34 @@ const r = await p.evaluate(async (b64) => {
   out.after = [+stat(after, 0.0, 0.1).L.toFixed(1), +stat(after, 0.9, 1).L.toFixed(1)];
   if (!(out.after[0] > 15 && out.after[1] > 15)) fails.push('nach dem Einsatz nicht ganz offen');
 
+  // Ortsname mit Koordinaten und Kilometern: nach dem Erscheinen steht jede Textzeile ruhig (kein Hoch-Runter)
+  {
+    const trip = { idx: 1, all: false, stops: [{ name: 'Porto', pos: [41.15, -8.61] }, { name: 'Lissabon', pos: [38.7223, -9.1393], legKm: 313 }] };
+    const pg = buildPlan({ an, media, settings: { ...S, km: 'total' }, overrides: { texts: [], stickers: [] }, trip });
+    const cg = pg.overlays.find((o) => o.type === 'city'), sg = pg.overlays.find((o) => o.type === 'shutter');
+    const e2 = new Engine(document.getElementById('c'));
+    const W2 = 360, H2 = 640, c2 = document.createElement('canvas'); c2.width = W2; c2.height = H2;
+    const x2 = c2.getContext('2d', { willReadFrequently: true });
+    e2.setProject({ plan: pg, media, audioBuffer: buf, size: { w: W2, h: H2 } });
+    const tops = [];
+    for (let t = cg.start + 1.2; t < Math.min(sg.open, cg.end) - 0.9; t += 1 / 30) {
+      await e2.renderStill(t); e2.drawAt(t, 'still'); x2.drawImage(e2.canvas, 0, 0, W2, H2);
+      const d = x2.getImageData(0, 0, W2, H2).data;
+      // Schwerpunkt der Helligkeit je Textzeile (unabhängig vom Ein-/Ausblenden)
+      const prof = []; for (let y = 0; y < H2; y++) { let s2 = 0; for (let x = 0; x < W2; x++) s2 += d[(y * W2 + x) * 4]; prof.push(s2 / W2); }
+      const lines = []; let y0 = -1;
+      for (let y = 0; y <= H2; y++) { const on = y < H2 && prof[y] > 3; if (on && y0 < 0) y0 = y; if (!on && y0 >= 0) { let m = 0, w = 0; for (let k = y0; k < y; k++) { m += k * prof[k]; w += prof[k]; } lines.push(Math.round(m / w)); y0 = -1; } }
+      tops.push(lines.join(','));
+    }
+    // erlaubt: neue Zeile (Kilometer) kommt hinzu; nicht erlaubt: eine Zeile verschiebt sich
+    // jede Zeile, die schon steht (Titel, Datum, Koordinaten), bleibt auf ±1 px; die Kilometer kommen darunter hinzu
+    const base = tops[0].split(',').map(Number);
+    const moved = tops.some((r) => { const x = r.split(',').map(Number); return base.some((b0, i) => x[i] == null || Math.abs(x[i] - b0) > 1); });
+    out.geoRows = [tops[0], tops[tops.length - 1]];
+    if (moved || !cg.geo) fails.push('Koordinaten/Kilometer bewegen sich: ' + [...new Set(tops)].join(' | '));
+    e2.releaseAll && e2.releaseAll();
+  }
+
   // Ton: der Song läuft von Anfang an unverändert, auf dem Einsatz voll
   const au = await eng._renderAudio(22050, true);
   const ch = au.getChannelData(0), sr = au.sampleRate;

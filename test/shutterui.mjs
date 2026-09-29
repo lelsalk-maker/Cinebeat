@@ -40,7 +40,7 @@ if (!(t > 2)) fails.push('Vorschau läuft nicht (' + t + ')');
 await page.click('#exportBtn');
 await page.waitForSelector('#audHint');
 const hint = await page.textContent('#audHint');
-if (!/Rollladen/.test(hint)) fails.push('Export-Hinweis fehlt');
+if (!/Kino-Einstieg|Projektor/.test(hint)) fails.push('Export-Hinweis fehlt');
 if (errs.length) fails.push(...errs.slice(0, 3));
 console.log(fails.length ? 'FAIL ' + fails.join('; ') : 'OK shutterui');
 await browser.close();

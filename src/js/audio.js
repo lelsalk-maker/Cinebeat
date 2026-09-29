@@ -53,7 +53,7 @@ function percentile(arr, p) {
  * Taktphase (Downbeats), Energie je Beat und eine Hüllkurve für die Anzeige.
  */
 /** Version der Analyse: gespeicherte Songs mit älterer Version werden einmal neu analysiert. */
-const AN_VER = 8;
+const AN_VER = 9;
 
 /**
  * Mithören: findet in der Mikrofonaufnahme den genauen Einsatz des Songs nach dem Startsignal.
@@ -813,7 +813,8 @@ function detectDrums(beats, pSec, lowE, hiE, toFrame, nFrames) {
   pos.forEach((t, i) => {
     let lk = 0, ls = 0;
     for (let j = Math.max(0, i - W); j < Math.min(pos.length, i + W); j++) { lk = Math.max(lk, ks[j]); ls = Math.max(ls, ss[j]); }
-    if (ks[i] > Math.max(refK * 0.035, lk * 0.3)) kicks.push(t);
+    // zwischen den Schlägen (i ungerade) nur ein deutlicher Anschlag: Hi-Hats über dem Nachklang sind keine Bassdrum
+    if (ks[i] > Math.max(refK * 0.035, lk * (i % 2 ? 0.55 : 0.3))) kicks.push(t);
     if (ss[i] > Math.max(refS * 0.12, ls * 0.55)) snares.push(t);
   });
   // Rauschen ohne Schlagzeug: Treffer auf fast jeder Achtel sind keine Snare

@@ -1658,8 +1658,9 @@ function planOnce(opts) {
     const st = Math.max(c.start + 0.3, introOvEnd + 0.2);
     if (chEnd - st < 1.4) continue;
     if (s.showChapters === false) continue;
-    // der Kino-Rollladen hat den Ort schon groß auf Schwarz gezeigt: nicht gleich noch einmal unten links
-    if (shutter && pre && pre.kind === 'shutter' && title && (c.chapterNo === 1 || String(c.chapter).toLowerCase() === String(title).toLowerCase())) continue;
+    // Kein zweites Mal derselbe Ort: ein Kapitel mit dem Namen des Einstiegstitels (und nach dem Kino-Rollladen das
+    // erste Kapitel) wird nicht zusätzlich unten links eingeblendet
+    if (title && (String(c.chapter).toLowerCase() === String(title).toLowerCase() || (shutter && pre && pre.kind === 'shutter' && c.chapterNo === 1))) continue;
     const chIdx = trip && trip.stops ? trip.stops.findIndex((x) => x.name === c.chapter) : -1;
     // Kapitel steht über zwei Einstellungen (mindestens 3,4 s), damit Ort und Kilometer in Ruhe lesbar sind
     const second = clips.slice(ci + 1, ci + 3).filter((x) => x.start < chEnd).pop();
@@ -1682,13 +1683,15 @@ function planOnce(opts) {
 
   // Ende
   const last = clips[clips.length - 1];
+  // kurze Story (< 35 s): stand der Ort schon im Einstieg, kommt er am Ende nicht noch einmal (zu nah beieinander)
+  const endTitle = title && !(D < 35 && overlays.some((o) => o.text === title && o.start < D * 0.5)) ? title : '';
   if (outro === 'credits') {
     const cardDur = Math.min(Math.max(1.8, barDur), D * 0.18);
     const blackStart = D - cardDur - 0.9;
     fx.push({ type: 'black', start: blackStart, end: D + 1, amp: 1, fadeIn: 0.9 });
     const sp = trip && trip.statsParts;
     const stats = s.showStats !== false && sp ? [sp.places, (kmMode === 'leg' || kmMode === 'total') && sp.km > 5 ? `${Math.round(sp.km).toLocaleString('de-DE')} km` : '', sp.days].filter(Boolean).join(' · ') : '';
-    overlays.push({ type: 'endcard', text: title, sub: subtitle, stats, start: D - cardDur, end: D + 0.5 });
+    overlays.push({ type: 'endcard', text: endTitle, sub: subtitle, stats, start: D - cardDur, end: D + 0.5 });
   } else if (outro === 'freeze') {
     let fStart = Math.max(last.start + 0.3, D - Math.min(2.8, Math.max(1.8, barDur)));
     // ein Video am Ende läuft erst eine Weile, bevor es zum Standbild wird
@@ -1697,10 +1700,10 @@ function planOnce(opts) {
     last.freezeAt = last.freezeAt != null ? Math.min(last.freezeAt, fStart) : fStart;
     fx.push({ type: 'desat', start: fStart, end: D + 1, amp: 1, fadeIn: 0.7 });
     fx.push({ type: 'black', start: D - 0.5, end: D + 1, amp: 1, fadeIn: 0.45 });
-    if (title) overlays.push({ type: 'lower', text: title, sub: subtitle, start: fStart + 0.25, end: D + 0.5, freeze: true });
+    if (endTitle) overlays.push({ type: 'lower', text: title, sub: subtitle, start: fStart + 0.25, end: D + 0.5, freeze: true });
   } else if (outro === 'split') {
     fx.push({ type: 'black', start: D - 0.08, end: D + 1, amp: 1 });
-    if (title) overlays.push({ type: 'lower', text: title, sub: subtitle, start: Math.max(last.start + 0.4, D - barDur), end: D, center: true });
+    if (endTitle) overlays.push({ type: 'lower', text: title, sub: subtitle, start: Math.max(last.start + 0.4, D - barDur), end: D, center: true });
   } else if (outro !== 'loop') {
     fx.push({ type: 'black', start: D - 1.0, end: D + 1, amp: 1, fadeIn: 1.0 });
   }
@@ -1724,7 +1727,7 @@ function planOnce(opts) {
 
   if (last && last.strip) {
     const dur = last.end - last.start;
-    if (title) overlays.push({ type: 'lower', text: title, sub: subtitle, geo: null, start: last.start + dur * 0.4, end: D + 0.5, center: true });
+    if (endTitle) overlays.push({ type: 'lower', text: title, sub: subtitle, geo: null, start: last.start + dur * 0.4, end: D + 0.5, center: true });
     dir.notes.push('Ende als Filmstreifen: das letzte Bild wird zum Einzelbild auf dem Streifen, der rückwärts durch deinen Film läuft.');
   }
 

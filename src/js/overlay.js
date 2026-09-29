@@ -372,8 +372,9 @@ class OverlayPainter {
     this.maskTitle(ctx, title, g.cx, y, size, track, 'center', times, exitT, t, (sz) => this.font('title', sz));
     const sp = easeOutCubic(cl01((t - times[words]) / 0.5)) * (1 - out);
     const ss = g.base * 0.024;
-    this.drawLabel(ctx, o.sub, g.cx, y + ss * 2.8 - (1 - sp) * ss * 0.8, ss, 'center', sp, 0.4);
-    this.drawGeoLine(ctx, o, t, g.cx, y + ss * (o.sub ? 5 : 2.8), g.base * 0.022, 'center', sp);
+    // Datum und Koordinaten blenden an ihrer Stelle ein (kein Nachrutschen), Kilometer ruhig darunter
+    this.drawLabel(ctx, o.sub, g.cx, y + ss * 2.8, ss, 'center', sp, 0.4);
+    this.drawGeoLine(ctx, o, t, g.cx, y + ss * (o.sub ? 5 : 2.8), g.base * 0.022, 'center', sp, true);
   }
 
 
@@ -1004,19 +1005,22 @@ class OverlayPainter {
    * Zeile unter dem Ortsnamen: Koordinaten erscheinen Ziffer für Ziffer,
    * dann wechselt die Zeile zu den gefahrenen Kilometern, die hochzählen.
    */
-  drawGeoLine(ctx, o, t, x, y, size, align, alpha) {
+  drawGeoLine(ctx, o, t, x, y, size, align, alpha, stacked = false) {
     const geo = o.geo;
     if (!geo || alpha <= 0) return;
     size *= 1.22; // Koordinaten und Kilometer etwas größer als die übrigen kleinen Zeilen
     const local = t - o.start;
     const hasPos = geo.lat != null, hasKm = geo.km != null;
     const sw = !hasPos ? o.start + 0.3 : hasKm ? o.start + Math.max(1.3, (o.end - o.start) * 0.45) : Infinity;
-    const shift = cl01((t - sw) / 0.35);
+    // ruhig, ohne Hoch-Runter: gestapelt (großer Titel) bleiben die Koordinaten stehen und die Kilometer erscheinen
+    // darunter; einzeilig blenden sie an derselben Stelle über
+    const shift = smooth(cl01((t - sw) / 0.35));
     ctx.save();
     ctx.font = this.small(size);
     ctx.fillStyle = this.ink;
     ctx.textBaseline = 'alphabetic';
-    if (hasPos && shift < 1) {
+    const posA = stacked ? 1 : 1 - shift;
+    if (hasPos && posA > 0) {
       const deg = (v, p, n) => `${Math.abs(v).toFixed(4)}° ${v >= 0 ? p : n}`;
       const full = `${deg(geo.lat, 'N', 'S')}   ${deg(geo.lon, 'O', 'W')}`;
       const u = cl01((local - 0.2) / 0.9);
@@ -1024,15 +1028,15 @@ class OverlayPainter {
       const frame = Math.floor(t * 24);
       let txt = '';
       Array.from(full).forEach((ch, i) => { txt += i >= lock && /\d/.test(ch) ? String((frame * 7 + i * 13) % 10) : ch; });
-      ctx.globalAlpha = alpha * cl01(local / 0.25) * (1 - shift);
-      drawTracked(ctx, txt, x, y - shift * size * 0.7, 0.2, size, align, true);
+      ctx.globalAlpha = alpha * cl01(local / 0.25) * posA;
+      drawTracked(ctx, txt, x, y, 0.2, size, align, true);
     }
     if (hasKm && t >= sw) {
       const p = easeOutCubic(cl01((t - sw) / 0.9));
       const v = geo.kmFrom + (geo.km - geo.kmFrom) * p;
       const txt = `${geo.mode === 'leg' ? '+' : ''}${Math.round(v).toLocaleString('de-DE')} KM${geo.mode === 'total' ? ' UNTERWEGS' : ''}`;
       ctx.globalAlpha = alpha * shift;
-      drawTracked(ctx, txt, x, y + (1 - shift) * size * 0.7, 0.25, size, align, true);
+      drawTracked(ctx, txt, x, stacked && hasPos ? y + size * 1.7 : y, 0.25, size, align, true);
     }
     ctx.restore();
   }
