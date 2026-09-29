@@ -409,18 +409,20 @@ function openBeatSheet() {
   let pick = cur && BEAT_STYLES[cur.style] ? cur.style : sug[0].id;
   let tempo = cur ? cur.tempo : null;
   let seed = cur ? cur.seed : 1;
-  const recipe = () => beatRecipe(pick, st, { tempo: tempo || undefined, seed });
+  let energy = cur && cur.v >= 2 ? cur.energy : null;
+  const recipe = () => beatRecipe(pick, st, { tempo: tempo || undefined, seed, energy: energy || undefined });
   const card = (id) => {
     const B = BEAT_STYLES[id], w = sug.find((x) => x.id === id);
     return `<button type="button" class="beat-card" role="radio" data-style="${id}" aria-checked="${id === pick}" style="--c:${B.color}">
       <span class="bc-dot" aria-hidden="true"></span><b>${esc(B.label)}</b><span class="bc-genre">${esc(B.genre)} · ${B.bpm[2]} BPM</span>
-      <span class="bc-desc">${esc(B.desc)}</span>${top.includes(id) ? `<span class="bc-fit">Passt: ${esc(w.why)}</span>` : ''}</button>`;
+      <span class="bc-desc">${esc(B.desc)}</span>${B.trend ? '<span class="bc-trend">Trend</span>' : ''}${top.includes(id) ? `<span class="bc-fit">Passt: ${esc(w.why)}</span>` : ''}</button>`;
   };
   const order = [...top, ...Object.keys(BEAT_STYLES).filter((k) => !top.includes(k))];
   const body = openSheet(`
     <h3 id="sheetTitle">Beat-Studio</h3>
     <p class="hint">Eigene Beats, komponiert auf deinem Gerät und auf deinen Film abgestimmt: Form und Länge für ${FORM_DE[recipe().form]}, der Drop genau dort, wo dein Einstieg ihn braucht, jeder Schlag exakt im Raster. Dein Ton – frei verwendbar, er wird mit exportiert.</p>
     <div class="beat-grid" role="radiogroup" aria-label="Stil">${order.map(card).join('')}</div>
+    <div class="field"><span class="field-label">Energie</span><div id="beatEnergy">${radioHTML('Energie', Object.entries(BEAT_ENERGY), recipe().energy)}</div></div>
     <div class="field"><span class="field-label">Tempo</span><div id="beatTempo">${radioHTML('Tempo', [['ruhig', 'Ruhiger'], ['normal', 'Normal'], ['schnell', 'Schneller']], recipe().tempo)}</div></div>
     <div class="beat-now"><span id="beatNow"></span></div>
     <div class="beat-actions">
@@ -463,6 +465,8 @@ function openBeatSheet() {
     }
     const t = e.target.closest('#beatTempo [data-v]');
     if (t) { tempo = t.dataset.v; setRadio(body.querySelector('#beatTempo'), tempo); now(); if (beatPrev.src) play(); return; }
+    const en = e.target.closest('#beatEnergy [data-v]');
+    if (en) { energy = en.dataset.v; setRadio(body.querySelector('#beatEnergy'), energy); now(); play(); return; }
     if (e.target.closest('#beatDice')) { seed = (seed % 999) + 1; now(); play(); return; }
     if (e.target.closest('#beatPlay')) { if (beatPrev.src) { stopBeatPreview(); playBtn.textContent = '▶ Vorhören'; } else play(); return; }
     if (e.target.closest('#beatUse')) {

@@ -14,9 +14,10 @@ const fails = [];
     const base = demoScenes(), T0 = new Date(2026, 4, 3, 9, 0).getTime();
     const media = Array.from({ length: 24 }, (_, i) => { const c = base[i % base.length]; return { id: 'p' + i, kind: 'image', name: 'P' + i, canvas: c, w: c.width, h: c.height, time: T0 + i * 11 * 60000, ...scoreImage(c, c.width, c.height), hash: [i * 7919, i * 31] }; });
     const sum = (buf) => { let s = 0; const d = buf.getChannelData(0); for (let i = 0; i < d.length; i += 97) s = (s + Math.round(d[i] * 1e6)) | 0; return s; };
-    for (const id of Object.keys(BEAT_STYLES)) {
+    const EN = Object.keys(BEAT_ENERGY);
+    for (const [si, id] of Object.keys(BEAT_STYLES).entries()) {
       const st = { format: '9:16', target: 'story', look: 'auto', pace: 'auto', outro: 'auto', length: 'auto', songStart: 'auto', frame: 'auto', seed: 3, title: 'Lissabon', intro: id === 'gipfel' ? 'shutter' : 'auto' };
-      const rec = beatRecipe(id, st, { seed: 4 });
+      const rec = beatRecipe(id, st, { seed: 4, energy: EN[si % 3] });
       const t = performance.now();
       const { buffer, truth } = await renderBeat(rec);
       const ms = performance.now() - t;
@@ -40,12 +41,19 @@ const fails = [];
       const drop = an.sections.find((s) => s.label === 'drop' && s.start >= plan.win.start - 0.01 && s.start < plan.win.end);
       if (!drop || !plan.clips.some((c) => Math.abs(c.start - (drop.start - plan.win.start)) < 0.002)) f.push(`${id}: Drop kein Schnitt`);
       if (st.intro === 'shutter') { const sh = plan.overlays.find((o) => o.type === 'shutter'); if (!sh || Math.abs(sh.end - (drop.start - plan.win.start)) > 0.03) f.push(`${id}: Rollladen-Einsatz nicht auf dem Drop`); }
-      info[id] = { bpm: rec.bpm, s: +buffer.duration.toFixed(0), ms: Math.round(ms), film: +plan.duration.toFixed(1), arc: Object.values(arc).map((x) => +x.toFixed(0)).join('/') };
+      // Lautheit wie aktuelle Produktionen: Drop kräftig (Chill ≥ −17,5, Vibe ≥ −15,5, Hype ≥ −14 dB RMS; Lo-Fi bleibt luftiger)
+      if (arc.drop < [-17.5, -15.5, -14][si % 3]) f.push(`${id} ${rec.energy}: Drop zu leise ${arc.drop.toFixed(1)} dB`);
+      info[id] = { en: rec.energy, bpm: rec.bpm, s: +buffer.duration.toFixed(0), ms: Math.round(ms), film: +plan.duration.toFixed(1), arc: Object.values(arc).map((x) => +x.toFixed(0)).join('/') };
     }
     // Abstimmung auf die Einstellungen
+    const st0 = { target: 'story' };
     const sg = suggestBeats({ look: 'diner' });
     if (sg[0].id !== 'diner') f.push('Diner-Look schlägt nicht Diner Funk vor');
     if (beatRecipe('lofi', { variant: 'ruhig' }).bpm >= beatRecipe('lofi', { variant: 'energisch' }).bpm) f.push('Tempo folgt nicht der Variante');
+    if (beatRecipe('lofi', { variant: 'ruhig' }).energy !== 'chill' || beatRecipe('glow', { variant: 'energisch' }).energy !== 'hype') f.push('Energie folgt nicht der Variante');
+    if (!['drift', 'bounce'].includes(suggestBeats({ variant: 'energisch', mv: 'on', target: 'reel' })[0].id)) f.push('energisches Reel schlägt keinen Trend-Beat vor');
+    // ältere Rezepte (v1) klingen unverändert: kein Energie-Schub, kein Teaser
+    { const o = beatRecipe('sommer', st0, { seed: 2 }); o.v = 1; const a = await renderBeat(o, { preview: true }), c = await renderBeat({ ...o, energy: 'hype' }, { preview: true }); if (sum(a.buffer) !== sum(c.buffer)) f.push('v1-Rezept hängt von der Energie ab'); }
     const sh = beatRecipe('stadt', { intro: 'shutter', target: 'story' });
     if (sh.pre !== 5 || beatForm(sh.form, sh.pre).slice(0, 2).reduce((a, x) => a + x[1], 0) !== 5) f.push('Rollladen: Drop nicht nach fünf Takten');
     return { f, info };
@@ -69,15 +77,18 @@ const fails = [];
   await page.click('#beatSong');
   await page.waitForSelector('.beat-card');
   const cards = await page.$$eval('.beat-card', (x) => x.length);
-  if (cards !== 9) fails.push('Stilkarten: ' + cards);
+  if (cards !== 13) fails.push('Stilkarten: ' + cards);
+  const trend = await page.$$eval('.beat-card .bc-trend', (x) => x.length);
+  if (trend !== 4) fails.push('Trend-Kennzeichen: ' + trend);
   await page.click('.beat-card[data-style="nacht"]');
   await page.waitForFunction(() => document.getElementById('beatPlay').textContent.includes('Stopp'), null, { timeout: 60000 }).catch(() => fails.push('Vorhören startet nicht'));
   await page.click('#beatTempo [data-v="schnell"]');
+  await page.click('#beatEnergy [data-v="hype"]');
   await page.click('#beatUse');
   await page.waitForTimeout(500);
   await idle();
   const s1 = await page.evaluate(() => { const g = CineBeat.S.ctx.song; const d = g.buffer.getChannelData(0); let s = 0; for (let i = 0; i < d.length; i += 97) s = (s + Math.round(d[i] * 1e6)) | 0; return { gen: g.gen, id: g.id, name: g.name, sum: s, eng: CineBeat.engine.audioBuffer === g.buffer, ig: document.getElementById('igLine').textContent }; });
-  if (!s1.gen || s1.gen.style !== 'nacht' || s1.gen.tempo !== 'schnell') fails.push('Beat nicht übernommen: ' + JSON.stringify(s1.gen));
+  if (!s1.gen || s1.gen.style !== 'nacht' || s1.gen.tempo !== 'schnell' || s1.gen.energy !== 'hype' || !/Hype/.test(s1.name)) fails.push('Beat nicht übernommen: ' + JSON.stringify(s1.gen));
   // Film schneiden (falls der Ort noch im Song-Schritt ist) und prüfen, dass der Ton der eigene Beat ist
   const cut = await page.$('[data-flow="cut"]');
   if (cut) { await cut.click(); await page.waitForTimeout(500); await idle(); }
