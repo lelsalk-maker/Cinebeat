@@ -661,7 +661,9 @@ function planOnce(opts) {
         stC.stack.reserved = res.map((m) => m.id);
         chMedia = chMedia.filter((m) => !res.includes(m));
       }
-      const sel = spreadSimilar(flowOrder(selectMedia(chMedia, cnt, new Set()), s.match !== 'off'));
+      // Videos eines Orts sind seine lebendigsten Momente: sicher im Kapitel, solange sie höchstens 60 % der Plätze brauchen
+      const vC = chMedia.filter((m) => m.kind === 'video' && !m.bad && !m.excluded);
+      const sel = spreadSimilar(flowOrder(selectMedia(chMedia, cnt, new Set(vC.length <= cnt * 0.6 ? vC.map((m) => m.id) : [])), s.match !== 'off'));
       if (sel.length) assignStream(clips, idxs, sel, byId);
       // Tagesabschnitte des Orts in ihrer Reihenfolge (innerhalb eines Abschnitts bleibt der Bildfluss der Regie);
       // ein Video nur auf einer Einstellung, die lang genug ist

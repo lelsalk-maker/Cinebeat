@@ -920,7 +920,7 @@ async function probeAndScore(item) {
     v.src = item.url;
     try { v.load(); } catch (e) { /* ignore */ }
     const ok = await waitEvent(v, ['loadedmetadata'], ['error'], 15000);
-    if (!ok || !v.videoWidth) throw new Error('Video nicht lesbar');
+    if (!ok || v.error) throw new Error('Video nicht lesbar');
     let dur = isFinite(v.duration) ? v.duration : 0;
     if (!dur) {
       v.currentTime = 1e7;
@@ -928,14 +928,21 @@ async function probeAndScore(item) {
       dur = isFinite(v.duration) ? v.duration : 5;
     }
     item.duration = dur;
+    item.w = v.videoWidth || item.w || 1080; item.h = v.videoHeight || item.h || 1920;
+    // iPhone (z. B. Stromsparmodus, HEVC): ohne Wiedergabe liefert Safari oft kein Bild. Das Video bleibt trotzdem
+    // im Film – mit neutraler Bewertung; das Vorschaubild entsteht beim ersten Abspielen (engine.js).
+    let frame = false;
+    try {
+      await seekVideo(v, Math.min(1, dur * 0.2));
+      if (v.readyState < 2) {
+        try { await v.play(); v.pause(); } catch (e) { /* ignore */ }
+        await waitEvent(v, ['loadeddata', 'canplay'], ['error'], 2500);
+      }
+      frame = v.readyState >= 2 && !!v.videoWidth;
+    } catch (e) { frame = false; }
+    if (!frame) { Object.assign(item, neutralVideoScore(dur)); item.thumb = videoPlaceholder(item.w, item.h); return; }
     item.w = v.videoWidth; item.h = v.videoHeight;
-    await seekVideo(v, Math.min(1, dur * 0.2));
-    if (v.readyState < 2) {
-      try { await v.play(); v.pause(); } catch (e) { /* ignore */ }
-      await waitEvent(v, ['loadeddata', 'canplay'], ['error'], 2500);
-    }
-    if (v.readyState < 2) throw new Error('Kein Bild');
-    Object.assign(item, await scoreVideo(v, dur));
+    try { Object.assign(item, await scoreVideo(v, dur)); } catch (e) { Object.assign(item, neutralVideoScore(dur)); }
     const best = item.highlights && item.highlights[0] ? item.highlights[0].t : Math.min(1, dur * 0.2);
     await seekVideo(v, best);
     const s = Math.min(1, 720 / Math.max(item.w, item.h));
@@ -949,6 +956,23 @@ async function probeAndScore(item) {
     try { v.load(); } catch (e) { /* ignore */ }
     v.remove();
   }
+}
+
+/** Bewertung, wenn ein Video (noch) kein Bild liefert: durchschnittlich, bester Moment etwa in der Mitte. */
+function neutralVideoScore(dur) {
+  return { score: 0.6, sharp: 0.6, color: 0.5, motion: 0.05, luma: 0.45, avg: [110, 110, 110], highlights: [{ t: Math.max(0, dur * 0.45), score: 0.6 }], focus: [0.5, 0.45], noFrame: true };
+}
+
+/** Kachel für ein Video ohne Vorschaubild: Dunkelblau mit Abspiel-Symbol. */
+function videoPlaceholder(w, h) {
+  const s = 160 / Math.max(w, h, 1), c = document.createElement('canvas');
+  c.width = Math.max(2, Math.round(w * s)); c.height = Math.max(2, Math.round(h * s));
+  const x = c.getContext('2d');
+  x.fillStyle = '#14203a'; x.fillRect(0, 0, c.width, c.height);
+  x.fillStyle = '#e8dcc4'; x.beginPath();
+  const cx = c.width / 2, cy = c.height / 2, r = Math.min(c.width, c.height) * 0.16;
+  x.moveTo(cx - r * 0.6, cy - r); x.lineTo(cx + r, cy); x.lineTo(cx - r * 0.6, cy + r); x.closePath(); x.fill();
+  return thumbFrom(c, c.width, c.height, 160);
 }
 
 const VIDEO_EXT = /\.(mp4|mov|m4v|webm|3gp|mkv)$/i;
@@ -1474,7 +1498,9 @@ async function openPlace(placeId) {
   rec.overrides = { clips: {}, texts: [], stickers: [], ...(rec.overrides || {}) };
   S.ctx = { kind: 'place', rec, media: placeMedia(rec), song: null };
   queueVideoAction(S.ctx.media);
+  const ctx0 = S.ctx;
   await attachSong(rec.songId || 'demo');
+  if (S.ctx !== ctx0 || !ctx0.song) return;
   startHistory();
   renderEditor();
   await rebuild({ fresh: true });
@@ -1502,7 +1528,9 @@ async function openBestof() {
   }
   S.ctx = { kind: 'bestof', rec, media, chapters, song: null };
   queueVideoAction(media);
+  const ctx0 = S.ctx;
   await attachSong(rec.songId || 'demo');
+  if (S.ctx !== ctx0 || !ctx0.song) return;
   startHistory();
   renderEditor();
   await rebuild({ fresh: true });
@@ -1518,12 +1546,22 @@ function closeContext() {
 }
 
 async function attachSong(songId) {
+  const ctx = S.ctx;
+  // solange der Song lädt, wartet die Bedienung (sonst könnte ein inzwischen gewählter eigener Song überschrieben werden)
+  const wait = !S.songs.has(songId);
+  if (wait) busy('Bereite den Song vor …');
+  let song, missing = false;
   try {
-    S.ctx.song = await getSong(songId);
+    song = await getSong(songId);
   } catch (e) {
-    S.ctx.song = await getSong('demo');
-    S.ctx.songMissing = songId !== 'demo';
-  }
+    song = await getSong('demo');
+    missing = songId !== 'demo';
+  } finally { if (wait) busy(null); }
+  // inzwischen anderer Ort oder anderer Song gewählt: nichts überschreiben
+  if (!ctx || S.ctx !== ctx || (ctx.rec.songId || 'demo') !== songId) return false;
+  ctx.song = song;
+  if (missing) ctx.songMissing = true;
+  return true;
 }
 
 const ctxTitle = () => (S.ctx.kind === 'bestof' ? S.trip.name : S.ctx.rec.name) || '';
@@ -3793,6 +3831,11 @@ async function init() {
   }
   engine.onTime = updateTime;
   engine.onState = setPlayingUI;
+  // iPhone: jedes Antippen gibt die Video-Elemente frei (vor dem eigentlichen Klick, deshalb in der Capture-Phase)
+  const unlockV = () => { if (engine.videos.length < VIDEO_POOL || engine.videos.some((v) => !v._blessed)) engine.unlockVideos(); };
+  for (const ev of ['touchend', 'click', 'keydown']) document.addEventListener(ev, unlockV, { capture: true, passive: true });
+  // Vorschaubild, das erst beim Abspielen entstand: auch für die Kachel im Material
+  engine.onPoster = (m) => { try { m.thumb = thumbFrom(m.poster, m.poster.width, m.poster.height, 160); m.noFrame = false; } catch (e) { /* egal */ } };
   engine.onEnded = () => { if (TAP.on) { tapEnd(true); return; } if (!S.exporting) { engine.t = 0; showPoster(); } };
 
   await S.store.open();

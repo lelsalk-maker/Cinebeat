@@ -280,7 +280,9 @@ async function scoreFrames(grab, W, H, duration) {
 
 /** Markiert Beinahe-Duplikate (nur das beste Bild einer Serie bleibt aktiv). */
 function markDuplicates(items) {
-  const list = items.filter((m) => m.hash && !m.bad);
+  // nur Fotos: zwei Videos derselben Szene sind verschiedene Momente (Bewegung, Ton) und bleiben beide im Film
+  for (const m of items) if (m.kind === 'video') { m.dupOf = null; m.dupD = m.dupDt = undefined; }
+  const list = items.filter((m) => m.hash && !m.bad && m.kind !== 'video');
   for (const m of list) { m.dupOf = null; m.dupD = m.dupDt = undefined; }
   const sorted = list.slice().sort((a, b) => (b.score || 0) - (a.score || 0));
   const kept = [];

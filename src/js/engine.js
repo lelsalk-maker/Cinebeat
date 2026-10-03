@@ -3,6 +3,8 @@
  * Split-Screens, exakter Offline-Export (WebCodecs), Echtzeit-Rückfall
  * ============================================================ */
 
+// so viele Video-Elemente hält die Engine bereit (per Antippen freigegeben, siehe unlockVideos)
+const VIDEO_POOL = 6;
 const COLOR_MODE = { drop: 1, steps: 1, strobe: 1, pulse: 1, bloom: 2, sweep: 3, pop: 4 };
 
 function srcTimeOf(c, t) {
@@ -170,7 +172,8 @@ class Engine {
   }
 
   acquireVideo(url) {
-    let v = this.videos.find((x) => !x._busy && x._url === url) || this.videos.find((x) => !x._busy);
+    // freigegebene (einmal per Antippen gestartete) Elemente zuerst: nur sie darf iOS jederzeit abspielen
+    let v = this.videos.find((x) => !x._busy && x._url === url) || this.videos.find((x) => !x._busy && x._blessed) || this.videos.find((x) => !x._busy);
     if (!v) { v = makeVideoEl(); this.videos.push(v); }
     v._busy = true;
     return v;
@@ -180,14 +183,31 @@ class Engine {
     if (!v) return;
     try { v.pause(); } catch (e) { /* ignore */ }
     v._busy = false;
-    const free = this.videos.filter((x) => !x._busy);
+    // Elemente bleiben erhalten (die Freigabe hängt am Element), nur ihre Daten werden abgegeben
+    const free = this.videos.filter((x) => !x._busy && x._url);
     if (free.length > 2) {
       const drop = free[0];
       drop.removeAttribute('src');
       drop._url = null;
       try { drop.load(); } catch (e) { /* ignore */ }
-      drop.remove();
-      this.videos.splice(this.videos.indexOf(drop), 1);
+    }
+    const idle = this.videos.filter((x) => !x._busy && !x._url && !x._blessed);
+    if (this.videos.length > VIDEO_POOL && idle.length) { const d = idle[0]; d.remove(); this.videos.splice(this.videos.indexOf(d), 1); }
+  }
+
+  /**
+   * iPhone: Safari spielt ein Video ohne Nutzergeste nur, wenn das Element schon einmal aus einer Geste heraus
+   * gestartet wurde (Stromsparmodus, unsichtbare Elemente). Bei jedem Antippen in der App werden deshalb alle
+   * Video-Elemente einmal kurz gestartet – danach laufen sie in Vorschau und Export zuverlässig.
+   * Muss synchron im Ereignis der Geste aufgerufen werden.
+   */
+  unlockVideos() {
+    while (this.videos.length < VIDEO_POOL) this.videos.push(makeVideoEl());
+    for (const v of this.videos) {
+      if (v._blessed || !v.paused) { v._blessed = true; continue; }
+      v._blessed = true;
+      try { const p = v.play(); if (p && p.catch) p.catch(() => {}); } catch (e) { /* ignore */ }
+      try { v.pause(); } catch (e) { /* ignore */ }
     }
   }
 
@@ -257,8 +277,21 @@ class Engine {
     await seekVideo(v, srcTimeOf(clip, Math.max(t, clip.visStart)));
     if (s.dead) return;
     s.srcW = v.videoWidth || m.w; s.srcH = v.videoHeight || m.h;
-    if (v.readyState >= 2) this.r.upload(s.tex, v);
+    if (v.readyState >= 2) { this.r.upload(s.tex, v); this._posterFrom(m, v); }
     s.ready = true;
+  }
+
+  /** Video ohne Vorschaubild (Safari lieferte beim Einlesen kein Bild): beim ersten dekodierten Bild nachholen. */
+  _posterFrom(m, v) {
+    if (m.poster || !v.videoWidth || v.readyState < 2) return;
+    try {
+      const k = Math.min(1, 720 / Math.max(v.videoWidth, v.videoHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.max(2, Math.round(v.videoWidth * k)); c.height = Math.max(2, Math.round(v.videoHeight * k));
+      c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+      m.poster = c;
+      if (this.onPoster) this.onPoster(m);
+    } catch (e) { /* nächstes Mal */ }
   }
 
   /** Export: Bilder direkt aus der Datei dekodieren (WebCodecs) statt das Video-Element zu spulen. */
@@ -1026,6 +1059,7 @@ class Engine {
       // Browser erlauben 0,0625–16; bei Tempo-Kurven folgt die Wiedergabe dem aktuellen Tempo
       const rate = c.rp ? Math.round(rampRate(c.rp, t) * 20) / 20 : c.rate;
       this._driveVideo(v, active, frozen, playing, rate, srcTimeOf(c, t), srcTimeOf(c, c.freezeAt || 0), s);
+      if (active && v.readyState >= 2 && this.media[c.mediaIndex] && !this.media[c.mediaIndex].poster) this._posterFrom(this.media[c.mediaIndex], v);
       if (active && v.readyState >= 2 && (v.currentTime !== s.lastUpload || !playing)) {
         // beim Abspielen verkleinert und ohne Mipmaps: spart pro Bild GPU-Arbeit, das Standbild ist wieder voll
         if (this.r.upload(s.tex, playing ? this._previewFrame(s, v) : v, !playing)) s.lastUpload = v.currentTime;
