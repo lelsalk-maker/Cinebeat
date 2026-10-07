@@ -7,7 +7,7 @@
  * Liefert { retimed, hero } für die Erklärung der Regie.
  */
 function cutterPolish(clips, ctx) {
-  const { an, win, byId, beatDur, ov = {}, us = false, taps = [], blocks = false } = ctx;
+  const { an, win, byId, beatDur, ovOf = () => null, moved = new Set(), us = false, taps = [], blocks = false } = ctx;
   const beats = Array.from(an.beats || []).map((b) => b - win.start);
   const bars = Array.from(an.barStart || []).map((b) => b - win.start);
   const onBar = (t) => bars.some((b) => Math.abs(b - t) < 0.04);
@@ -18,7 +18,8 @@ function cutterPolish(clips, ctx) {
   const onPhrase = (t) => bars.some((b, k) => Math.abs(b - t) < 0.04 && (((k - ph) % 4) + 4) % 4 === 0);
   const special = (c) => c.split || c.grid || c.burst || c.rush || c.stack || c.strip || c.miniRew || c.pre || c.reveal || c.leader || c.flightAnim || c.loop || c.vid || c.gridMid || c.afterGrid || c.replay || c.replaySeg || c.repeatSeg;
   // eigenes Motiv bleibt; „Gefällt mir nicht“ würfelt nur die Bewegung neu und ändert keine Bildwahl
-  const own = (c) => { const o = ov[c.i]; return !!(o && o.mediaId); };
+  // eigene Entscheidungen bleiben: eigenes Motiv und von dir verschobene Aufnahmen (samt ihrem Ziel)
+  const own = (c) => { const o = ovOf(c); return !!(o && o.mediaId) || moved.has(c.mediaId); };
   const img = (c) => { const m = byId.get(c.mediaId); return m && m.kind === 'image' ? m : null; };
   const plain = (c) => c && !special(c) && !!img(c);
   let retimed = 0, hero = 0;

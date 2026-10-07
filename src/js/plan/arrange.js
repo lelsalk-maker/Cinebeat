@@ -26,10 +26,10 @@ const SLOT_ENERGY = { drop: 1, chorus: 0.9, build: 0.65, verse: 0.4, intro: 0.3,
  * Fest bleiben: Videos, eigene Entscheidungen, verschobene Aufnahmen, Startbild, Stil-Mittel und Bilder, auf die sich
  * Rückspulen, Wiederholung oder Echo beziehen. Liefert { moved, blocks } für die Erklärung.
  */
-function arrangeBlocks(clips, { byId, ov = {}, moved: userMoved = new Set(), us = true, aspect = 0, vary = 0 }) {
+function arrangeBlocks(clips, { byId, ovOf = () => null, moved: userMoved = new Set(), us = true, aspect = 0, vary = 0 }) {
   const special = (c) => c.split || c.grid || c.burst || c.rush || c.stack || c.strip || c.miniRew || c.pre || c.reveal || c.leader || c.flightAnim || c.loop || c.vid || c.gridMid || c.afterGrid || c.replay || c.replaySeg || c.repeatSeg || c.echo;
   // eigenes Motiv bleibt; „Gefällt mir nicht“ ändert nur die Bewegung und wird mitgeordnet
-  const own = (c) => { const o = ov[c.i]; return !!(o && o.mediaId); };
+  const own = (c) => { const o = ovOf(c); return !!(o && o.mediaId); };
   const img = (id) => { const m = byId.get(id); return m && m.kind === 'image' ? m : null; };
   const echoed = new Set();
   for (const c of clips) if (c.miniRew || c.replay || c.loop || c.echo || c.pre) echoed.add(c.mediaId);

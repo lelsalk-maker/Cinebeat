@@ -18,14 +18,20 @@ function rampRate(pts, t) {
   return pts[pts.length - 1][1];
 }
 
+/** Von dir festgelegte Länge im Film (Sekunden, höchstens der spielbare Teil); 0 = automatisch. */
+function userVideoLen(m) {
+  return m && m.kind === 'video' && m.vlen > 0 ? Math.max(1, Math.min(videoSpan(m), m.vlen)) : 0;
+}
+
 /** Spielbarer Teil eines Videos (gewählter Ausschnitt oder ganz), in Sekunden. */
 function videoSpan(m) {
   const d = m.duration || 3;
   if (m.trim && m.trim[1] > m.trim[0]) return Math.max(0.5, Math.min(d, m.trim[1]) - Math.max(0, m.trim[0]));
   return d;
 }
-/** So lange soll ein Video im Film laufen: fast ganz, höchstens vmax. */
+/** So lange soll ein Video im Film laufen: fast ganz, höchstens vmax – oder genau so lange, wie du es festgelegt hast (m.vlen). */
 function videoPlay(m, vmax) {
+  if (m.vlen > 0) return userVideoLen(m);
   return Math.max(1.5, Math.min(vmax, videoSpan(m) * 0.96));
 }
 
@@ -57,11 +63,11 @@ function videoSlots(segs, an, win, vids, all, barDur, startAt, endAt, vmax, ramp
   const full = fits.map((v) => videoPlay(v, vmax));
   const tot = full.reduce((a, b) => a + b, 0);
   const shrink = tot > budget ? budget / tot : 1;
-  const minW = (v) => Math.min(videoSpan(v) * 0.96, Math.max(2.4, barDur));
+  const minW = (v) => (userVideoLen(v) ? userVideoLen(v) * 0.96 : Math.min(videoSpan(v) * 0.96, Math.max(2.4, barDur)));
   for (const v of vids) {
     // fast die ganze Länge (bzw. der gewählte Ausschnitt), höchstens vmax
     if (videoSpan(v) < 1.2) continue;
-    const want = Math.max(minW(v), videoPlay(v, vmax) * shrink);
+    const want = userVideoLen(v) || Math.max(minW(v), videoPlay(v, vmax) * shrink);
     if (budget < minW(v) * 0.8) continue;
     const p = all.length > 1 ? all.indexOf(v) / (all.length - 1) : 0.5;
     const target = startAt + p * span;

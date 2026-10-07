@@ -42,7 +42,7 @@ function searchPlan(opts) {
   // „Beste Auswahl“: Weglassen ist gewollt – es zählt nur, dass sich nichts wiederholt (das Tempo bleibt beim Song)
   const pick = !allMediaOn(best.resolved) && !(opts.chapters && opts.chapters.length);
   const chap = !!(opts.chapters && opts.chapters.length);
-  const bad = (p) => p._m.repeats * 3 + (chap ? p._m.short : pick ? 0 : p._m.dropped);
+  const bad = (p) => p._m.repeats * 3 + (chap ? p._m.short : pick ? 0 : p._m.dropped) + (p._m.vShort || 0);
   const better = (p, q) => bad(p) < bad(q) || (bad(p) === bad(q) && !p._m.repeats && p._m.scale < q._m.scale);
   let cur = best;
   for (let ext = 0; ext < 3 && bad(best); ext++) {
@@ -72,8 +72,8 @@ function searchPlan(opts) {
     if (better(lb, best)) best = lb;
     // weiterhin Aufnahmen übrig, obwohl schon so dicht wie ruhig möglich: bei „Auto“ den Film verlängern
     const m = lb._m;
-    if (!bad(best) || !m.dropped || m.repeats || opts.settings.length !== 'auto' || m.D >= m.max - 1) break;
-    cur = planOnce({ ...opts, settings: { ...m.settings, _minT: m.D + Math.max(m.extraNeed, 1) }, _scale: m.scale });
+    if (!bad(best) || !(m.dropped || m.vShort) || m.repeats || opts.settings.length !== 'auto' || m.D >= m.max - 1) break;
+    cur = planOnce({ ...opts, settings: { ...m.settings, _minT: m.D + Math.max(m.extraNeed, m.vShort || 0, 1) }, _scale: m.scale });
     if (cur._m.D <= m.D + 0.05) break;
     if (better(cur, best)) best = cur;
   }

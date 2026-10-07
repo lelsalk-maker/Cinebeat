@@ -380,14 +380,12 @@ async function remixFilm(menge) {
   const before = filmCount().used;
   ctx.rec.settings.menge = menge || 'auto';
   ctx.rec.settings.seed = ((ctx.rec.settings.seed * 1103515245 + 12345) >>> 0) % 1000000 || 1;
-  const perClip = Object.keys(ctx.rec.overrides.clips || {}).length;
   if (ctx.kind !== 'place' || !ctx.song || !ctx.song.an) { commit(); savePlaceSoon(); engine.t = 0; scheduleRebuild(0); toast('Neu geschnitten.'); return; }
-  ctx.rec.overrides.clips = {};
   // beim Neuschneiden darf die Regie innerhalb der Tagesabschnitte anders anordnen; zu ähnliche Varianten zählen nicht
   ctx.rec.settings.recut = ((ctx.rec.settings.recut || 0) % 97) + 1;
   await cutFilm(6, S.plan);
   const fc = filmCount();
-  toast(`Neu geschnitten: ${fc.used} von ${fc.total} Aufnahmen im Film${fc.used !== before ? ` (vorher ${before})` : ''}, wieder die beste von mehreren Varianten. Deine Auswahl, Reihenfolge und Texte sind geblieben${perClip ? `; ${perClip} einzelne Einstellungs-Änderungen gehörten zum alten Schnitt` : ''}. Gefällt der alte besser: Rückgängig.`);
+  toast(`Neu geschnitten: ${fc.used} von ${fc.total} Aufnahmen im Film${fc.used !== before ? ` (vorher ${before})` : ''}, wieder die beste von mehreren Varianten. Deine Auswahl, Reihenfolge, Videolängen, Übergänge und Texte sind geblieben. Gefällt der alte besser: Rückgängig.`);
 }
 
 /* ---------- Beat-Studio: eigene Beats, auf Format, Einstieg, Variante und Look abgestimmt ---------- */
@@ -1057,7 +1055,7 @@ async function ingestFiles(fileList, onProgress) {
 
 function applyFlags(rec, items) {
   const fl = rec.flags || {};
-  for (const m of items) { const f = fl[m.id]; m.fav = !!(f && f.fav); m.excluded = !!(f && f.excluded); m.sound = (f && f.sound) || 0; m.trim = (f && f.trim) || null; m.us = f && f.us != null ? !!f.us : undefined; }
+  for (const m of items) { const f = fl[m.id]; m.fav = !!(f && f.fav); m.excluded = !!(f && f.excluded); m.sound = (f && f.sound) || 0; m.trim = (f && f.trim) || null; m.vlen = (f && f.vlen) || 0; m.us = f && f.us != null ? !!f.us : undefined; }
   markDuplicates(items);
 }
 
@@ -1082,7 +1080,7 @@ function saveMediaFlags(item) {
   const rec = S.ctx && S.ctx.kind === 'place' ? S.ctx.rec : S.places.find((p) => (p.fps || []).includes(item.id));
   if (!rec) return;
   rec.flags = rec.flags || {};
-  if (item.fav || item.excluded || item.sound || item.trim || item.us != null) rec.flags[item.id] = { fav: !!item.fav, excluded: !!item.excluded, sound: item.sound || 0, trim: item.trim || null, ...(item.us != null ? { us: !!item.us } : {}) };
+  if (item.fav || item.excluded || item.sound || item.trim || item.vlen || item.us != null) rec.flags[item.id] = { fav: !!item.fav, excluded: !!item.excluded, sound: item.sound || 0, trim: item.trim || null, vlen: item.vlen || 0, ...(item.us != null ? { us: !!item.us } : {}) };
   else delete rec.flags[item.id];
   if (rec === (S.ctx && S.ctx.rec)) savePlaceSoon(); else S.store.put('places', rec).catch(() => {});
 }
@@ -1592,7 +1590,7 @@ function snapshot() {
   const c = S.ctx;
   return JSON.stringify({
     settings: c.rec.settings, overrides: c.rec.overrides, hookId: c.rec.hookId || null, songId: c.rec.songId,
-    flags: c.media.map((m) => [m.id, !!m.fav, !!m.excluded, m.us == null ? null : !!m.us]),
+    flags: c.media.map((m) => [m.id, !!m.fav, !!m.excluded, m.us == null ? null : !!m.us, m.trim || null, m.vlen || 0]),
   });
 }
 function startHistory() { S.hist = { stack: [snapshot()], idx: 0 }; updateUndo(); }
@@ -1622,7 +1620,8 @@ async function applySnapshot(json) {
   for (const m of c.media) {
     const f = map.get(m.id);
     const us = f && f[3] != null ? f[3] : undefined;
-    if (f && (m.fav !== f[1] || m.excluded !== f[2] || m.us !== us)) { m.fav = f[1]; m.excluded = f[2]; m.us = us; saveMediaFlags(m); }
+    const tr = f ? f[4] || null : null, vl = f ? f[5] || 0 : 0;
+    if (f && (m.fav !== f[1] || m.excluded !== f[2] || m.us !== us || JSON.stringify(m.trim || null) !== JSON.stringify(tr) || (m.vlen || 0) !== vl)) { m.fav = f[1]; m.excluded = f[2]; m.us = us; m.trim = tr; m.vlen = vl; saveMediaFlags(m); }
   }
   if (songChanged) await attachSong(c.rec.songId);
   S.selOverlay = null;
@@ -1664,6 +1663,7 @@ async function rebuild(opts = {}) {
     toast('Der Schnitt konnte nicht berechnet werden: ' + e.message, true);
     return;
   }
+  if (migrateClipOverrides(ctx.rec, plan)) { savePlaceSoon(); try { plan = buildPlan(planOpts(ctx, media)); } catch (e) { /* alter Plan bleibt */ } }
   S.plan = plan;
   const f = FORMATS[s.format];
   const mon = $('monitor');
@@ -2694,6 +2694,46 @@ async function swapMedia(inn, out) {
   else toast(`${nm(inn)} ist jetzt sicher im Film.`);
 }
 
+/**
+ * Aufnahme an die Stelle einer Einstellung holen: sie rückt vor die Aufnahme dieser Einstellung (Reihenfolge wie beim
+ * Ziehen in der Zeitleiste) und ist sicher im Film. Nichts anderes fällt dafür heraus.
+ */
+async function placeHere(id, c) {
+  const ctx = S.ctx, x = ctx.media.find((m) => m.id === id);
+  if (!x) return;
+  const capD = new Set(S.plan && S.plan.capacity ? S.plan.capacity.droppedIds : []);
+  const keepB = S.plan ? burstKeep(mengeOf(S.plan.resolved)) : false;
+  if (x.excluded || capD.has(x.id) || autoOut(x, keepB)) { x.fav = true; }
+  x.excluded = false; saveMediaFlags(x);
+  const ov = ctx.rec.overrides;
+  const before = c.baseId || c.mediaId;
+  ov.moves = (ov.moves || []).filter((mv) => mv.id !== id).concat([{ id, before: before !== id ? before : null }]);
+  commit(); savePlaceSoon();
+  await rebuild();
+  renderMaterial();
+  const k = S.plan.clips.findIndex((cc) => cc.mediaId === id);
+  if (k >= 0) { const t = (S.plan.clips[k].start + S.plan.clips[k].end) / 2; engine.t = t; engine.renderStill(t); updateTime(t); }
+  toast('Aufnahme an diese Stelle geholt. Die Regie legt die Schnitte neu auf den Song.');
+}
+
+/** Ältere Projekte: Einstellungs-Änderungen nach Platznummer einmalig der Aufnahme dieser Einstellung zuordnen. */
+function migrateClipOverrides(rec, plan) {
+  const ov = rec.overrides, old = ov.clips || {};
+  const keys = Object.keys(old).filter((k) => old[k] && Object.keys(old[k]).length);
+  if (ov.media && !keys.length) return false;
+  ov.media = ov.media || {};
+  for (const k of keys) {
+    const c = plan.clips[+k];
+    const id = c && (c.baseId || c.mediaId);
+    if (!id) continue;
+    const rest = { ...old[k] };
+    delete rest.mediaId;
+    if (Object.keys(rest).length) ov.media[id] = { ...rest, ...(ov.media[id] || {}) };
+  }
+  ov.clips = {};
+  return keys.length > 0;
+}
+
 /** Aufnahme auswählen (Raster mit Vorschaubildern); order 'weak' = schwächste zuerst, 'strong' = stärkste zuerst. */
 function pickMedia(title, list, order, done) {
   const sorted = list.slice().sort((a, b) => (order === 'weak' ? (a.fav - b.fav) || (a.score || 0) - (b.score || 0) : (b.score || 0) - (a.score || 0)));
@@ -2723,8 +2763,11 @@ function trimHTML(m) {
     <label class="trim-row"><span>Start</span><span id="trimInT"></span></label>
     <input type="range" id="trimIn" min="0" max="${m.duration.toFixed(2)}" step="0.05">
     <label class="trim-row"><span>Länge</span><span id="trimLenT"></span></label>
-    <input type="range" id="trimLen" min="1.5" max="${Math.max(1.5, m.duration).toFixed(2)}" step="0.05">
+    <input type="range" id="trimLen" min="${Math.min(0.5, m.duration).toFixed(2)}" max="${Math.max(0.5, m.duration).toFixed(2)}" step="0.05">
     <div class="sheet-actions"><button class="btn" data-trim="full" type="button">Ganzes Video</button><button class="btn" data-trim="best" type="button">Vorschlag der App</button></div>
+    <span class="field-label">Länge im Film</span>
+    <div id="vlenPick">${radioHTML('Länge im Film', [['auto', 'Automatisch'], ['exact', 'Genau der Ausschnitt']], m.vlen > 0 ? 'exact' : 'auto')}</div>
+    <p class="hint small" id="vlenHint"></p>
   </div>`;
 }
 
@@ -2733,24 +2776,36 @@ function setupTrim(body, m) {
   const d = m.duration;
   const inEl = body.querySelector('#trimIn'), lenEl = body.querySelector('#trimLen'), vid = body.querySelector('#trimVid');
   let tin = m.trim ? m.trim[0] : 0, len = m.trim ? m.trim[1] - m.trim[0] : d;
+  const inFilm = () => (S.plan ? S.plan.clips.filter((c) => c.mediaId === m.id && !c.split && !c.rush && !c.recap && !c.leader).reduce((a, c) => a + (c.end - c.start), 0) : 0);
+  const hintV = () => {
+    const f = inFilm(), sec = (x) => `${x.toFixed(1).replace('.', ',')} s`;
+    body.querySelector('#vlenHint').textContent = (m.vlen > 0 ? `Läuft im Film genau ${sec(Math.min(m.vlen, len))}, auf den Takt gerundet – die übrigen Aufnahmen rücken zusammen.` : `Die Regie wählt die Länge passend zum Song${len > vmax * 1.15 ? ` (meist höchstens ${Math.round(vmax)} s am Stück)` : ''}.`) + (f ? ` Gerade im Film: ${sec(f)}.` : '');
+  };
   const show = () => {
-    len = Math.max(1.5, Math.min(len, d)); tin = Math.max(0, Math.min(tin, d - len));
+    len = Math.max(Math.min(0.5, d), Math.min(len, d)); tin = Math.max(0, Math.min(tin, d - len));
     inEl.value = tin; lenEl.value = len;
     body.querySelector('#trimInT').textContent = fmtClock(tin);
-    body.querySelector('#trimLenT').textContent = `${len.toFixed(1).replace('.', ',')} s${len > vmax * 1.15 ? ` · im Film ${Math.round(vmax)} s` : ''}`;
+    body.querySelector('#trimLenT').textContent = `${len.toFixed(1).replace('.', ',')} s${!(m.vlen > 0) && len > vmax * 1.15 ? ` · im Film meist ${Math.round(vmax)} s` : ''}`;
+    hintV();
     const sel = body.querySelector('#trimSel');
     sel.style.left = `${(tin / d) * 100}%`; sel.style.width = `${(len / d) * 100}%`;
   };
   let seekT = 0;
   const seek = (t) => { clearTimeout(seekT); seekT = setTimeout(() => { try { vid.currentTime = Math.min(d - 0.05, t); } catch (e) { /* noch nicht geladen */ } }, 60); };
-  const save = () => {
+  // wer den Ausschnitt ändert, will genau diesen Teil im Film sehen: Länge im Film folgt dem Ausschnitt
+  const setExact = (on) => { m.vlen = on ? +len.toFixed(2) : 0; setRadio(body.querySelector('#vlenPick .chips'), on ? 'exact' : 'auto'); };
+  const save = (fromTrim = true) => {
     m.trim = tin < 0.05 && len > d - 0.05 ? null : [+tin.toFixed(2), +(tin + len).toFixed(2)];
-    saveMediaFlags(m); commit(); savePlaceSoon(); renderMaterial(); scheduleRebuild(250);
+    if (fromTrim) setExact(true);
+    saveMediaFlags(m); commit(); savePlaceSoon(); renderMaterial(); hintV();
+    clearTimeout(save.t); save.t = setTimeout(() => rebuild().then(hintV), 250);
   };
   inEl.addEventListener('input', () => { tin = +inEl.value; show(); seek(tin); });
   lenEl.addEventListener('input', () => { len = +lenEl.value; show(); seek(tin + len); });
   inEl.addEventListener('change', save); lenEl.addEventListener('change', save);
   body.addEventListener('click', (e) => {
+    const vp = e.target.closest('#vlenPick [data-v]');
+    if (vp) { setExact(vp.dataset.v === 'exact'); show(); save(false); return; }
     const b = e.target.closest('[data-trim]');
     if (!b) return;
     if (b.dataset.trim === 'full') { tin = 0; len = d; } else {
@@ -2758,7 +2813,9 @@ function setupTrim(body, m) {
       const best = m.highlights && m.highlights[0] ? m.highlights[0].t : d * 0.4;
       len = Math.min(d, vmax); tin = best - len * 0.4;
     }
-    show(); seek(tin); save();
+    // „Vorschlag der App“: die Regie entscheidet wieder über die Länge; „Ganzes Video“ behält deine Wahl
+    if (b.dataset.trim === 'best') setExact(false);
+    show(); seek(tin); save(b.dataset.trim === 'full' && m.vlen > 0);
   });
   show();
   vid.addEventListener('loadedmetadata', () => seek(tin), { once: true });
@@ -3046,12 +3103,13 @@ function renderCut() {
   const plan = S.plan;
   const row = $('clipRow');
   if (!plan || !S.ctx) { row.innerHTML = ''; return; }
-  const ov = S.ctx.rec.overrides.clips || {};
+  const ovM = S.ctx.rec.overrides.media || {};
   const perSec = 34;
   row.innerHTML = plan.clips.filter((c) => !c.loop).map((c) => {
     const w = Math.max(34, Math.round((c.end - c.start) * perSec));
     const tr = c.tin && c.tin.type ? TR_NAMES[c.tin.type] || '' : '';
-    const edited = ov[c.i] && Object.keys(ov[c.i]).length;
+    const o = ovM[c.baseId || c.mediaId], vm = S.ctx.media.find((x) => x.id === c.mediaId);
+    const edited = (o && Object.keys(o).length) || (vm && vm.kind === 'video' && (vm.trim || vm.vlen));
     const secTag = c.sectionChange ? `<span class="sectag">${SECTION_DE[c.label] || ''}</span>` : '';
     return `<button class="clip${edited ? ' edited' : ''}${c.i === S.selClip ? ' sel' : ''}" type="button" data-clip="${c.i}" style="width:${w}px" aria-label="Einstellung ${c.i + 1}, ${fmtClock(c.start)}">
       ${clipThumb(c) ? `<img src="${clipThumb(c)}" alt="" draggable="false">` : ''}
@@ -3088,6 +3146,8 @@ function setupClipDrag() {
   row.addEventListener('pointerdown', (e) => {
     const el = e.target.closest('[data-clip]');
     if (!el || !S.plan || S.exporting || S.ctx.kind !== 'place' || isFlight(S.ctx.rec)) return;
+    const pc = S.plan.clips[+el.dataset.clip];
+    if (!pc || pc.flash || pc.rush || pc.leader || pc.pre || pc.recap || pc.grid) return;
     reset();
     st = { el, id: e.pointerId, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, on: false };
     st.timer = setTimeout(() => {
@@ -3153,7 +3213,11 @@ function openClipSheet(i) {
   const mid = c.freezeAt != null ? Math.min(c.freezeAt, (c.start + c.end) / 2) : (c.start + c.end) / 2;
   engine.t = mid;
   engine.renderStill(mid).then(() => updateTime(mid));
-  const ov = (ctx.rec.overrides.clips[i] = ctx.rec.overrides.clips[i] || {});
+  // Eingriffe gehören zur Aufnahme dieser Einstellung (bleiben richtig, wenn sich der Schnitt ändert)
+  const echo = c.flash || c.rush || c.leader || c.pre || c.recap;
+  const key = echo ? null : c.baseId || c.mediaId;
+  const ovM = (ctx.rec.overrides.media = ctx.rec.overrides.media || {});
+  const ov = key ? (ovM[key] = ovM[key] || {}) : {};
   const m = ctx.media.find((x) => x.id === c.mediaId);
   const usable = ctx.media.filter((x) => !x.bad && !x.loading);
   const trOpts = [['', 'Automatisch'], [String(TR.CUT), 'Schnitt'], [String(TR.DISSOLVE), 'Blende'], [String(TR.DIP), 'Schwarzblende'], [String(TR.WHIP), 'Wischer'], [String(TR.ZOOM), 'Zoom'], [String(TR.PUSH), 'Schieben'], [String(TR.LUMA), 'Lichtblende'], [String(TR.LEAK), 'Lichtleck'], [String(TR.MORPH), 'Bild aus Bild'], [String(TR.INK), 'Farbfluss'], [String(TR.DOUBLE), 'Doppelbelichtung']];
@@ -3163,27 +3227,30 @@ function openClipSheet(i) {
   const body = openSheet(`
     <h3 id="sheetTitle">Einstellung ${i + 1} · ${fmtClock(c.start)}–${fmtClock(c.end)}</h3>
     <p class="hint">${SECTION_DE[c.label] || ''} · ${(c.end - c.start).toFixed(2).replace('.', ',')} s${m && m.kind === 'image' && !c.split && !c.grid ? ' · ' + SHOT_DE[shotSize(m)] : ''}${c.freezeAt != null ? ' · friert im Stopp ein' : ''}</p>
-    <button class="btn small again-btn" data-act="again" type="button">Gefällt mir nicht · anders versuchen</button>
-    <div class="field"><span class="field-label">Motiv</span>
-      <div class="pick-grid" role="radiogroup" aria-label="Motiv wählen">${usable.map((x) => `<button type="button" role="radio" data-media="${esc(x.id)}" aria-checked="${x.id === c.mediaId}" aria-label="${esc(x.name)}"><img src="${x.thumb || ''}" alt=""></button>`).join('')}</div>
-    </div>
-    ${i > 0 ? `<div class="field"><span class="field-label">Übergang hierher</span><div id="trPick">${radioHTML('Übergang', trOpts, ov.trans != null ? String(ov.trans) : '')}</div></div>` : ''}
+    ${echo ? `<p class="hint small">${c.flash ? 'Teil der Bilderflut: sie zeigt im Viertelschlag Bilder, die im Film auch lang zu sehen sind.' : 'Teil des Einstiegs bzw. Rückblicks.'} Bearbeite die Aufnahme an ihrer eigenen Stelle im Film.</p>` : '<button class="btn small again-btn" data-act="again" type="button">Gefällt mir nicht · anders versuchen</button>'}
+    ${key && !c.grid ? `<div class="field"><span class="field-label">Andere Aufnahme an diese Stelle holen</span>
+      <div class="pick-grid" role="radiogroup" aria-label="Aufnahme an diese Stelle holen">${usable.filter((x) => !x.excluded || x.id === c.mediaId).map((x) => `<button type="button" role="radio" data-media="${esc(x.id)}" aria-checked="${x.id === c.mediaId}" aria-label="${esc(x.name)}"><img src="${x.thumb || ''}" alt=""></button>`).join('')}</div>
+      <p class="hint small">Die gewählte Aufnahme rückt an diese Stelle, alles andere bleibt im Film.</p>
+    </div>` : ''}
+    ${i > 0 && key ? `<div class="field"><span class="field-label">Übergang hierher</span><div id="trPick">${radioHTML('Übergang', trOpts, ov.trans != null ? String(ov.trans) : '')}</div></div>` : ''}
     ${isVideo ? `<div class="field"><span class="field-label">Originalton dieses Videos</span><div id="sndPick">${radioHTML('Originalton', VOICE_LEVELS, String(m.sound || 0))}</div></div>` : ''}
-    ${isVideo ? `<div class="field"><span class="field-label">Tempo</span><div id="spPick">${radioHTML('Tempo', [['', 'Automatisch'], ['1', 'Normal'], ['0.5', 'Zeitlupe']], ov.speed ? String(ov.speed) : '')}</div></div>
+    ${isVideo && key ? `<div class="field"><span class="field-label">Tempo</span><div id="spPick">${radioHTML('Tempo', [['', 'Automatisch'], ['1', 'Normal'], ['0.5', 'Zeitlupe']], ov.speed ? String(ov.speed) : '')}</div></div>
     <div class="field"><label class="field-label" for="offRange">Videoausschnitt</label>
       <input class="range" id="offRange" type="range" min="0" max="${maxOff.toFixed(2)}" step="0.05" value="${(c.srcOffset || 0).toFixed(2)}" ${maxOff < 0.1 ? 'disabled' : ''}>
       <p class="hint small" id="offLabel">Start bei ${(c.srcOffset || 0).toFixed(1).replace('.', ',')} s von ${fmtClock(m.duration)}</p></div>` : ''}
     ${c.mediaId && !c.grid ? '<button class="btn small" data-act="text" type="button">+ Text auf dieser Einstellung</button>' : ''}
+    ${m && key && !c.grid && !c.split ? `<button class="btn small" data-act="out" type="button">${m.kind === 'video' ? 'Dieses Video' : 'Dieses Foto'} nicht im Film verwenden</button>` : ''}
     <div class="row"><button class="btn ghost small" data-act="reset" type="button">Zurücksetzen</button><button class="btn primary small" data-act="done" type="button">Fertig</button></div>`,
   () => { S.selClip = -1; buildStripBase(); drawStrip(); if (S.tab === 'cut') renderCut(); });
-  const changed = () => { commit(); savePlaceSoon(); rebuild().then(() => { const cc = S.plan.clips[i]; if (cc) { const t = (cc.start + cc.end) / 2; engine.renderStill(t); updateTime(t); } }); };
+  const changed = () => { commit(); savePlaceSoon(); rebuild().then(() => { const cc = (key && S.plan.clips.find((x) => (x.baseId || x.mediaId) === key)) || S.plan.clips[i]; if (cc) { const t = (cc.start + cc.end) / 2; engine.renderStill(t); updateTime(t); } }); };
   body.addEventListener('click', (e) => {
     const pm = e.target.closest('[data-media]');
     if (pm) {
-      ov.mediaId = pm.dataset.media;
-      delete ov.srcOffset;
+      const id = pm.dataset.media;
+      if (id === c.mediaId) return;
       for (const b of body.querySelectorAll('[data-media]')) b.setAttribute('aria-checked', b === pm ? 'true' : 'false');
-      changed();
+      closeSheet();
+      placeHere(id, c);
       return;
     }
     const r = e.target.closest('[role="radio"][data-v]');
@@ -3218,7 +3285,8 @@ function openClipSheet(i) {
       changed();
       return;
     }
-    if (a && a.dataset.act === 'reset') { delete ctx.rec.overrides.clips[i]; closeSheet(); changed(); }
+    if (a && a.dataset.act === 'out') { closeSheet(); m.excluded = true; m.fav = false; saveMediaFlags(m); commit(); savePlaceSoon(); rebuild().then(renderMaterial); toast(`${m.kind === 'video' ? 'Video' : 'Foto'} ist draußen, alles andere bleibt im Film. Rückgängig holt es zurück.`); return; }
+    if (a && a.dataset.act === 'reset') { if (key) delete ovM[key]; delete ctx.rec.overrides.clips[i]; closeSheet(); changed(); }
     if (a && a.dataset.act === 'done') closeSheet();
   });
   const rng = body.querySelector('#offRange');
@@ -4024,7 +4092,7 @@ async function init() {
     try { d.open = localStorage.getItem('cb.grp.' + d.id) === '1'; } catch (err) { /* ignore */ }
     d.addEventListener('toggle', () => { try { localStorage.setItem('cb.grp.' + d.id, d.open ? '1' : '0'); } catch (err) { /* ignore */ } });
   }
-  $('resetCuts').addEventListener('click', () => { S.ctx.rec.overrides.clips = {}; delete S.ctx.rec.overrides.moves; delete S.ctx.rec.overrides.taps; commit(); savePlaceSoon(); rebuild(); toast('Schnitt zurückgesetzt.'); });
+  $('resetCuts').addEventListener('click', () => { S.ctx.rec.overrides.clips = {}; S.ctx.rec.overrides.media = {}; delete S.ctx.rec.overrides.moves; delete S.ctx.rec.overrides.taps; commit(); savePlaceSoon(); rebuild(); toast('Schnitt zurückgesetzt.'); });
   $('addText').addEventListener('click', () => addOverlay('text'));
   $('addPin').addEventListener('click', () => addOverlay('pin'));
   $('addDate').addEventListener('click', () => addOverlay('date'));

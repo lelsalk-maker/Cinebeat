@@ -259,13 +259,15 @@ class OverlayPainter {
   }
 
   /**
-   * Kino-Rollladen, zweiter Teil: bis zum Öffnen ganz schwarz (darauf steht der Ortstitel), dann gleiten beide
-   * Behänge flüssig nach oben und unten auf – langsam lösen, gleiten, weich ankommen. Geschlossene Flächen ohne Fugen.
+   * Kino-Rollladen, zweiter Teil: bis zum Öffnen ganz schwarz (darauf steht der Ortstitel), dann öffnen sich beide
+   * Behänge in fünf Zügen auf den Schlägen nach oben und unten (jeder Zug weich gebremst). Geschlossene Flächen ohne Fugen.
    */
   drawShutter(ctx, o, t, g) {
     const W = g.W, H = g.H;
-    const u = cl01((t - o.open) / Math.max(0.1, o.end - o.open));
-    const e = u * u * u * (u * (6 * u - 15) + 10);
+    // in Zügen auf den Schlägen (jeder Zug kurz und weich gebremst), ältere Pläne gleiten durchgehend
+    let e;
+    if (o.steps && o.steps.length) e = o.steps.reduce((a, ts) => { const x = cl01((t - ts) / Math.max(0.05, o.stepDur || 0.25)); return a + 1 - Math.pow(1 - x, 3); }, 0) / o.steps.length;
+    else { const u = cl01((t - o.open) / Math.max(0.1, o.end - o.open)); e = u * u * u * (u * (6 * u - 15) + 10); }
     const half = (H / 2) * (1 - e);
     if (half <= 0.5) return;
     ctx.fillStyle = '#000';

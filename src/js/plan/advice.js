@@ -343,10 +343,10 @@ function planAudit(plan, media, an) {
   // 8. Reihenfolge: Tagesblöcke nie vertauscht (Vorschau-Einstiege ausgenommen)
   if (plan.resolved.order !== 'streng') {
     // Startbild-Einstiege (Aufblende, Countdown, Raster) und Vorschauen zeigen bewusst das stärkste Bild der Reise vorab
-    const seq = clips.filter((c) => !c.rush && !c.pre && !c.reveal && !c.revealHit && !c.leader && !c.knock && !c.grid && c.role !== 'hook' && c.role !== 'rush' && !c.replay && !c.miniRew && media[c.mediaIndex] && media[c.mediaIndex].time).map((c) => media[c.mediaIndex]);
+    const seq = clips.filter((c) => !c.flash && !c.rush && !c.pre && !c.reveal && !c.revealHit && !c.leader && !c.knock && !c.grid && c.role !== 'hook' && c.role !== 'rush' && !c.replay && !c.miniRew && media[c.mediaIndex] && media[c.mediaIndex].time).map((c) => media[c.mediaIndex]);
     // Wiederholungen (zu wenig Material für die gewählte Länge) zählen nicht als Reihenfolge
     const cnt = new Map();
-    for (const c of plan.clips) cnt.set(c.mediaId, (cnt.get(c.mediaId) || 0) + 1);
+    for (const c of plan.clips) if (!c.flash) cnt.set(c.mediaId, (cnt.get(c.mediaId) || 0) + 1);
     const seen = new Set([...cnt].filter(([, n]) => n > 1).map(([id]) => id));
     for (let i = 1; i < seq.length; i++) {
       seen.add(seq[i - 1].id);
