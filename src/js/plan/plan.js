@@ -776,7 +776,8 @@ function planOnce(opts) {
       if (cand.length >= 7) { const at = Math.round((stackC.start / D) * (cand.length - 4)); reserved = cand.slice(at, at + 4); }
       stackC.stack.reserved = reserved.map((m) => m.id);
     }
-    const chosen = selectMedia(pool.filter((m) => !reserved.includes(m)), clips.filter((c) => !c.flash).length - splitClips.length + 2, mustIds);
+    const sv = songValence(an);
+    const chosen = selectMedia(pool.filter((m) => !reserved.includes(m)), clips.filter((c) => !c.flash).length - splitClips.length + 2, mustIds, (m) => moodFit(m, sv));
     // automatisches Startbild: kein Video, das ohnehin einen eigenen Platz hat (es liefe sonst doppelt oder der Platz bliebe leer)
     const hookCand = chosen.filter((m) => !clips.some((c) => c.vid === m.id));
     hook = settings.hookId && byId.get(settings.hookId) ? byId.get(settings.hookId) : (hookCand.length ? hookCand : chosen).slice().sort((a, b) => (b.score || 0) - (a.score || 0))[0] || null;

@@ -190,9 +190,9 @@ function combineScore(m) {
 
 function scoreImage(src, sw, sh) {
   const m = imageMetrics(samplePixels(src, sw, sh));
-  let sky = null;
-  try { sky = skyProfile(src, sw, sh); } catch (e) { sky = null; }
-  return { score: combineScore(m), sharp: m.sharp, expo: m.expo, color: m.color, avg: m.avg, luma: +m.luma.toFixed(3), focus: m.focus.map((v) => +v.toFixed(3)), hash: dHash(src, sw, sh), layout: layoutSig(m), ...sceneFields(m.scene), ...visFields(m.vis), sky, vis: VIS_VER };
+  let skyline = null;
+  try { skyline = skyProfile(src, sw, sh); } catch (e) { skyline = null; }
+  return { score: combineScore(m), sharp: m.sharp, expo: m.expo, color: m.color, avg: m.avg, luma: +m.luma.toFixed(3), focus: m.focus.map((v) => +v.toFixed(3)), hash: dHash(src, sw, sh), layout: layoutSig(m), ...sceneFields(m.scene), ...visFields(m.vis), skyline, vis: VIS_VER };
 }
 
 /** Felder des Bildverständnisses (vision.js) für die Aufnahme. */

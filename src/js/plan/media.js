@@ -38,8 +38,22 @@ function videoPlay(m, vmax) {
 /** Energie einer Aufnahme (0 … 1): kräftige Farben, Schärfe und bei Videos Bewegung. */
 function mediaEnergy(m) {
   const hl = m.kind === 'video' && m.highlights && m.highlights[0] ? 0.2 : 0;
-  return Math.max(0, Math.min(1, 0.5 * (m.color || 0.4) + 0.35 * (m.sharp || 0.5) + hl));
+  const e = Math.max(0, Math.min(1, 0.5 * (m.color || 0.4) + 0.35 * (m.sharp || 0.5) + hl));
+  // Bildverständnis: Erregung (Kontrast, Farbe, Details) schärft die Energie eines Bilds
+  return m.mood ? Math.max(0, Math.min(1, 0.6 * e + 0.4 * m.mood[1])) : e;
 }
+
+/**
+ * Stimmung des Songs als Valenz 0 (dunkel, Moll) … 1 (hell, Dur): Tonart (falls sicher erkannt bzw. vom eigenen Beat),
+ * Klanghelligkeit. Bilder mit passender Bildstimmung (vision.js: hell, warm, farbig) werden bevorzugt.
+ */
+function songValence(an) {
+  const md = (an && an.mood) || {};
+  const mi = md.minor === true ? 1 : md.minor === false ? 0 : typeof md.minor === 'number' ? md.minor : 0.5;
+  return Math.max(0, Math.min(1, 0.5 + (0.5 - mi) * 0.36 + ((md.bright != null ? md.bright : 0.5) - 0.5) * 0.3));
+}
+/** Wie gut passt die Bildstimmung zur Songstimmung (0 … 0,12; ohne Bildstimmung neutral). */
+const moodFit = (m, sv) => (m && m.mood ? 0.12 * (1 - Math.min(1, Math.abs(m.mood[0] - sv) * 2)) : 0.06);
 const isCalmLabel = (l) => l !== 'drop' && l !== 'chorus';
 
 /**
@@ -213,7 +227,7 @@ function orderChrono(list) {
 }
 
 /** Wählt K Medien: Favoriten zuerst, dann nach Bewertung; Reihenfolge chronologisch. */
-function selectMedia(pool, K, mustIds) {
+function selectMedia(pool, K, mustIds, bonus = null) {
   let clean = pool.filter((m) => !m.bad && !m.excluded && (!m.dupOf || m.fav || mustIds.has(m.id)));
   if (clean.length < 2) {
     // nur bei fast leerem Material dürfen Doppelte/Unscharfe aushelfen
@@ -222,7 +236,8 @@ function selectMedia(pool, K, mustIds) {
   }
   if (clean.length <= K) return orderChrono(clean);
   const must = clean.filter((m) => m.fav || mustIds.has(m.id));
-  const rest = clean.filter((m) => !(m.fav || mustIds.has(m.id))).sort((a, b) => (b.score || 0) - (a.score || 0));
+  const val = (m) => (m.score || 0) + (bonus ? bonus(m) : 0);
+  const rest = clean.filter((m) => !(m.fav || mustIds.has(m.id))).sort((a, b) => val(b) - val(a));
   return orderChrono(must.concat(rest.slice(0, Math.max(0, K - must.length))));
 }
 

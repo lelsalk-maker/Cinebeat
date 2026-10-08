@@ -53,7 +53,7 @@ function percentile(arr, p) {
  * Taktphase (Downbeats), Energie je Beat und eine Hüllkurve für die Anzeige.
  */
 /** Version der Analyse: gespeicherte Songs mit älterer Version werden einmal neu analysiert. */
-const AN_VER = 10;
+const AN_VER = 11;
 
 /**
  * Mithören: findet in der Mikrofonaufnahme den genauen Einsatz des Songs – ohne Startton, egal wann Play gedrückt wurde.
@@ -512,6 +512,8 @@ async function analyzeAudio(buffer, onProgress) {
   const drums = detectDrums(beatsSteady, pSec, lowE, hiE, toFrame, nFrames);
   const vocal = detectVocals(beats, pSec, timbreF, chromaF, toFrame, nFrames);
   const mood = songMood({ timbreF, nFrames, beats, kicks: drums.kicks, beatRms });
+  // Dur/Moll aus der feinen Tonanalyse (nur bei klarem Ergebnis)
+  try { const key = songKey(mono, sr); mood.minor = key.minor; mood.keyConf = key.conf; } catch (e) { /* bleibt offen */ }
   const db = Array.from(beatRms, (v) => 20 * Math.log10(v + 1e-7));
   const lo = percentile(db, 0.05), hi = percentile(db, 0.97);
   const energyRaw = db.map((v) => Math.max(0, Math.min(1, (v - lo) / Math.max(1e-6, hi - lo))));
@@ -577,6 +579,7 @@ async function analyzeAudio(buffer, onProgress) {
     kicks: drums.kicks,
     vocal: vocal.level,
     vocalOn: vocal.onsets,
+    vocalLines: vocal.lines,
     mood,
     snares: drums.snares,
     duration,
@@ -606,6 +609,52 @@ function songMood({ timbreF, nFrames, beats, kicks, beatRms }) {
   const kickD = beats.length ? kicks.length / beats.length : 0;
   const cl = (x) => +Math.max(0, Math.min(1, x)).toFixed(2);
   return { minor: null, bright: cl((tilt + 4.2) / 2.4), drive: cl(kickD * 0.9 + 0.1), dyn: cl((q(0.95) - q(0.2)) / 18) };
+}
+
+/**
+ * Tonart, vor allem Dur oder Moll: eigene feine Frequenzanalyse (8192 Punkte ≈ 2,7 Hz je Linie, alle 0,5 s), nur die
+ * Spitzen zwischen 110 Hz und 1,8 kHz (Töne statt Rauschen), zu Tonklassen summiert und mit den Tonart-Profilen nach
+ * Krumhansl verglichen. minor: true/false nur bei klarem Abstand, sonst null (unsicher – dann zählt die Klangfarbe).
+ */
+function songKey(mono, sr) {
+  const N = 8192, hop = Math.round(sr * 0.5);
+  if (mono.length < N * 2) return { minor: null, conf: 0 };
+  const fft = makeFFT(N), re = new Float32Array(N), im = new Float32Array(N), win = new Float32Array(N);
+  for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / N);
+  const kb = Math.ceil((110 * N) / sr), k0 = kb, k1 = Math.floor((1800 * N) / sr);
+  const pc = new Int8Array(k1 + 1);
+  for (let k = kb; k <= k1; k++) pc[k] = ((Math.round(12 * Math.log2((k * sr) / N / 440)) + 69) % 12 + 12) % 12;
+  const chroma = new Float64Array(12), mag = new Float32Array(k1 + 5);
+  const step = Math.max(1, Math.floor((mono.length - N) / hop / 400)) * hop;
+  for (let o = 0; o + N <= mono.length; o += step) {
+    for (let i = 0; i < N; i++) { re[i] = mono[o + i] * win[i]; im[i] = 0; }
+    fft(re, im);
+    for (let k = kb - 4; k <= k1 + 4; k++) mag[k - kb + 4] = Math.sqrt(re[k] * re[k] + im[k] * im[k]);
+    const fr = new Float64Array(12);
+    let tot = 0;
+    for (let k = kb; k <= k1; k++) {
+      const m = mag[k - kb + 4];
+      // nur Spitzen über der Umgebung (Ton), Rauschen und Schlagzeug fallen heraus
+      let loc = 0; for (let d = -4; d <= 4; d++) loc += mag[k - kb + 4 + d];
+      const pk = m - loc / 9;
+      if (!(pk > 0 && m >= mag[k - kb + 3] && m >= mag[k - kb + 5])) continue;
+      fr[pc[k]] += Math.sqrt(pk); tot += Math.sqrt(pk);
+    }
+    if (tot > 0) for (let c = 0; c < 12; c++) chroma[c] += fr[c] / tot;
+  }
+  const MAJ = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88], MIN = [6.33, 2.68, 3.52, 5.38, 2.6, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
+  const corr = (p, r) => {
+    let mx = 0, my = 0;
+    for (let i = 0; i < 12; i++) { mx += chroma[(i + r) % 12]; my += p[i]; }
+    mx /= 12; my /= 12;
+    let sxy = 0, sx = 0, sy = 0;
+    for (let i = 0; i < 12; i++) { const a = chroma[(i + r) % 12] - mx, b = p[i] - my; sxy += a * b; sx += a * a; sy += b * b; }
+    return sx > 0 ? sxy / Math.sqrt(sx * sy) : 0;
+  };
+  let bMaj = { r: -2, k: 0 }, bMin = { r: -2, k: 0 };
+  for (let r = 0; r < 12; r++) { const a = corr(MAJ, r), b = corr(MIN, r); if (a > bMaj.r) bMaj = { r: a, k: r }; if (b > bMin.r) bMin = { r: b, k: r }; }
+  const d = bMin.r - bMaj.r;
+  return { minor: Math.abs(d) < 0.05 ? null : d > 0, tonic: d > 0 ? bMin.k : bMaj.k, conf: +Math.abs(d).toFixed(3), r: +Math.max(bMaj.r, bMin.r).toFixed(3) };
 }
 
 /**
@@ -639,7 +688,20 @@ function detectVocals(beats, pSec, timbreF, chromaF, toFrame, nFrames) {
   }
   const onsets = [];
   for (let i = 2; i < n; i++) if (level[i] > 0.55 && level[i - 1] < 0.4 && level[i - 2] < 0.4) onsets.push(beats[i]);
-  return { level, onsets: Float64Array.from(onsets) };
+  // Gesangszeilen: zusammenhängende Strecken mit Stimme (je Schlag, ungeglättet; Lücken bis zu einem Schlag gehören
+  // dazu – Atem zwischen Wörtern). Ein Schnitt mitten in einer Zeile schneidet ins Wort, an ihrem Ende passt er.
+  const lines = [];
+  const rawN = (i) => Math.max(0, Math.min(1, (raw[i] - lo) / Math.max(1e-6, hi - lo)));
+  let s0 = -1, gap = 0;
+  for (let i = 0; i <= n; i++) {
+    const on = i < n && rawN(i) > 0.5;
+    if (on) { if (s0 < 0) s0 = i; gap = 0; } else if (s0 >= 0 && (++gap > 1 || i === n)) {
+      const e = i - gap + 1;
+      if (e - s0 >= 2) lines.push([+beats[s0].toFixed(3), +(e < n ? beats[e] : beats[n - 1] + pSec).toFixed(3)]);
+      s0 = -1; gap = 0;
+    }
+  }
+  return { level, onsets: Float64Array.from(onsets), lines };
 }
 
 /** Anstieg der Energie am Anschlag gegenüber den Frames kurz davor. */

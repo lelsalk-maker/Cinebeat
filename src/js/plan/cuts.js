@@ -29,6 +29,10 @@ function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0
   const beatIdx = (t) => { let lo = 0, hi = an.beats.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (an.beats[m] <= t) lo = m; else hi = m - 1; } return lo; };
   for (const kt of an.kicks || []) { const b = an.beats[beatIdx(kt + 0.02)]; if (b != null && Math.abs(b - kt) < 0.03) add(b, 1.5); }
   for (const vt of an.vocalOn || []) add(vt, 4);
+  // Gesangszeilen: am Ende einer Zeile ist ein guter Schnittpunkt (auf dem Schlag danach)
+  const lines = an.vocalLines || [];
+  const snapB = (t) => { const b = an.beats[beatIdx(t + beatDur * 0.3)]; return b != null && Math.abs(b - t) < beatDur * 0.6 ? b : null; };
+  for (const [, e] of lines) { const b = snapB(e); if (b != null) add(b, 3); }
   // Schnitte nur auf Beats: Abschnitte und Stopps rasten auf den nächsten Beat ein
   const snap = (t) => { let m = t, d = Infinity; for (const b of an.beats) { const x = Math.abs(b - t); if (x < d) { d = x; m = b; } else if (b > t) break; } return d < beatDur * 0.35 ? m : t; };
   for (const s of secStarts) add(snap(s), 12, true);
@@ -36,6 +40,11 @@ function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0
   // im Takt mitgetippt: dort wird auf jeden Fall geschnitten (Zeiten schon auf den Schlag gerastet)
   for (const t of taps || []) if (t > win.start + 0.2 && t < win.end - 0.2) add(t, 14, true, true);
   const pts = [{ t: 0, w: 0, forced: true }, ...Array.from(cands.values()).sort((a, b) => a.t - b.t), { t: D, w: 0, forced: true }];
+  // mitten in einer Gesangszeile (nicht an ihrem Anfang oder Ende) schneidet ein Schnitt ins Wort
+  for (const p of pts) {
+    const abs = win.start + p.t;
+    if (!p.forced && lines.some(([a, e]) => abs > a + beatDur * 0.4 && abs < e - beatDur * 0.3)) p.inLine = true;
+  }
 
   // Mindestlänge je Einstellung (Format); nur die Akzent-Schnitte auf den ersten Beats des Drops dürfen kürzer sein
   const beatMin = Math.max(0.34, beatDur * 0.98);
@@ -84,6 +93,9 @@ function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0
       const g = tgt(pts[i].t);
       // Bonus für Schnitte auf Takt/Phrase nur anteilig bei kurzen Einstellungen: sonst gewinnen viele kurze Schnitte gegen die Wunschlänge
       let c = 4 * ((len - g) / g) ** 2 - 0.32 * pts[j].w * Math.min(1, len / g);
+      // mitten in einer Gesangszeile: in ruhigen Teilen deutlich teurer (dort hört man jedes Wort), im Refrain/Drop
+      // darf der Schnitt auf dem Schlag bleiben, wenn das Tempo es verlangt
+      if (pts[j].inLine) { const lj = sectionAt(an, win.start + pts[j].t + 0.01).label; c += lj === 'drop' || lj === 'chorus' || lj === 'build' ? 1.2 : 4; }
       // Songdynamik: ruhige Teile (Intro, Strophe, Break, Outro) behalten auch bei viel Material längere Einstellungen
       const lab = sectionAt(an, win.start + pts[i].t + 0.01).label;
       const lo = g < minLen ? beatMin : calmMin && (lab === 'intro' || lab === 'verse' || lab === 'break' || lab === 'outro') ? Math.max(minLen, calmMin) : minLen;

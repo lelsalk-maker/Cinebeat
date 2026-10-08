@@ -26,7 +26,7 @@ const res = await p.evaluate(async (ORDER) => {
       const e = Math.max(0, Math.min(1, e0 + (rng() - 0.5) * 0.3)), l = Math.max(0.12, Math.min(0.9, l0 + (rng() - 0.5) * 0.12));
       const avg = [Math.round(70 + 160 * Math.max(0, Math.cos(hue * 6.28)) * l + rng() * 12), Math.round(70 + 130 * l + rng() * 12), Math.round(70 + 160 * Math.max(0, Math.sin(hue * 6.28)) * l + rng() * 12)];
       media.push({ id: 'p' + i, kind: 'image', name: 'P' + i, canvas: c, w: i % 4 ? 3000 : 4000, h: i % 4 ? 4000 : 3000, time: T0 + day * 864e5 + (sc % 3) * 3 * 36e5 + j * 2 * 60000, scene: sc,
-        ...scoreImage(c, c.width, c.height), color: 0.15 + e * 0.8, sharp: 0.3 + e * 0.6, luma: l, avg, score: 0.35 + rng() * 0.5, hash: [i * 7919 + 13, i * 104729 + 7], us: sc === 4 || i === 9 || i === 30 ? true : undefined });
+        ...scoreImage(c, c.width, c.height), color: 0.15 + e * 0.8, sharp: 0.3 + e * 0.6, luma: l, avg, mood: [+(0.25 + 0.6 * l).toFixed(2), +e.toFixed(2)], score: 0.35 + rng() * 0.5, hash: [i * 7919 + 13, i * 104729 + 7], us: sc === 4 || i === 9 || i === 30 ? true : undefined });
     }
   }
   // Videos: zwei ruhige (kaum Bewegung), zwei bewegte (Action-Momente), unterschiedlich lang

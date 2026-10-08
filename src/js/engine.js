@@ -1243,7 +1243,7 @@ class Engine {
   skyMask(m) {
     this._masks = this._masks || new Map();
     if (this._masks.has(m.id)) return this._masks.get(m.id);
-    const line = skyLine(m.sky);
+    const line = skyLine(m.skyline);
     let tex = null;
     if (line && !m.rot90) {
       const W = 512, H = Math.max(64, Math.round(W * (m.h || 3) / (m.w || 4)));

@@ -30,7 +30,7 @@ const res = await p.evaluate(() => {
   const names = Object.keys(S);
   for (let i = 0; i < names.length; i++) for (let j = i + 1; j < names.length; j++) pairs[names[i] + '~' + names[j]] = motifSim(S[names[i]], S[names[j]]);
   // Himmelslinie der Berge gegen den gezeichneten Grat
-  const line = skyLine(S.mountains.sky);
+  const line = skyLine(S.mountains.skyline);
   let err = null;
   if (line) { let e = 0; for (let k = 0; k < line.length; k++) e += Math.abs(line[k] - ridge((k + 0.5) / line.length * W, W)); err = +(e / line.length).toFixed(4); }
   const tilt3 = sc(mk(tilted(3))).tilt, tiltM2 = sc(mk(tilted(-2))).tilt, tilt0 = sc(mk(beach(0.5, 0.75))).tilt;
@@ -58,7 +58,7 @@ const res = await p.evaluate(() => {
     // Videos: beste Stelle nach Inhalt (Bewegung + Lachen schlagen ein etwas schärferes Bild; Wackeln zählt weniger), Bildrate
     const vm = videoMoments({ highlights: [{ t: 2, score: 0.78 }, { t: 6, score: 0.7 }, { t: 9, score: 0.8 }], hits: [[6.2, 0.8]], loud: [[5.9, 0.7]], shakes: [{ t: 2, j: 0 }, { t: 6, j: 0.1 }, { t: 9, j: 0.9 }] });
     const rates = [24, 30, 60, 120, 240].map((fps) => minRate({ fps }));
-    return { pairs, adj, behind, video: { best: vm[0], rates }, sky: { ok: !!line, err, beachSky: !!S.beachA.sky, citySky: !!S.city.sky, forestSky: !!S.forest.sky }, tilt: { tilt3, tiltM2, tilt0 }, band, comp: Object.fromEntries(names.map((n) => [n, S[n].comp])), mood: Object.fromEntries(names.map((n) => [n, S[n].mood])) };
+    return { pairs, adj, behind, video: { best: vm[0], rates }, sky: { ok: !!line, err, beachSky: !!S.beachA.skyline, citySky: !!S.city.skyline, forestSky: !!S.forest.skyline }, tilt: { tilt3, tiltM2, tilt0 }, band, comp: Object.fromEntries(names.map((n) => [n, S[n].comp])), mood: Object.fromEntries(names.map((n) => [n, S[n].mood])) };
   })();
 });
 const errs = [];

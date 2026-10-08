@@ -6,7 +6,7 @@
  * ============================================================ */
 
 /** Stand der Bildanalyse: Aufnahmen mit älterem Stand werden im Hintergrund nachanalysiert. */
-const VIS_VER = 1;
+const VIS_VER = 2;
 
 const vHex2 = (v) => { const x = Math.max(0, Math.min(255, Math.round(v))); return (x < 16 ? '0' : '') + x.toString(16); };
 const vUnhex = (s) => { const o = new Uint8Array(s.length >> 1); for (let i = 0; i < o.length; i++) o[i] = parseInt(s.substr(i * 2, 2), 16); return o; };

@@ -71,7 +71,7 @@ function placeTitles(overlays, clips, ctx) {
 function behindTitle(o, parts, outAspect, titleSize) {
   const main = parts.slice().sort((a, b) => b.w - a.w)[0];
   if (!main || main.w < (o.end - o.start) * 0.6 || main.m.kind !== 'image' || main.m.rot90) return null;
-  const line = skyLine(main.m.sky);
+  const line = skyLine(main.m.skyline);
   if (!line) return null;
   // Himmelslinie im Ausgabebild über der Schriftbreite (12–88 %) – am Anfang und am Ende der Kamerafahrt
   const mo = main.c.motion || { from: { s: 1, x: 0, y: 0 }, to: { s: 1, x: 0, y: 0 } };

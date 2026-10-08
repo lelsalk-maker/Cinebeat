@@ -60,6 +60,14 @@ function songQueue(list, { an, win, segs, startAt = 0, want, us = true, ramp = f
   const imgs = list.filter((m) => m.kind === 'image');
   const imgQ = new Map();
   rankMap(imgs.map((m) => mediaEnergy(m) + 0.15 * (m.score || 0.5))).forEach((q, k) => imgQ.set(imgs[k].id, q));
+  // Bildstimmung zur Songstimmung: helle, warme Bilder in die hellen Stellen (Refrain, Höhepunkt), dunklere, kühlere in
+  // Strophe, Break und Moll-Passagen – nach Rang, damit es bei jedem Material wirkt
+  const sv0 = songValence(an);
+  const valQ = new Map();
+  const withMood = imgs.filter((m) => m.mood);
+  if (withMood.length >= 3) rankMap(withMood.map((m) => m.mood[0])).forEach((q, k) => valQ.set(withMood[k].id, q));
+  const slotV = rankMap(sl.map((x) => x.e * 0.7 + sv0 * 0.3 + (x.calm ? -0.05 : 0.05)));
+  sl.forEach((x, k) => { x.vq = slotV[k]; });
   const scores = imgs.map((m) => m.score || 0.5).sort((a, b) => b - a);
   const strong = (m) => (scores.length ? 1 - scores.indexOf(m.score || 0.5) / Math.max(1, scores.length - 1) : 0.5);
   // erster Einsatz eines Refrains/Drops und Schlussplatz
@@ -71,6 +79,7 @@ function songQueue(list, { an, win, segs, startAt = 0, want, us = true, ramp = f
   const fitImg = (m, k) => {
     const x = sl[Math.min(k, lastK)];
     let v = -1.2 * Math.abs(imgQ.get(m.id) - x.q);
+    if (valQ.has(m.id)) v -= 0.45 * Math.abs(valQ.get(m.id) - x.vq);
     const u = us ? usScore(m) : 0;
     // eure Bilder: in die ruhigen Teile und auf die langen Plätze
     v += u * (x.calm ? 0.5 : -0.6) + u * 0.6 * Math.max(-1, Math.min(1, (x.end - x.start - avgLen) / avgLen));

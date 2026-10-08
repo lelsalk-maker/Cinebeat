@@ -740,6 +740,7 @@ async function analyzeBeat(buffer, truth, onProgress) {
   an.energy = energy;
   an.vocal = new Float32Array(n);
   an.vocalOn = [];
+  an.vocalLines = [];
   an.kicks = truth.kicks.slice().sort((a, b) => a - b);
   an.snares = truth.snares.slice().sort((a, b) => a - b);
   an.bpm = truth.bpm; an.beatPeriod = B;

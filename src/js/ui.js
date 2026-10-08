@@ -1083,7 +1083,7 @@ async function runVisionUpgrade() {
     try {
       const small = m.canvas || await decodeImage(m, 480, true);
       const r = scoreImage(small, small.width, small.height);
-      for (const k of ['sig', 'calm', 'mood', 'comp', 'tilt', 'detail', 'sky', 'vis', 'score']) m[k] = r[k];
+      for (const k of ['sig', 'calm', 'mood', 'comp', 'tilt', 'detail', 'sky', 'skyline', 'vis', 'score']) m[k] = r[k];
       if (!m.canvas) { if (small.close) small.close(); else { small.width = 0; small.height = 0; } }
       n++;
       if (!m.demo) saveWork(m);
