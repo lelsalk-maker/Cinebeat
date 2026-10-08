@@ -339,7 +339,7 @@ function direct(an, media, s, chapters, flight) {
     T = Math.max(10, Math.min(45, (7 + ex) * an.beatPeriod * 4 + 0.5));
   }
   // Kino-Rollladen: der Einstieg bringt seine eigene Zeit mit (automatische Länge wächst um ihn)
-  if (s.intro === 'shutter' && !flight && (s.length === 'auto' || s.length == null)) T = Math.min(fr.max, T + SHUTTER.end * shutterStep(an) * an.beatPeriod);
+  if ((s.intro === 'shutter' || s.intro === 'welcome') && !flight && (s.length === 'auto' || s.length == null)) T = Math.min(fr.max, T + (s.intro === 'welcome' ? WELCOME.end : SHUTTER.end) * shutterStep(an) * an.beatPeriod);
   T = Math.min(T, songLen);
 
   // Songausschnitt
@@ -359,7 +359,7 @@ function direct(an, media, s, chapters, flight) {
     const step = an.beatPeriod < 0.42 ? 2 : 1;
     const preLead = s.pre === 'countdown' && s.intro !== 'countdown' ? 3 : s.pre === 'rewind' ? 4 : 0;
     const willReveal = s.intro === 'reveal' || (s.intro === 'auto' && autoReveal(an, chapters, flight, fr));
-    const lead = (s.intro === 'shutter' ? SHUTTER.end * shutterStep(an) * an.beatPeriod : 0) + (willReveal ? revealBeats(an) * an.beatPeriod : 0) + (s.intro === 'grid' && list.length >= 4 ? (list.length >= 9 ? 9 : 4) * step * an.beatPeriod : s.intro === 'countdown' ? 3 * step * an.beatPeriod : 0) + (flight || s.intro === 'split' ? 0 : preLead * step * an.beatPeriod);
+    const lead = (s.intro === 'shutter' ? SHUTTER.end * shutterStep(an) * an.beatPeriod : s.intro === 'welcome' ? WELCOME.end * shutterStep(an) * an.beatPeriod : 0) + (willReveal ? revealBeats(an) * an.beatPeriod : 0) + (s.intro === 'grid' && list.length >= 4 ? (list.length >= 9 ? 9 : 4) * step * an.beatPeriod : s.intro === 'countdown' ? 3 * step * an.beatPeriod : 0) + (flight || s.intro === 'split' ? 0 : preLead * step * an.beatPeriod);
     // Nachplanung für mehr Material: das Ende darf nicht wieder auf dieselbe kürzere Stelle einrasten
     win = smartWindow(an, T, lead, hardCap ? fr.max : Infinity, s._minT ? 0.97 : 0.8);
   } else {
@@ -449,6 +449,9 @@ function direct(an, media, s, chapters, flight) {
   if (rs.intro === 'rush' && list.filter((m) => m.kind === 'image').length < 6) rs.intro = 'hook';
   // Kino-Rollladen braucht ein paar Aufnahmen für die Wand und Platz bis zum Einsatz
   if (rs.intro === 'shutter' && (list.length < 3 || flight || D < SHUTTER.end * shutterStep(an) * an.beatPeriod + Math.max(3, an.beatPeriod * 8))) rs.intro = 'hook';
+  // „Welcome to…“ braucht einen Ortsnamen, genug Material und Zeit für sechs Takte plus Film
+  if (rs.intro === 'welcome' && (list.length < 4 || flight || !hasTitle || D < WELCOME.end * shutterStep(an) * an.beatPeriod + Math.max(3, an.beatPeriod * 8))) rs.intro = hasTitle ? 'city' : 'hook';
+  if (rs.intro === 'welcome') rs.pre = 'off';
   if (s.outro === 'auto') {
     if (fr.kind === 'film' || (chapters && chapters.length)) rs.outro = 'credits';
     else if (D <= 25) rs.outro = 'loop';
@@ -457,7 +460,7 @@ function direct(an, media, s, chapters, flight) {
   if (flight && s.outro === 'auto') rs.outro = 'freeze';
   if (rs.outro === 'split' && splitPool < 3) rs.outro = 'credits';
 
-  const INTRO_DE = { rush: 'eine Bilderflut: viele Bilder in einem Takt, immer schneller, dann steht das stärkste Bild, danach wird es ruhiger und im Drop wieder schneller', reveal: 'ein kurzer, ruhiger Aufbau aus Details deiner Bilder, auf dem Höhepunkt öffnet sich das stärkste Bild', countdown: 'Countdown wie im alten Kino, darunter blitzen deine Bilder in Schwarzweiß auf, auf dem Einsatz geht es in Farbe los', knockout: 'der Ortsname ist ein Fenster ins Bild, dann zoomt der Film durch die Buchstaben', flight: 'Abflug-Video, dann zeichnet sich deine Flugroute über dem Globus, danach die Landung', grid: 'neun Bilder in Schwarzweiß werden im Takt farbig, dann zoomt der Film ins mittlere Bild', city: 'dein stärkstes Bild mit dem Ortsnamen groß im Bild', cinema: fr.kind === 'film' ? 'Titelkarte auf Schwarz, dann blendet das erste Bild auf' : 'Titelkarte über dem abgedunkelten ersten Bild', hook: 'dein stärkstes Bild eröffnet, der Titel steht dezent unten', type: 'der Titel läuft Wort für Wort im Takt', split: 'drei Bilder öffnen den Film nacheinander im Split-Screen', shutter: 'Kino-Rollladen: sechs Hochkant-Aufnahmen erscheinen, der Rollladen schließt, der Ort erscheint, das Bild öffnet sich zum Song-Einsatz' };
+  const INTRO_DE = { rush: 'eine Bilderflut: viele Bilder in einem Takt, immer schneller, dann steht das stärkste Bild, danach wird es ruhiger und im Drop wieder schneller', reveal: 'ein kurzer, ruhiger Aufbau aus Details deiner Bilder, auf dem Höhepunkt öffnet sich das stärkste Bild', countdown: 'Countdown wie im alten Kino, darunter blitzen deine Bilder in Schwarzweiß auf, auf dem Einsatz geht es in Farbe los', knockout: 'der Ortsname ist ein Fenster ins Bild, dann zoomt der Film durch die Buchstaben', flight: 'Abflug-Video, dann zeichnet sich deine Flugroute über dem Globus, danach die Landung', grid: 'neun Bilder in Schwarzweiß werden im Takt farbig, dann zoomt der Film ins mittlere Bild', city: 'dein stärkstes Bild mit dem Ortsnamen groß im Bild', cinema: fr.kind === 'film' ? 'Titelkarte auf Schwarz, dann blendet das erste Bild auf' : 'Titelkarte über dem abgedunkelten ersten Bild', hook: 'dein stärkstes Bild eröffnet, der Titel steht dezent unten', type: 'der Titel läuft Wort für Wort im Takt', split: 'drei Bilder öffnen den Film nacheinander im Split-Screen', shutter: 'Kino-Rollladen: sechs Hochkant-Aufnahmen erscheinen, der Rollladen schließt, der Ort erscheint, das Bild öffnet sich zum Song-Einsatz', welcome: '„Welcome to…“: passende Ausschnitte, immer ruhiger, der Ortsname in Gelb wechselt mit jedem Bild die Schrift, Balken schließen im Takt, auf dem Einsatz geht es mit einem Video los' };
   const OUTRO_DE = { strip: 'Filmstreifen, der rückwärts durch deinen Film läuft', credits: 'Abblende und Schlusstitel', loop: 'nahtloser Übergang zurück zum Anfang (Endlos-Loop)', freeze: 'Standbild, das in Schwarzweiß ausläuft', split: 'Split-Screen und harter Schnitt auf Schwarz' };
   if (s.intro === 'auto' || s.outro === 'auto') notes.push(`Einstieg: ${INTRO_DE[rs.intro]}. Ende: ${OUTRO_DE[rs.outro]}.`);
 

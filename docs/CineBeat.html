@@ -818,6 +818,7 @@ body.comparing .mini, body.comparing .mini-bar { display: none !important; }
                 <div class="chips" role="radiogroup" aria-labelledby="introLabel" id="introChips">
                   <button type="button" role="radio" data-v="auto">Auto</button>
                   <button type="button" role="radio" data-v="reveal">Aufblende</button>
+                  <button type="button" role="radio" data-v="welcome">Welcome to…</button>
                   <button type="button" role="radio" data-v="shutter">Kino-Rollladen</button>
                   <button type="button" role="radio" data-v="rush">Bilderflut</button>
                   <button type="button" role="radio" data-v="countdown">Countdown</button>
@@ -3345,6 +3346,20 @@ function bandRect(format, frame) {
  * Einsatz (20 = Refrain/Drop, fünf Takte nach dem ersten Bild).
  */
 const SHUTTER = { tiles: [0, 0.5, 1, 1.5, 2, 2.5], colors: [3, 3.5, 4, 4.5, 5, 5.5], pulls: [6, 7, 8], black: 9, open: 15, end: 20 };
+/**
+ * Einstieg „Welcome to…“ (Zählzeiten wie beim Kino-Rollladen, alles auf den Schlägen des Songs, der unverändert läuft):
+ * „Welcome to…“ steht von Anfang an in Schreibschrift; dahinter zehn ähnliche Ausschnitte mit leichter Bewegung, erst
+ * zügig, dann allmählich langsamer (0 … 13); das letzte Video bleibt und läuft weiter (13), darunter erscheint der
+ * Ortsname in Gelb (14); dann wechselt er durch zehn ganz verschiedene Schriften – schnell, langsamer, wieder schnell –,
+ * und mit jedem Schriftwechsel wechselt im selben Augenblick das Bild dahinter (16 … 23,5); ab 21 fahren schwarze Balken
+ * von oben und unten in Zügen auf den Schlägen zu, bis es ganz schwarz ist; auf dem Einsatz (24 = Refrain/Drop,
+ * sechs Takte nach dem ersten Bild) geht es mit einem Video in den Film.
+ */
+const WELCOME = {
+  clips: [0, 1, 2, 3, 4, 5, 6, 7.5, 9, 11], last: 13, name: 14,
+  fonts: [16, 16.5, 17, 17.5, 18.5, 20, 21, 21.5, 22, 22.5, 23, 23.5], pulls: [21, 22, 23, 23.5], end: 24,
+};
+
 function shutterStep(an) {
   return an.beatPeriod < 0.36 ? 2 : 1;
 }
@@ -4666,6 +4681,15 @@ function planOnce(opts) {
     if (shutter.end > D - Math.max(3, barDur * 2)) shutter = null;
     else pre = { kind: 'shutter', beats: SHUTTER.black * st, end: shutter.black, pieces: [{ start: 0, end: shutter.black, f: { pre: 'wall' } }] };
   }
+  // „Welcome to…“: zehn ähnliche Ausschnitte (immer langsamer), das letzte Video läuft weiter, Ortsname in Gelb,
+  // zehn Schriften im Wechsel mit den Bildern, Balken schließen auf den Schlägen, auf dem Einsatz ein Video
+  let welcome = null;
+  if (intro === 'welcome' && !flight && !pre) {
+    const st = shutterStep(an), u = beatDur * st;
+    const at = (x) => { const k = x * st, k0 = Math.floor(k + 1e-6), f = k - k0; return f > 1e-6 ? atB(k0) + (atB(k0 + 1) - atB(k0)) * f : atB(k0); };
+    welcome = { u, at, clips: WELCOME.clips.map((x) => (x ? at(x) : 0)), last: at(WELCOME.last), name: at(WELCOME.name), fonts: WELCOME.fonts.map(at), pulls: WELCOME.pulls.map(at), end: at(WELCOME.end) };
+    if (welcome.end > D - Math.max(3, barDur * 2) || s.showTitle === false || !(settings.title || '').trim()) welcome = null;
+  }
   if (pre && pre.kind !== 'shutter' && pre.end > D * 0.35) pre = null;
   const pb = pre ? pre.beats : 0;
   const T0 = pre ? pre.end : 0;
@@ -4733,14 +4757,20 @@ function planOnce(opts) {
   // auf den letzten beiden Zählzeiten doppelt so schnell – auf dem Einsatz steht das stärkste Bild
   if (shutter) {
     // (jeder Wechsel auf einem echten Schlag des Songs – nicht mit fester Schlaglänge weitergezählt)
-    const u = shutter.u, pieces = [], at = shutter.at;
+    const pieces = [], at = shutter.at;
+    // (ruhig: ein Bild je Zählzeit, eines nach dem anderen, während sich der Vorhang gleichmäßig öffnet)
     const cuts = [shutter.black, at(SHUTTER.open + 1)];
-    for (let x = SHUTTER.open + 2; x < SHUTTER.end - 2 - 1e-6; x += 1) cuts.push(at(x));
-    const fast = u / 2 >= 0.2;
-    for (let x = SHUTTER.end - 2; x < SHUTTER.end - 1e-6; x += fast ? 0.5 : 1) cuts.push(at(x));
+    for (let x = SHUTTER.open + 2; x < SHUTTER.end - 1e-6; x += 1) cuts.push(at(x));
     cuts.push(shutter.end);
     for (let k = 0; k + 1 < cuts.length; k++) pieces.push({ start: cuts[k], end: cuts[k + 1], f: { rush: true } });
     rush = { pieces, end: shutter.end, shutter: true };
+  }
+  if (welcome) {
+    // Ausschnitte (0 … 9), das weiterlaufende letzte Video (10), dann je Schriftwechsel ein Bild (11 …)
+    const cuts = [...welcome.clips, welcome.last, ...welcome.fonts, welcome.end];
+    const pieces = [];
+    for (let k = 0; k + 1 < cuts.length; k++) pieces.push({ start: cuts[k], end: cuts[k + 1], f: { rush: true, welcome: k < 10 ? 'a' : k === 10 ? 'last' : 'cycle' } });
+    rush = { pieces, end: welcome.end, welcome: true };
   }
 
   // Einstieg: Mindestdauer der ersten Einstellung
@@ -4799,7 +4829,7 @@ function planOnce(opts) {
     // (nur in Aufbau, Refrain und Drop – ruhige Teile bleiben ruhig)
     if (level >= 4) for (const b0 of (an.barStart || []).map((x) => x - win.start)) if (b0 > introEnd + barDur && b0 < D - 3 && !isCalmLabel(sectionAt(an, win.start + b0 + 0.02).label) || (b0 > introEnd + barDur && b0 < D - 3 && sectionAt(an, win.start + b0 + 0.02).label === 'build')) if (!peaksB.some((y) => Math.abs(y.rel - b0) < barDur * 2.9)) peaksB.push({ rel: b0 });
     peaksB.sort((x, y) => x.rel - y.rel);
-    const styleFlash = s.burst === 'drop' || (rush && !rush.shutter);
+    const styleFlash = s.burst === 'drop' || (rush && !rush.shutter && !rush.welcome);
     // verdichtende Serien nehmen nur so viele Bilder auf, wie auf der Stufe davor fehlten (plus etwas Luft) – sonst
     // blieben für den Rest des Films zu wenige Bilder und einzelne Einstellungen stünden viel zu lang
     let pieceBudget = opts._need != null ? Math.ceil(opts._need * 1.3) + 2 : Infinity;
@@ -4999,7 +5029,9 @@ function planOnce(opts) {
     const hkVal = (m) => (m.score || 0) + (lied ? 0.25 * mediaEnergy(m) : 0);
     const earlyImg = early.filter((m) => m.kind === 'image').sort((a, b) => hkVal(b) - hkVal(a));
     const hkCand = earlyImg.filter((m) => hkVal(m) >= (earlyImg[0] ? hkVal(earlyImg[0]) : 0) - (lied ? 0.12 : 0.2)).slice(0, 3);
-    const hk = intro === 'split' ? null : (settings.hookId && all0.find((m) => m.id === settings.hookId)) || (s.recut && hkCand.length ? hkCand[s.recut % hkCand.length] : earlyImg[0]) || all0[0] || null;
+    // („Welcome to…“: auf dem Einsatz geht es direkt mit einem Video weiter – dem stärksten, lebendigsten)
+    const hkVid = rush && rush.welcome ? all0.filter((m) => m.kind === 'video' && videoSpan(m) >= 1.5).sort((a, b) => (b.score || 0) + 0.3 * videoLively(b) - (a.score || 0) - 0.3 * videoLively(a))[0] : null;
+    const hk = intro === 'split' ? null : (settings.hookId && all0.find((m) => m.id === settings.hookId)) || hkVid || (s.recut && hkCand.length ? hkCand[s.recut % hkCand.length] : earlyImg[0]) || all0[0] || null;
     // innerhalb eines Moments (wenige Minuten) darf ein Bild aus dem vorigen hervorgehen (Match-Cuts, Farbfluss);
     // „Zum Lied“: die Momente stehen dort, wo sie zur Songstelle passen
     const vWant = (v) => userVideoLen(v) || Math.max(Math.min(videoSpan(v) * 0.96, Math.max(2.4, barDur)), videoPlay(v, fr.vmax) * (opts._vf || 1));
@@ -5124,7 +5156,7 @@ function planOnce(opts) {
     const abs = win.start + g.start;
     const sec = sectionAt(an, abs + 0.01);
     return {
-      i, start: g.start, end: g.end, label: sec.label, energy: sec.energy, weight: g.w, freezeAt: g.freezeAt, burst: !!g.burst, flash: !!g.flash, leader: !!g.leader, pre: g.pre || null, reveal: !!g.reveal, vid: g.vid || null, gridMid: g.gridMid || null, grid: !!g.gridMid, miniRew: !!g.miniRew, rush: !!g.rush, recap: !!g.recap, stack: g.stackSeg ? { times: g.stackSeg.times, reserved: g.stackIds || null } : null,
+      i, start: g.start, end: g.end, label: sec.label, energy: sec.energy, weight: g.w, freezeAt: g.freezeAt, burst: !!g.burst, flash: !!g.flash, leader: !!g.leader, pre: g.pre || null, reveal: !!g.reveal, vid: g.vid || null, gridMid: g.gridMid || null, grid: !!g.gridMid, miniRew: !!g.miniRew, rush: !!g.rush, welcome: g.welcome || null, recap: !!g.recap, stack: g.stackSeg ? { times: g.stackSeg.times, reserved: g.stackIds || null } : null,
       pre_mediaId: g.mediaId || null, sceneStart: !!g.sceneStart, splitIds: g.splitIds || g.vsplitIds || null, gridIds: g.gridIds || null, replaySeg: !!g.replaySeg, repeatSeg: !!g.repeat,
       sectionChange: i > 0 && (an.sections || []).some((x) => Math.abs(x.start - abs) < 0.05),
       mediaId: null, role: 'normal',
@@ -5436,7 +5468,32 @@ function planOnce(opts) {
 
   // Bilderflut: ein Vorgeschmack auf die ganze Reise – Fotos quer durch die Zeit, in ihrer Reihenfolge
   const rushC = clips.filter((c) => c.rush);
-  if (rushC.length) {
+  if (rushC.length && rush && rush.welcome) {
+    // „Welcome to…“: zehn Ausschnitte, die zueinander passen (ähnliche Farbe und Helligkeit, Videos bevorzugt), eine
+    // weiche Kette vom stärksten aus; danach das weiterlaufende Video; zu den Schriftwechseln weitere passende Bilder
+    const hookC = clips.find((c) => c.role === 'hook');
+    const pool = goodMedia(usable, gAll).filter((m) => !hookC || m.id !== hookC.mediaId);
+    const dist = (a, b) => (a.avg && b.avg ? Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) : 60) + 120 * Math.abs((a.luma || 0.45) - (b.luma || 0.45));
+    const seed = pool.slice().sort((a, b) => (b.score || 0) + (b.kind === 'video' ? 0.1 : 0) - (a.score || 0) - (a.kind === 'video' ? 0.1 : 0))[0];
+    const chain = [], left = pool.filter((m) => m !== seed);
+    if (seed) chain.push(seed);
+    while (left.length && chain.length < 10) {
+      const last = chain[chain.length - 1];
+      let bi = 0, bv = Infinity;
+      left.forEach((m, k) => { const v = dist(last, m) * 0.6 + dist(seed, m) * 0.4 - (m.kind === 'video' ? 12 : 0); if (v < bv) { bv = v; bi = k; } });
+      chain.push(left.splice(bi, 1)[0]);
+    }
+    const tail = chain[chain.length - 1];
+    const lastV = left.filter((m) => m.kind === 'video' && videoSpan(m) >= 1.5).sort((a, b) => dist(tail || a, a) - dist(tail || b, b))[0] || chain.find((m) => m.kind === 'video');
+    const rest = left.filter((m) => m !== lastV).sort((a, b) => dist(lastV || seed, a) - dist(lastV || seed, b));
+    const cyc = rest.length ? rest : chain;
+    let ci = 0;
+    rushC.forEach((c, k) => {
+      const m = c.welcome === 'a' ? chain[k % Math.max(1, chain.length)] : c.welcome === 'last' ? lastV || chain[0] : cyc[ci++ % Math.max(1, cyc.length)];
+      if (m) c.mediaId = m.id;
+      c.role = 'rush';
+    });
+  } else if (rushC.length) {
     const hookC = clips.find((c) => c.role === 'hook');
     const fotos = orderChrono(goodMedia(usable, gAll).filter((m) => m.kind === 'image' && (!hookC || m.id !== hookC.mediaId)));
     const src = fotos.length ? fotos : goodMedia(usable, gAll).filter((m) => m.kind === 'image');
@@ -6046,7 +6103,12 @@ function planOnce(opts) {
       }
       c.contain = false;
     }
-    if (c.rush) {
+    if (c.rush && c.welcome) {
+      // „Welcome to…“: leichte, ruhige Bewegung; Videos laufen (das letzte länger und mit langsamem Heranfahren)
+      const sg = c.i % 2 ? 1 : -1;
+      c.motion = c.welcome === 'last' ? { from: { s: 1.0, x: 0, y: 0 }, to: { s: 1.08, x: 0, y: 0 } } : { from: { s: 1.07, x: 0.05 * sg, y: 0 }, to: { s: 1.0, x: -0.03 * sg, y: 0 } };
+      c.contain = false;
+    } else if (c.rush) {
       // jedes Bild der Flut setzt mit einem kleinen Zoom-Impuls ein, abwechselnd leicht versetzt
       const sg = c.i % 2 ? 1 : -1;
       c.motion = { from: { s: 1.12, x: 0.12 * sg, y: 0 }, to: { s: 1.03, x: 0.12 * sg, y: 0 } };
@@ -6364,7 +6426,8 @@ function planOnce(opts) {
   }
   if (pre && pre.kind === 'shutter' && shutter) {
     const u = shutter.u;
-    overlays.push({ type: 'shutter', start: shutter.black - 0.03, open: shutter.open, end: shutter.end + 0.02, steps: shutter.opens, stepDur: Math.min(0.3, u * 0.55) });
+    // nach dem Ortsnamen öffnet sich der Vorhang ruhig und gleichmäßig (vom Schlag 15 bis zum Einsatz auf 20)
+    overlays.push({ type: 'shutter', start: shutter.black - 0.03, open: shutter.open, end: shutter.end + 0.02, glide: true });
     // nach dem dritten Zug kurz Schwarz, dann auf dem Schlag Ortsname und Koordinaten; sie stehen auf Schwarz und
     // gehen mit dem Öffnen (danach kein zweites Mal als Kapitel)
     if (title) overlays.push({ type: 'city', text: title, sub: subtitle, geo, start: shutter.black, end: shutter.open + 0.5 * u, cap: shutter.open + 0.5 * u });
@@ -6373,6 +6436,11 @@ function planOnce(opts) {
     // Musik: läuft von Anfang an unverändert (auf Instagram kommt der Song ohnehin so); der Einstieg lebt davon,
     // dass jedes Bild, jeder Farbwechsel, jeder Zug und der Ortsname auf den Schlägen sitzen
     dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Kino-Rollladen: ${clips[0].split ? clips[0].split.ids.length : 6} Ausschnitte eurer stärksten Aufnahmen erscheinen nebeneinander im Kinoband, schwarzweiß im halben Takt, das stärkste vorn, und werden in derselben Folge farbig; der Rollladen schließt in drei Zügen auf den Schlägen, kurz Schwarz, dann erscheint ${title ? `„${title}“` : 'der Ort'}${geo ? ' mit Koordinaten' : ''} auf Schwarz und geht mit dem Öffnen. Alles sitzt auf den Schlägen des Songs, der von Anfang an voll läuft; der Einsatz kommt fünf Takte nach dem ersten Bild (${fmtMS(shutter.end)}).`);
+  }
+  if (rush && rush.welcome && welcome) {
+    // „Welcome to…“ von Anfang an; Ortsname auf dem Schlag; Schriftwechsel genau mit den Bildwechseln; Balken in Zügen
+    overlays.push({ type: 'welcome', start: 0, end: welcome.end + 0.02, text: title, nameAt: welcome.name, fonts: welcome.fonts.slice(), pulls: welcome.pulls.slice(), pullDur: Math.min(0.28, welcome.u * 0.5) });
+    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Welcome to ${title}: zehn passende Ausschnitte, immer ruhiger, das letzte Video läuft weiter; der Ortsname erscheint in Gelb und wechselt zwölfmal die Schrift – jedes Mal im selben Augenblick wie das Bild dahinter; die Balken schließen auf den Schlägen, auf dem Einsatz geht es mit einem Video in den Film.`);
   }
   if (pre && pre.kind === 'countdown') dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, 'Vorspann Countdown: 3 · 2 · 1 wie im alten Kino, danach beginnt dein Einstieg.');
 
@@ -6444,7 +6512,7 @@ function planOnce(opts) {
     if (s.showChapters === false) continue;
     // Kein zweites Mal derselbe Ort: ein Kapitel mit dem Namen des Einstiegstitels (und nach dem Kino-Rollladen das
     // erste Kapitel) wird nicht zusätzlich unten links eingeblendet
-    if (title && (String(c.chapter).toLowerCase() === String(title).toLowerCase() || (shutter && pre && pre.kind === 'shutter' && c.chapterNo === 1))) continue;
+    if (title && (String(c.chapter).toLowerCase() === String(title).toLowerCase() || ((shutter && pre && pre.kind === 'shutter') || (rush && rush.welcome)) && c.chapterNo === 1)) continue;
     const chIdx = trip && trip.stops ? trip.stops.findIndex((x) => x.name === c.chapter) : -1;
     // Kapitel steht über zwei Einstellungen (mindestens 3,4 s), damit Ort und Kilometer in Ruhe lesbar sind
     const second = clips.slice(ci + 1, ci + 3).filter((x) => x.start < chEnd).pop();
@@ -8025,6 +8093,7 @@ function suggestBeats(st = {}) {
   if (st.mv === 'on') { add('drift', 1.5, 'Musikvideo-Stil'); add('bounce', 1, 'Musikvideo-Stil'); }
   if (st.target === 'reel' || (st.format === '9:16' && st.target !== 'story')) { add('bounce', 0.9, 'Reel-Trend'); add('skyline', 0.6, 'Reel-Trend'); add('drift', 0.5, 'Reel-Trend'); }
   if (st.intro === 'shutter' || st.intro === 'cinema') add('gipfel', 1.5, 'Kino-Einstieg');
+  if (st.intro === 'welcome') { add('sommer', 1.2, 'leicht für „Welcome to…“'); add('roadtrip', 1.2, 'leicht für „Welcome to…“'); }
   if (st.target === 'story') { add('bounce', 0.5, 'Story-Trend'); add('glow', 0.5, 'knackig für Storys'); add('sommer', 0.5, 'leicht für Storys'); add('stadt', 0.5, 'treibt die Story an'); }
   const order = Object.keys(BEAT_STYLES).sort((a, b) => score[b] - score[a]);
   return order.map((k) => ({ id: k, why: why[k] || BEAT_STYLES[k].genre }));
@@ -8038,7 +8107,7 @@ function beatRecipe(styleId, st = {}, o = {}) {
   const bpm = Math.round(tempo === 'ruhig' ? lo + (def - lo) * 0.3 : tempo === 'schnell' ? def + (hi - def) * 0.8 : def);
   const form = o.form || (st.target === 'story' || (st.format === '9:16' && st.target !== 'reel' && st.length !== 'auto' && +st.length <= 30) ? 'story' : st.format === '16:9' ? 'film' : 'reel');
   // Kino-Rollladen: der Drop kommt nach 20 Zählzeiten (fünf Takte), sonst nach vier Takten Aufbau
-  const pre = st.intro === 'shutter' ? Math.ceil((SHUTTER.end * (60 / bpm < 0.36 ? 2 : 1)) / 4) : 4;
+  const pre = st.intro === 'shutter' || st.intro === 'welcome' ? Math.ceil(((st.intro === 'welcome' ? WELCOME.end : SHUTTER.end) * (60 / bpm < 0.36 ? 2 : 1)) / 4) : 4;
   // Energie: aus der Variante (ruhig = Chill, energisch = Hype), sonst Vibe
   const energy = o.energy in BEAT_ENERGY ? o.energy : st.variant === 'ruhig' ? 'chill' : st.variant === 'energisch' ? 'hype' : 'vibe';
   return { v: 2, style: styleId in BEAT_STYLES ? styleId : 'sommer', bpm, root: S.root + (o.shift || 0), seed: (o.seed >>> 0) || 1, form, pre, tempo, energy };
@@ -9015,7 +9084,7 @@ function direct(an, media, s, chapters, flight) {
     T = Math.max(10, Math.min(45, (7 + ex) * an.beatPeriod * 4 + 0.5));
   }
   // Kino-Rollladen: der Einstieg bringt seine eigene Zeit mit (automatische Länge wächst um ihn)
-  if (s.intro === 'shutter' && !flight && (s.length === 'auto' || s.length == null)) T = Math.min(fr.max, T + SHUTTER.end * shutterStep(an) * an.beatPeriod);
+  if ((s.intro === 'shutter' || s.intro === 'welcome') && !flight && (s.length === 'auto' || s.length == null)) T = Math.min(fr.max, T + (s.intro === 'welcome' ? WELCOME.end : SHUTTER.end) * shutterStep(an) * an.beatPeriod);
   T = Math.min(T, songLen);
 
   // Songausschnitt
@@ -9035,7 +9104,7 @@ function direct(an, media, s, chapters, flight) {
     const step = an.beatPeriod < 0.42 ? 2 : 1;
     const preLead = s.pre === 'countdown' && s.intro !== 'countdown' ? 3 : s.pre === 'rewind' ? 4 : 0;
     const willReveal = s.intro === 'reveal' || (s.intro === 'auto' && autoReveal(an, chapters, flight, fr));
-    const lead = (s.intro === 'shutter' ? SHUTTER.end * shutterStep(an) * an.beatPeriod : 0) + (willReveal ? revealBeats(an) * an.beatPeriod : 0) + (s.intro === 'grid' && list.length >= 4 ? (list.length >= 9 ? 9 : 4) * step * an.beatPeriod : s.intro === 'countdown' ? 3 * step * an.beatPeriod : 0) + (flight || s.intro === 'split' ? 0 : preLead * step * an.beatPeriod);
+    const lead = (s.intro === 'shutter' ? SHUTTER.end * shutterStep(an) * an.beatPeriod : s.intro === 'welcome' ? WELCOME.end * shutterStep(an) * an.beatPeriod : 0) + (willReveal ? revealBeats(an) * an.beatPeriod : 0) + (s.intro === 'grid' && list.length >= 4 ? (list.length >= 9 ? 9 : 4) * step * an.beatPeriod : s.intro === 'countdown' ? 3 * step * an.beatPeriod : 0) + (flight || s.intro === 'split' ? 0 : preLead * step * an.beatPeriod);
     // Nachplanung für mehr Material: das Ende darf nicht wieder auf dieselbe kürzere Stelle einrasten
     win = smartWindow(an, T, lead, hardCap ? fr.max : Infinity, s._minT ? 0.97 : 0.8);
   } else {
@@ -9125,6 +9194,9 @@ function direct(an, media, s, chapters, flight) {
   if (rs.intro === 'rush' && list.filter((m) => m.kind === 'image').length < 6) rs.intro = 'hook';
   // Kino-Rollladen braucht ein paar Aufnahmen für die Wand und Platz bis zum Einsatz
   if (rs.intro === 'shutter' && (list.length < 3 || flight || D < SHUTTER.end * shutterStep(an) * an.beatPeriod + Math.max(3, an.beatPeriod * 8))) rs.intro = 'hook';
+  // „Welcome to…“ braucht einen Ortsnamen, genug Material und Zeit für sechs Takte plus Film
+  if (rs.intro === 'welcome' && (list.length < 4 || flight || !hasTitle || D < WELCOME.end * shutterStep(an) * an.beatPeriod + Math.max(3, an.beatPeriod * 8))) rs.intro = hasTitle ? 'city' : 'hook';
+  if (rs.intro === 'welcome') rs.pre = 'off';
   if (s.outro === 'auto') {
     if (fr.kind === 'film' || (chapters && chapters.length)) rs.outro = 'credits';
     else if (D <= 25) rs.outro = 'loop';
@@ -9133,7 +9205,7 @@ function direct(an, media, s, chapters, flight) {
   if (flight && s.outro === 'auto') rs.outro = 'freeze';
   if (rs.outro === 'split' && splitPool < 3) rs.outro = 'credits';
 
-  const INTRO_DE = { rush: 'eine Bilderflut: viele Bilder in einem Takt, immer schneller, dann steht das stärkste Bild, danach wird es ruhiger und im Drop wieder schneller', reveal: 'ein kurzer, ruhiger Aufbau aus Details deiner Bilder, auf dem Höhepunkt öffnet sich das stärkste Bild', countdown: 'Countdown wie im alten Kino, darunter blitzen deine Bilder in Schwarzweiß auf, auf dem Einsatz geht es in Farbe los', knockout: 'der Ortsname ist ein Fenster ins Bild, dann zoomt der Film durch die Buchstaben', flight: 'Abflug-Video, dann zeichnet sich deine Flugroute über dem Globus, danach die Landung', grid: 'neun Bilder in Schwarzweiß werden im Takt farbig, dann zoomt der Film ins mittlere Bild', city: 'dein stärkstes Bild mit dem Ortsnamen groß im Bild', cinema: fr.kind === 'film' ? 'Titelkarte auf Schwarz, dann blendet das erste Bild auf' : 'Titelkarte über dem abgedunkelten ersten Bild', hook: 'dein stärkstes Bild eröffnet, der Titel steht dezent unten', type: 'der Titel läuft Wort für Wort im Takt', split: 'drei Bilder öffnen den Film nacheinander im Split-Screen', shutter: 'Kino-Rollladen: sechs Hochkant-Aufnahmen erscheinen, der Rollladen schließt, der Ort erscheint, das Bild öffnet sich zum Song-Einsatz' };
+  const INTRO_DE = { rush: 'eine Bilderflut: viele Bilder in einem Takt, immer schneller, dann steht das stärkste Bild, danach wird es ruhiger und im Drop wieder schneller', reveal: 'ein kurzer, ruhiger Aufbau aus Details deiner Bilder, auf dem Höhepunkt öffnet sich das stärkste Bild', countdown: 'Countdown wie im alten Kino, darunter blitzen deine Bilder in Schwarzweiß auf, auf dem Einsatz geht es in Farbe los', knockout: 'der Ortsname ist ein Fenster ins Bild, dann zoomt der Film durch die Buchstaben', flight: 'Abflug-Video, dann zeichnet sich deine Flugroute über dem Globus, danach die Landung', grid: 'neun Bilder in Schwarzweiß werden im Takt farbig, dann zoomt der Film ins mittlere Bild', city: 'dein stärkstes Bild mit dem Ortsnamen groß im Bild', cinema: fr.kind === 'film' ? 'Titelkarte auf Schwarz, dann blendet das erste Bild auf' : 'Titelkarte über dem abgedunkelten ersten Bild', hook: 'dein stärkstes Bild eröffnet, der Titel steht dezent unten', type: 'der Titel läuft Wort für Wort im Takt', split: 'drei Bilder öffnen den Film nacheinander im Split-Screen', shutter: 'Kino-Rollladen: sechs Hochkant-Aufnahmen erscheinen, der Rollladen schließt, der Ort erscheint, das Bild öffnet sich zum Song-Einsatz', welcome: '„Welcome to…“: passende Ausschnitte, immer ruhiger, der Ortsname in Gelb wechselt mit jedem Bild die Schrift, Balken schließen im Takt, auf dem Einsatz geht es mit einem Video los' };
   const OUTRO_DE = { strip: 'Filmstreifen, der rückwärts durch deinen Film läuft', credits: 'Abblende und Schlusstitel', loop: 'nahtloser Übergang zurück zum Anfang (Endlos-Loop)', freeze: 'Standbild, das in Schwarzweiß ausläuft', split: 'Split-Screen und harter Schnitt auf Schwarz' };
   if (s.intro === 'auto' || s.outro === 'auto') notes.push(`Einstieg: ${INTRO_DE[rs.intro]}. Ende: ${OUTRO_DE[rs.outro]}.`);
 
@@ -9739,6 +9811,25 @@ const OV_FONTS = {
   typewriter: '"American Typewriter", "Courier New", Courier, monospace',
 };
 
+/**
+ * „Welcome to…“: Schreibschrift für die Zeile darüber und zehn deutlich verschiedene Schriften für den Ortsnamen
+ * (unterscheiden sich auch in Stärke, Groß/Klein, Laufweite, Breite und Kontur – so bleiben sie verschieden,
+ * selbst wenn ein Gerät eine Schrift nicht hat).
+ */
+const WELCOME_SCRIPT = '"Snell Roundhand", "Savoye LET", "Apple Chancery", "Brush Script MT", "Segoe Script", cursive';
+const WELCOME_FONTS = [
+  { fam: OV_FONTS.serif, wt: 400 },
+  { fam: OV_FONTS.geo, wt: 700, up: true, ls: 0.14 },
+  { fam: WELCOME_SCRIPT, wt: 400, k: 1.25 },
+  { fam: OV_FONTS.typewriter, wt: 400, ls: 0.04 },
+  { fam: '"Impact", "Haettenschweiler", "Arial Black", "Avenir Next Condensed", sans-serif', wt: 900, up: true, sx: 0.9 },
+  { fam: '"Marker Felt", "Chalkboard SE", "Comic Sans MS", cursive', wt: 400 },
+  { fam: '"Copperplate", "Copperplate Gothic Light", "Trajan Pro", Georgia, serif', wt: 400, up: true, ls: 0.1 },
+  { fam: OV_FONTS.sans, wt: 800, up: true, stroke: true, ls: 0.04 },
+  { fam: '"Rockwell", "Courier New", "American Typewriter", serif', wt: 700, sx: 1.08 },
+  { fam: OV_FONTS.book, wt: 400, it: true, k: 1.1 },
+];
+
 /** Kartenstile für Flug und Strecke */
 const MAP_THEMES = {
   nacht: { label: 'Nacht', dark: true, bg0: '#0d1829', bg1: '#04060a', body0: '#16263e', body1: '#0a1220', limb: 'rgba(159,184,220,0.35)', grid: 'rgba(159,184,220,0.13)', land: 'rgba(186,204,230,0.36)', city: 'rgba(239,230,210,0.34)', ink: '#efe6d2', text: '#efe6d2' },
@@ -9970,6 +10061,7 @@ class OverlayPainter {
         else if (o.type === 'leader') this.drawLeader(ctx, o, t, geo);
         else if (o.type === 'rewind') this.drawRewind(ctx, o, t, geo);
         else if (o.type === 'shutter') this.drawShutter(ctx, o, t, geo);
+        else if (o.type === 'welcome') this.drawWelcome(ctx, o, t, geo);
         else if (o.type === 'reveal') this.drawReveal(ctx, o, t, geo);
         else if (o.type === 'countin') this.drawCountIn(ctx, o, t, geo);
         else if (o.type === 'datestamp') this.drawDateStamp(ctx, o, t, geo);
@@ -9986,11 +10078,11 @@ class OverlayPainter {
 
   /**
    * Kino-Rollladen, zweiter Teil: bis zum Öffnen ganz schwarz (darauf steht der Ortstitel), dann öffnen sich beide
-   * Behänge in fünf Zügen auf den Schlägen nach oben und unten (jeder Zug weich gebremst). Geschlossene Flächen ohne Fugen.
+   * Behänge ruhig und gleichmäßig nach oben und unten, bis zum Einsatz ganz frei. Geschlossene Flächen ohne Fugen.
    */
   drawShutter(ctx, o, t, g) {
     const W = g.W, H = g.H;
-    // in Zügen auf den Schlägen (jeder Zug kurz und weich gebremst), ältere Pläne gleiten durchgehend
+    // ruhig und gleichmäßig vom Öffnen bis zum Einsatz (ältere Pläne mit Zügen auf den Schlägen bleiben, wie sie waren)
     let e;
     if (o.steps && o.steps.length) e = o.steps.reduce((a, ts) => { const x = cl01((t - ts) / Math.max(0.05, o.stepDur || 0.25)); return a + 1 - Math.pow(1 - x, 3); }, 0) / o.steps.length;
     else { const u = cl01((t - o.open) / Math.max(0.1, o.end - o.open)); e = u * u * u * (u * (6 * u - 15) + 10); }
@@ -10016,6 +10108,63 @@ class OverlayPainter {
     ctx.fillRect(0, half - rail, W, rail);
     ctx.fillRect(0, H - half, W, rail);
     ctx.globalAlpha = 1;
+  }
+
+  /**
+   * „Welcome to…“: steht von Anfang an in Schreibschrift über der Mitte; der Ortsname erscheint auf dem Schlag in Gelb
+   * und wechselt an genau den Zeiten die Schrift, an denen das Bild dahinter wechselt; schwarze Balken schließen in
+   * Zügen auf den Schlägen von oben und unten, bis es ganz schwarz ist (der Name in der Mitte bis zuletzt sichtbar).
+   */
+  drawWelcome(ctx, o, t, g) {
+    const W = g.W, H = g.H, cy = H * 0.5;
+    const base = Math.min(W * 0.15, H * 0.085);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+    ctx.shadowBlur = Math.max(4, base * 0.18);
+    // Zeile „Welcome to…“
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `400 ${base * 0.92}px ${WELCOME_SCRIPT}`;
+    ctx.fillText('Welcome to\u2026', W / 2, cy - base * 0.72);
+    // Ortsname: ab dem Schlag, mit kurzem Einblenden; jede Schriftwechsel-Zeit ist zugleich ein Bildwechsel
+    if (o.text && t >= o.nameAt) {
+      let k = 0;
+      for (const ft of o.fonts || []) if (t >= ft - 1e-4) k++;
+      const st = WELCOME_FONTS[k === 0 ? 0 : 1 + ((k - 1) % (WELCOME_FONTS.length - 1))];
+      const txt = st.up ? String(o.text).toUpperCase() : String(o.text);
+      const a = cl01((t - o.nameAt) / 0.3), rise = (1 - (1 - a) * (1 - a)) ;
+      let size = base * 1.3 * (st.k || 1);
+      const font = (sz) => `${st.it ? 'italic ' : ''}${st.wt} ${sz}px ${st.fam}`;
+      ctx.font = font(size);
+      const track = (st.ls || 0) * size;
+      const wid = (ctx.measureText(txt).width + track * Math.max(0, txt.length - 1)) * (st.sx || 1);
+      if (wid > W * 0.86) { size *= (W * 0.86) / wid; ctx.font = font(size); }
+      ctx.globalAlpha = a;
+      ctx.save();
+      ctx.translate(W / 2, cy + size * 0.36 + (1 - rise) * size * 0.25);
+      ctx.scale(st.sx || 1, 1);
+      if ('letterSpacing' in ctx) ctx.letterSpacing = `${(st.ls || 0) * size}px`;
+      ctx.fillStyle = '#ffd60a';
+      ctx.strokeStyle = '#ffd60a';
+      if (st.stroke) { ctx.lineWidth = Math.max(1.5, size * 0.045); ctx.strokeText(txt, 0, 0); } else ctx.fillText(txt, 0, 0);
+      if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+    ctx.shadowColor = 'transparent';
+    // Balken: jeder Zug kurz und weich gebremst, zusammen schließen sie das Bild ganz
+    const P = o.pulls || [];
+    if (P.length) {
+      const e = P.reduce((acc, ts) => { const x = cl01((t - ts) / Math.max(0.05, o.pullDur || 0.25)); return acc + 1 - Math.pow(1 - x, 3); }, 0) / P.length;
+      if (e > 0) {
+        const half = Math.min(H / 2 + 1, (H / 2) * e + (e >= 1 ? 2 : 0));
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, W, Math.ceil(half));
+        ctx.fillRect(0, Math.floor(H - half), W, Math.ceil(half) + 1);
+      }
+    }
   }
 
   /** Bildbereich und Textzonen (berücksichtigt Kinoband und Instagram-Schutzzonen). */
@@ -13859,7 +14008,7 @@ function normalizeSettings(st, defaults) {
     format: FORMATS[s.format] ? s.format : '9:16',
     look: s.look === 'auto' || LOOKS[s.look] ? s.look : 'auto',
     pace: pick1(s.pace, ['auto', 'ruhig', 'mittel', 'schnell'], 'auto'),
-    intro: pick1(s.intro, ['auto', 'shutter', 'rush', 'reveal', 'countdown', 'grid', 'knockout', 'cinema', 'city', 'hook', 'type', 'split'], 'auto'),
+    intro: pick1(s.intro, ['auto', 'welcome', 'shutter', 'rush', 'reveal', 'countdown', 'grid', 'knockout', 'cinema', 'city', 'hook', 'type', 'split'], 'auto'),
     outro: pick1(s.outro, ['auto', 'credits', 'loop', 'freeze', 'split', 'strip'], 'auto'),
     pre: pick1(s.pre, ['off', 'countdown', 'rewind'], 'off'),
     target: pick1(s.target, ['story', 'reel'], 'story'),
@@ -13926,7 +14075,7 @@ function baseSettings(defaults) {
 }
 function styleSummary(st) {
   const names = { snap: 'Impact-Zoom', sway: 'Pendeln', pulse: 'Puls', float: 'Schweben', tilt: 'Neigen', handheld: 'Handkamera' };
-  const intros = { shutter: 'Kino-Rollladen', rush: 'Bilderflut', reveal: 'Aufblende', countdown: 'Countdown', grid: '9er-Raster', knockout: 'Durch den Namen', cinema: 'Titelkarte', city: 'Ortsname', hook: 'Stärkstes Bild', type: 'Wort für Wort', split: 'Split-Screen' };
+  const intros = { welcome: 'Welcome to…', shutter: 'Kino-Rollladen', rush: 'Bilderflut', reveal: 'Aufblende', countdown: 'Countdown', grid: '9er-Raster', knockout: 'Durch den Namen', cinema: 'Titelkarte', city: 'Ortsname', hook: 'Stärkstes Bild', type: 'Wort für Wort', split: 'Split-Screen' };
   return [st.look === 'auto' ? 'Look automatisch' : `Look ${LOOKS[st.look].label}`, `Schrift ${FONT_SETS[st.font].label}`, names[st.motion], st.pre !== 'off' ? (st.pre === 'rewind' ? 'Rewind' : 'Countdown') + ' +' : '', intros[st.intro], st.morph === 'on' ? 'Bild aus Bild' : '', st.burst === 'drop' ? 'Foto-Serie' : '', st.ramp === 'drop' ? 'Speed-Ramp' : '', st.km !== 'off' ? 'Koordinaten' : ''].filter(Boolean).join(' · ');
 }
 
@@ -14244,13 +14393,17 @@ function openWishSheet(mode = 'cut', menge) {
   const ctx = S.ctx;
   if (!ctx || !ctx.song) return;
   const st = ctx.rec.settings, an = ctx.song.an;
-  const w0 = { variant: st.variant, effekte: st.effekte, order: st.order || 'lied', bw: wishBW(st), quer: st.quer, length: st.length === 'full' ? 'full' : 'auto', allMedia: st.allMedia };
+  const w0 = { intro: st.intro === 'welcome' || st.intro === 'shutter' ? st.intro : 'auto', variant: st.variant, effekte: st.effekte, order: st.order || 'lied', bw: wishBW(st), quer: st.quer, length: st.length === 'full' ? 'full' : 'auto', allMedia: st.allMedia };
   const w = { ...w0 };
   const land = ctx.media.filter(isQuer).length;
   const story = st.format === '9:16' && st.target !== 'reel';
   const adv = songAdvice(an, st);
   const songLen = Math.max(0, Math.min(an.duration, an.lastSound + 0.2) - Math.max(0, an.firstSound));
   const Q = [
+    isFlight(ctx.rec) ? null : ['intro', 'Wie soll der Film beginnen?', [['auto', 'Automatisch'], ['welcome', 'Welcome to…'], ['shutter', 'Kino-Vorhang']], {
+      auto: 'Die Regie wählt einen schlichten Einstieg passend zum Lied.',
+      welcome: '„Welcome to…“ in Schreibschrift über passenden Ausschnitten, die immer ruhiger werden; der Ortsname in Gelb wechselt mit jedem Bild die Schrift, dann schließen schwarze Balken im Takt und auf dem Einsatz geht es mit einem Video los.',
+      shutter: 'Sechs Ausschnitte im Kinoband, der Vorhang schließt im Takt, der Ortsname auf Schwarz, dann öffnet sich der Vorhang ruhig und die Bilder laufen nacheinander bis zum Einsatz.' }],
     ['variant', 'Wie soll der Film wirken?', [['ruhig', 'Ruhig'], ['ausgewogen', 'Ausgewogen'], ['energisch', 'Energisch']], {
       ruhig: 'Lange Bilder, weiche Übergänge. Schnell wird es nur, wo der Song antreibt.',
       ausgewogen: 'Das Tempo folgt dem Song: ruhig im Aufbau, schnelle Phasen im Refrain und Drop.',
@@ -14296,7 +14449,7 @@ function openWishSheet(mode = 'cut', menge) {
     if (!e.target.closest('#wishGo')) return;
     closeSheet();
     // nur Geändertes übernehmen: eigene Feineinstellungen (z. B. eine feste Länge in Sekunden) bleiben sonst stehen
-    for (const k of ['variant', 'effekte', 'order', 'quer', 'allMedia', 'length']) if (w[k] !== w0[k]) st[k] = w[k];
+    for (const k of ['intro', 'variant', 'effekte', 'order', 'quer', 'allMedia', 'length']) if (w[k] !== w0[k]) st[k] = w[k];
     if (w.bw !== w0.bw) {
       if (w.bw === 'ganz') { st.look = 'noir'; st.color = 'off'; }
       else {
@@ -16867,8 +17020,8 @@ function renderStyle() {
   setRadio($('preChips'), st.pre);
   $('preField').hidden = isFlight(S.ctx.rec);
   const introR = st.intro === 'auto' && r ? r.intro : st.intro;
-  for (const b of $('preChips').querySelectorAll('[data-v]')) b.disabled = (b.dataset.v !== 'off' && (introR === 'split' || introR === 'shutter')) || (b.dataset.v === 'countdown' && introR === 'countdown');
-  $('preHint').textContent = introR === 'shutter' ? 'Der Kino-Rollladen bringt seinen eigenen Vorspann mit: sechs Hochkant-Aufnahmen, drei Züge am Rollladen, dann öffnet sich das Bild zum Song-Einsatz.' : introR === 'split' ? 'Der Split-Screen-Einstieg steht für sich, ohne Vorspann.' : st.pre === 'rewind' ? 'Ein kurzer Blick auf den besten Moment, dann spult der Film wie eine Kassette zurück an den Anfang.' : st.pre === 'countdown' ? 'Countdown wie im alten Kino, danach dein Einstieg.' : 'Läuft vor dem Einstieg und lässt sich mit jedem Einstieg kombinieren, z. B. Countdown und danach das 9er-Raster.';
+  for (const b of $('preChips').querySelectorAll('[data-v]')) b.disabled = (b.dataset.v !== 'off' && (introR === 'split' || introR === 'shutter' || introR === 'welcome')) || (b.dataset.v === 'countdown' && introR === 'countdown');
+  $('preHint').textContent = introR === 'welcome' ? '„Welcome to…“ bringt seinen eigenen Aufbau mit: sechs Takte bis zum Einsatz.' : introR === 'shutter' ? 'Der Kino-Rollladen bringt seinen eigenen Vorspann mit: sechs Hochkant-Aufnahmen, drei Züge am Rollladen, dann öffnet sich das Bild zum Song-Einsatz.' : introR === 'split' ? 'Der Split-Screen-Einstieg steht für sich, ohne Vorspann.' : st.pre === 'rewind' ? 'Ein kurzer Blick auf den besten Moment, dann spult der Film wie eine Kassette zurück an den Anfang.' : st.pre === 'countdown' ? 'Countdown wie im alten Kino, danach dein Einstieg.' : 'Läuft vor dem Einstieg und lässt sich mit jedem Einstieg kombinieren, z. B. Countdown und danach das 9er-Raster.';
   renderFx(st, r);
   const mt = $('mapThemeChips');
   if (!mt.children.length) mt.innerHTML = Object.entries(MAP_THEMES).map(([k, th]) => `<button type="button" role="radio" data-v="${k}"><i class="map-sw" style="background:radial-gradient(circle at 35% 35%, ${th.body0}, ${th.bg1});box-shadow:inset 0 0 0 2px ${th.ink}"></i>${th.label}</button>`).join('');
@@ -16891,7 +17044,7 @@ function renderStyle() {
     const b = $(group).querySelector('[data-v="auto"]');
     if (b) b.textContent = st[val] === 'auto' && r && names[r[val]] ? `Auto · ${names[r[val]]}` : 'Auto';
   };
-  autoLabel('introChips', 'intro', { shutter: 'Kino-Rollladen', rush: 'Bilderflut', reveal: 'Aufblende', countdown: 'Countdown', grid: '9er-Raster', knockout: 'Durch den Namen', cinema: 'Titelkarte', city: 'Ortsname', hook: 'Stärkstes Bild', type: 'Wort für Wort', split: 'Split' });
+  autoLabel('introChips', 'intro', { welcome: 'Welcome to…', shutter: 'Kino-Rollladen', rush: 'Bilderflut', reveal: 'Aufblende', countdown: 'Countdown', grid: '9er-Raster', knockout: 'Durch den Namen', cinema: 'Titelkarte', city: 'Ortsname', hook: 'Stärkstes Bild', type: 'Wort für Wort', split: 'Split' });
   autoLabel('outroChips', 'outro', { credits: 'Schlusstitel', loop: 'Loop', freeze: 'Standbild', split: 'Split', strip: 'Filmstreifen' });
   autoLabel('frameChips', 'frame', { full: 'Vollbild', band: 'Kinoband' });
   autoLabel('paceChips', 'pace', { ruhig: 'ruhig', mittel: 'mittel', schnell: 'schnell' });

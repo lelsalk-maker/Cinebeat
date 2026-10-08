@@ -13,6 +13,25 @@ const OV_FONTS = {
   typewriter: '"American Typewriter", "Courier New", Courier, monospace',
 };
 
+/**
+ * „Welcome to…“: Schreibschrift für die Zeile darüber und zehn deutlich verschiedene Schriften für den Ortsnamen
+ * (unterscheiden sich auch in Stärke, Groß/Klein, Laufweite, Breite und Kontur – so bleiben sie verschieden,
+ * selbst wenn ein Gerät eine Schrift nicht hat).
+ */
+const WELCOME_SCRIPT = '"Snell Roundhand", "Savoye LET", "Apple Chancery", "Brush Script MT", "Segoe Script", cursive';
+const WELCOME_FONTS = [
+  { fam: OV_FONTS.serif, wt: 400 },
+  { fam: OV_FONTS.geo, wt: 700, up: true, ls: 0.14 },
+  { fam: WELCOME_SCRIPT, wt: 400, k: 1.25 },
+  { fam: OV_FONTS.typewriter, wt: 400, ls: 0.04 },
+  { fam: '"Impact", "Haettenschweiler", "Arial Black", "Avenir Next Condensed", sans-serif', wt: 900, up: true, sx: 0.9 },
+  { fam: '"Marker Felt", "Chalkboard SE", "Comic Sans MS", cursive', wt: 400 },
+  { fam: '"Copperplate", "Copperplate Gothic Light", "Trajan Pro", Georgia, serif', wt: 400, up: true, ls: 0.1 },
+  { fam: OV_FONTS.sans, wt: 800, up: true, stroke: true, ls: 0.04 },
+  { fam: '"Rockwell", "Courier New", "American Typewriter", serif', wt: 700, sx: 1.08 },
+  { fam: OV_FONTS.book, wt: 400, it: true, k: 1.1 },
+];
+
 /** Kartenstile für Flug und Strecke */
 const MAP_THEMES = {
   nacht: { label: 'Nacht', dark: true, bg0: '#0d1829', bg1: '#04060a', body0: '#16263e', body1: '#0a1220', limb: 'rgba(159,184,220,0.35)', grid: 'rgba(159,184,220,0.13)', land: 'rgba(186,204,230,0.36)', city: 'rgba(239,230,210,0.34)', ink: '#efe6d2', text: '#efe6d2' },
@@ -244,6 +263,7 @@ class OverlayPainter {
         else if (o.type === 'leader') this.drawLeader(ctx, o, t, geo);
         else if (o.type === 'rewind') this.drawRewind(ctx, o, t, geo);
         else if (o.type === 'shutter') this.drawShutter(ctx, o, t, geo);
+        else if (o.type === 'welcome') this.drawWelcome(ctx, o, t, geo);
         else if (o.type === 'reveal') this.drawReveal(ctx, o, t, geo);
         else if (o.type === 'countin') this.drawCountIn(ctx, o, t, geo);
         else if (o.type === 'datestamp') this.drawDateStamp(ctx, o, t, geo);
@@ -260,11 +280,11 @@ class OverlayPainter {
 
   /**
    * Kino-Rollladen, zweiter Teil: bis zum Öffnen ganz schwarz (darauf steht der Ortstitel), dann öffnen sich beide
-   * Behänge in fünf Zügen auf den Schlägen nach oben und unten (jeder Zug weich gebremst). Geschlossene Flächen ohne Fugen.
+   * Behänge ruhig und gleichmäßig nach oben und unten, bis zum Einsatz ganz frei. Geschlossene Flächen ohne Fugen.
    */
   drawShutter(ctx, o, t, g) {
     const W = g.W, H = g.H;
-    // in Zügen auf den Schlägen (jeder Zug kurz und weich gebremst), ältere Pläne gleiten durchgehend
+    // ruhig und gleichmäßig vom Öffnen bis zum Einsatz (ältere Pläne mit Zügen auf den Schlägen bleiben, wie sie waren)
     let e;
     if (o.steps && o.steps.length) e = o.steps.reduce((a, ts) => { const x = cl01((t - ts) / Math.max(0.05, o.stepDur || 0.25)); return a + 1 - Math.pow(1 - x, 3); }, 0) / o.steps.length;
     else { const u = cl01((t - o.open) / Math.max(0.1, o.end - o.open)); e = u * u * u * (u * (6 * u - 15) + 10); }
@@ -290,6 +310,63 @@ class OverlayPainter {
     ctx.fillRect(0, half - rail, W, rail);
     ctx.fillRect(0, H - half, W, rail);
     ctx.globalAlpha = 1;
+  }
+
+  /**
+   * „Welcome to…“: steht von Anfang an in Schreibschrift über der Mitte; der Ortsname erscheint auf dem Schlag in Gelb
+   * und wechselt an genau den Zeiten die Schrift, an denen das Bild dahinter wechselt; schwarze Balken schließen in
+   * Zügen auf den Schlägen von oben und unten, bis es ganz schwarz ist (der Name in der Mitte bis zuletzt sichtbar).
+   */
+  drawWelcome(ctx, o, t, g) {
+    const W = g.W, H = g.H, cy = H * 0.5;
+    const base = Math.min(W * 0.15, H * 0.085);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+    ctx.shadowBlur = Math.max(4, base * 0.18);
+    // Zeile „Welcome to…“
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `400 ${base * 0.92}px ${WELCOME_SCRIPT}`;
+    ctx.fillText('Welcome to\u2026', W / 2, cy - base * 0.72);
+    // Ortsname: ab dem Schlag, mit kurzem Einblenden; jede Schriftwechsel-Zeit ist zugleich ein Bildwechsel
+    if (o.text && t >= o.nameAt) {
+      let k = 0;
+      for (const ft of o.fonts || []) if (t >= ft - 1e-4) k++;
+      const st = WELCOME_FONTS[k === 0 ? 0 : 1 + ((k - 1) % (WELCOME_FONTS.length - 1))];
+      const txt = st.up ? String(o.text).toUpperCase() : String(o.text);
+      const a = cl01((t - o.nameAt) / 0.3), rise = (1 - (1 - a) * (1 - a)) ;
+      let size = base * 1.3 * (st.k || 1);
+      const font = (sz) => `${st.it ? 'italic ' : ''}${st.wt} ${sz}px ${st.fam}`;
+      ctx.font = font(size);
+      const track = (st.ls || 0) * size;
+      const wid = (ctx.measureText(txt).width + track * Math.max(0, txt.length - 1)) * (st.sx || 1);
+      if (wid > W * 0.86) { size *= (W * 0.86) / wid; ctx.font = font(size); }
+      ctx.globalAlpha = a;
+      ctx.save();
+      ctx.translate(W / 2, cy + size * 0.36 + (1 - rise) * size * 0.25);
+      ctx.scale(st.sx || 1, 1);
+      if ('letterSpacing' in ctx) ctx.letterSpacing = `${(st.ls || 0) * size}px`;
+      ctx.fillStyle = '#ffd60a';
+      ctx.strokeStyle = '#ffd60a';
+      if (st.stroke) { ctx.lineWidth = Math.max(1.5, size * 0.045); ctx.strokeText(txt, 0, 0); } else ctx.fillText(txt, 0, 0);
+      if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+    ctx.shadowColor = 'transparent';
+    // Balken: jeder Zug kurz und weich gebremst, zusammen schließen sie das Bild ganz
+    const P = o.pulls || [];
+    if (P.length) {
+      const e = P.reduce((acc, ts) => { const x = cl01((t - ts) / Math.max(0.05, o.pullDur || 0.25)); return acc + 1 - Math.pow(1 - x, 3); }, 0) / P.length;
+      if (e > 0) {
+        const half = Math.min(H / 2 + 1, (H / 2) * e + (e >= 1 ? 2 : 0));
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, W, Math.ceil(half));
+        ctx.fillRect(0, Math.floor(H - half), W, Math.ceil(half) + 1);
+      }
+    }
   }
 
   /** Bildbereich und Textzonen (berücksichtigt Kinoband und Instagram-Schutzzonen). */

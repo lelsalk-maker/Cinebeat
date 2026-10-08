@@ -120,6 +120,7 @@ function suggestBeats(st = {}) {
   if (st.mv === 'on') { add('drift', 1.5, 'Musikvideo-Stil'); add('bounce', 1, 'Musikvideo-Stil'); }
   if (st.target === 'reel' || (st.format === '9:16' && st.target !== 'story')) { add('bounce', 0.9, 'Reel-Trend'); add('skyline', 0.6, 'Reel-Trend'); add('drift', 0.5, 'Reel-Trend'); }
   if (st.intro === 'shutter' || st.intro === 'cinema') add('gipfel', 1.5, 'Kino-Einstieg');
+  if (st.intro === 'welcome') { add('sommer', 1.2, 'leicht für „Welcome to…“'); add('roadtrip', 1.2, 'leicht für „Welcome to…“'); }
   if (st.target === 'story') { add('bounce', 0.5, 'Story-Trend'); add('glow', 0.5, 'knackig für Storys'); add('sommer', 0.5, 'leicht für Storys'); add('stadt', 0.5, 'treibt die Story an'); }
   const order = Object.keys(BEAT_STYLES).sort((a, b) => score[b] - score[a]);
   return order.map((k) => ({ id: k, why: why[k] || BEAT_STYLES[k].genre }));
@@ -133,7 +134,7 @@ function beatRecipe(styleId, st = {}, o = {}) {
   const bpm = Math.round(tempo === 'ruhig' ? lo + (def - lo) * 0.3 : tempo === 'schnell' ? def + (hi - def) * 0.8 : def);
   const form = o.form || (st.target === 'story' || (st.format === '9:16' && st.target !== 'reel' && st.length !== 'auto' && +st.length <= 30) ? 'story' : st.format === '16:9' ? 'film' : 'reel');
   // Kino-Rollladen: der Drop kommt nach 20 Zählzeiten (fünf Takte), sonst nach vier Takten Aufbau
-  const pre = st.intro === 'shutter' ? Math.ceil((SHUTTER.end * (60 / bpm < 0.36 ? 2 : 1)) / 4) : 4;
+  const pre = st.intro === 'shutter' || st.intro === 'welcome' ? Math.ceil(((st.intro === 'welcome' ? WELCOME.end : SHUTTER.end) * (60 / bpm < 0.36 ? 2 : 1)) / 4) : 4;
   // Energie: aus der Variante (ruhig = Chill, energisch = Hype), sonst Vibe
   const energy = o.energy in BEAT_ENERGY ? o.energy : st.variant === 'ruhig' ? 'chill' : st.variant === 'energisch' ? 'hype' : 'vibe';
   return { v: 2, style: styleId in BEAT_STYLES ? styleId : 'sommer', bpm, root: S.root + (o.shift || 0), seed: (o.seed >>> 0) || 1, form, pre, tempo, energy };

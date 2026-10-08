@@ -88,6 +88,20 @@ function bandRect(format, frame) {
  * Einsatz (20 = Refrain/Drop, fünf Takte nach dem ersten Bild).
  */
 const SHUTTER = { tiles: [0, 0.5, 1, 1.5, 2, 2.5], colors: [3, 3.5, 4, 4.5, 5, 5.5], pulls: [6, 7, 8], black: 9, open: 15, end: 20 };
+/**
+ * Einstieg „Welcome to…“ (Zählzeiten wie beim Kino-Rollladen, alles auf den Schlägen des Songs, der unverändert läuft):
+ * „Welcome to…“ steht von Anfang an in Schreibschrift; dahinter zehn ähnliche Ausschnitte mit leichter Bewegung, erst
+ * zügig, dann allmählich langsamer (0 … 13); das letzte Video bleibt und läuft weiter (13), darunter erscheint der
+ * Ortsname in Gelb (14); dann wechselt er durch zehn ganz verschiedene Schriften – schnell, langsamer, wieder schnell –,
+ * und mit jedem Schriftwechsel wechselt im selben Augenblick das Bild dahinter (16 … 23,5); ab 21 fahren schwarze Balken
+ * von oben und unten in Zügen auf den Schlägen zu, bis es ganz schwarz ist; auf dem Einsatz (24 = Refrain/Drop,
+ * sechs Takte nach dem ersten Bild) geht es mit einem Video in den Film.
+ */
+const WELCOME = {
+  clips: [0, 1, 2, 3, 4, 5, 6, 7.5, 9, 11], last: 13, name: 14,
+  fonts: [16, 16.5, 17, 17.5, 18.5, 20, 21, 21.5, 22, 22.5, 23, 23.5], pulls: [21, 22, 23, 23.5], end: 24,
+};
+
 function shutterStep(an) {
   return an.beatPeriod < 0.36 ? 2 : 1;
 }

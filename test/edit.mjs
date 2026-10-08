@@ -113,8 +113,9 @@ const wav = readFileSync(`${OUT}/Song.wav`).toString('base64');
       const grid = []; const bt = Array.from(an.beats).map((x) => x - P.win.start);
       for (let i = 0; i + 1 < bt.length; i++) grid.push(bt[i], (bt[i] + bt[i + 1]) / 2);
       const on = (t) => grid.some((x) => Math.abs(x - t) < 0.005);
-      if (!sh || !sh.steps || sh.steps.length !== 5) f.push('Vorhang: öffnet nicht in Zügen');
-      else if (sh.steps.some((t) => !on(t))) f.push('Vorhang: Zug neben dem Schlag ' + sh.steps.map((t) => t.toFixed(3)).join(','));
+      // (der Vorhang öffnet sich ruhig und gleichmäßig: Beginn und Ende auf den Schlägen)
+      if (!sh || !sh.glide) f.push('Vorhang: öffnet nicht gleichmäßig');
+      else if (!on(sh.open) || !on(sh.end - 0.02)) f.push('Vorhang: Öffnen nicht auf den Schlägen ' + [sh.open, sh.end].map((t) => t.toFixed(3)).join(','));
       const rc = P.clips.filter((c) => c.rush && c.start >= sh.open - 0.01);
       if (rc.some((c) => !on(c.start))) f.push('Vorhang: Bildwechsel nach dem Schwarz neben dem Schlag ' + rc.filter((c) => !on(c.start)).map((c) => c.start.toFixed(3)).join(','));
     }

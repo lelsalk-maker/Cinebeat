@@ -32,7 +32,7 @@ function normalizeSettings(st, defaults) {
     format: FORMATS[s.format] ? s.format : '9:16',
     look: s.look === 'auto' || LOOKS[s.look] ? s.look : 'auto',
     pace: pick1(s.pace, ['auto', 'ruhig', 'mittel', 'schnell'], 'auto'),
-    intro: pick1(s.intro, ['auto', 'shutter', 'rush', 'reveal', 'countdown', 'grid', 'knockout', 'cinema', 'city', 'hook', 'type', 'split'], 'auto'),
+    intro: pick1(s.intro, ['auto', 'welcome', 'shutter', 'rush', 'reveal', 'countdown', 'grid', 'knockout', 'cinema', 'city', 'hook', 'type', 'split'], 'auto'),
     outro: pick1(s.outro, ['auto', 'credits', 'loop', 'freeze', 'split', 'strip'], 'auto'),
     pre: pick1(s.pre, ['off', 'countdown', 'rewind'], 'off'),
     target: pick1(s.target, ['story', 'reel'], 'story'),
@@ -99,7 +99,7 @@ function baseSettings(defaults) {
 }
 function styleSummary(st) {
   const names = { snap: 'Impact-Zoom', sway: 'Pendeln', pulse: 'Puls', float: 'Schweben', tilt: 'Neigen', handheld: 'Handkamera' };
-  const intros = { shutter: 'Kino-Rollladen', rush: 'Bilderflut', reveal: 'Aufblende', countdown: 'Countdown', grid: '9er-Raster', knockout: 'Durch den Namen', cinema: 'Titelkarte', city: 'Ortsname', hook: 'Stärkstes Bild', type: 'Wort für Wort', split: 'Split-Screen' };
+  const intros = { welcome: 'Welcome to…', shutter: 'Kino-Rollladen', rush: 'Bilderflut', reveal: 'Aufblende', countdown: 'Countdown', grid: '9er-Raster', knockout: 'Durch den Namen', cinema: 'Titelkarte', city: 'Ortsname', hook: 'Stärkstes Bild', type: 'Wort für Wort', split: 'Split-Screen' };
   return [st.look === 'auto' ? 'Look automatisch' : `Look ${LOOKS[st.look].label}`, `Schrift ${FONT_SETS[st.font].label}`, names[st.motion], st.pre !== 'off' ? (st.pre === 'rewind' ? 'Rewind' : 'Countdown') + ' +' : '', intros[st.intro], st.morph === 'on' ? 'Bild aus Bild' : '', st.burst === 'drop' ? 'Foto-Serie' : '', st.ramp === 'drop' ? 'Speed-Ramp' : '', st.km !== 'off' ? 'Koordinaten' : ''].filter(Boolean).join(' · ');
 }
 
@@ -417,13 +417,17 @@ function openWishSheet(mode = 'cut', menge) {
   const ctx = S.ctx;
   if (!ctx || !ctx.song) return;
   const st = ctx.rec.settings, an = ctx.song.an;
-  const w0 = { variant: st.variant, effekte: st.effekte, order: st.order || 'lied', bw: wishBW(st), quer: st.quer, length: st.length === 'full' ? 'full' : 'auto', allMedia: st.allMedia };
+  const w0 = { intro: st.intro === 'welcome' || st.intro === 'shutter' ? st.intro : 'auto', variant: st.variant, effekte: st.effekte, order: st.order || 'lied', bw: wishBW(st), quer: st.quer, length: st.length === 'full' ? 'full' : 'auto', allMedia: st.allMedia };
   const w = { ...w0 };
   const land = ctx.media.filter(isQuer).length;
   const story = st.format === '9:16' && st.target !== 'reel';
   const adv = songAdvice(an, st);
   const songLen = Math.max(0, Math.min(an.duration, an.lastSound + 0.2) - Math.max(0, an.firstSound));
   const Q = [
+    isFlight(ctx.rec) ? null : ['intro', 'Wie soll der Film beginnen?', [['auto', 'Automatisch'], ['welcome', 'Welcome to…'], ['shutter', 'Kino-Vorhang']], {
+      auto: 'Die Regie wählt einen schlichten Einstieg passend zum Lied.',
+      welcome: '„Welcome to…“ in Schreibschrift über passenden Ausschnitten, die immer ruhiger werden; der Ortsname in Gelb wechselt mit jedem Bild die Schrift, dann schließen schwarze Balken im Takt und auf dem Einsatz geht es mit einem Video los.',
+      shutter: 'Sechs Ausschnitte im Kinoband, der Vorhang schließt im Takt, der Ortsname auf Schwarz, dann öffnet sich der Vorhang ruhig und die Bilder laufen nacheinander bis zum Einsatz.' }],
     ['variant', 'Wie soll der Film wirken?', [['ruhig', 'Ruhig'], ['ausgewogen', 'Ausgewogen'], ['energisch', 'Energisch']], {
       ruhig: 'Lange Bilder, weiche Übergänge. Schnell wird es nur, wo der Song antreibt.',
       ausgewogen: 'Das Tempo folgt dem Song: ruhig im Aufbau, schnelle Phasen im Refrain und Drop.',
@@ -469,7 +473,7 @@ function openWishSheet(mode = 'cut', menge) {
     if (!e.target.closest('#wishGo')) return;
     closeSheet();
     // nur Geändertes übernehmen: eigene Feineinstellungen (z. B. eine feste Länge in Sekunden) bleiben sonst stehen
-    for (const k of ['variant', 'effekte', 'order', 'quer', 'allMedia', 'length']) if (w[k] !== w0[k]) st[k] = w[k];
+    for (const k of ['intro', 'variant', 'effekte', 'order', 'quer', 'allMedia', 'length']) if (w[k] !== w0[k]) st[k] = w[k];
     if (w.bw !== w0.bw) {
       if (w.bw === 'ganz') { st.look = 'noir'; st.color = 'off'; }
       else {
@@ -3040,8 +3044,8 @@ function renderStyle() {
   setRadio($('preChips'), st.pre);
   $('preField').hidden = isFlight(S.ctx.rec);
   const introR = st.intro === 'auto' && r ? r.intro : st.intro;
-  for (const b of $('preChips').querySelectorAll('[data-v]')) b.disabled = (b.dataset.v !== 'off' && (introR === 'split' || introR === 'shutter')) || (b.dataset.v === 'countdown' && introR === 'countdown');
-  $('preHint').textContent = introR === 'shutter' ? 'Der Kino-Rollladen bringt seinen eigenen Vorspann mit: sechs Hochkant-Aufnahmen, drei Züge am Rollladen, dann öffnet sich das Bild zum Song-Einsatz.' : introR === 'split' ? 'Der Split-Screen-Einstieg steht für sich, ohne Vorspann.' : st.pre === 'rewind' ? 'Ein kurzer Blick auf den besten Moment, dann spult der Film wie eine Kassette zurück an den Anfang.' : st.pre === 'countdown' ? 'Countdown wie im alten Kino, danach dein Einstieg.' : 'Läuft vor dem Einstieg und lässt sich mit jedem Einstieg kombinieren, z. B. Countdown und danach das 9er-Raster.';
+  for (const b of $('preChips').querySelectorAll('[data-v]')) b.disabled = (b.dataset.v !== 'off' && (introR === 'split' || introR === 'shutter' || introR === 'welcome')) || (b.dataset.v === 'countdown' && introR === 'countdown');
+  $('preHint').textContent = introR === 'welcome' ? '„Welcome to…“ bringt seinen eigenen Aufbau mit: sechs Takte bis zum Einsatz.' : introR === 'shutter' ? 'Der Kino-Rollladen bringt seinen eigenen Vorspann mit: sechs Hochkant-Aufnahmen, drei Züge am Rollladen, dann öffnet sich das Bild zum Song-Einsatz.' : introR === 'split' ? 'Der Split-Screen-Einstieg steht für sich, ohne Vorspann.' : st.pre === 'rewind' ? 'Ein kurzer Blick auf den besten Moment, dann spult der Film wie eine Kassette zurück an den Anfang.' : st.pre === 'countdown' ? 'Countdown wie im alten Kino, danach dein Einstieg.' : 'Läuft vor dem Einstieg und lässt sich mit jedem Einstieg kombinieren, z. B. Countdown und danach das 9er-Raster.';
   renderFx(st, r);
   const mt = $('mapThemeChips');
   if (!mt.children.length) mt.innerHTML = Object.entries(MAP_THEMES).map(([k, th]) => `<button type="button" role="radio" data-v="${k}"><i class="map-sw" style="background:radial-gradient(circle at 35% 35%, ${th.body0}, ${th.bg1});box-shadow:inset 0 0 0 2px ${th.ink}"></i>${th.label}</button>`).join('');
@@ -3064,7 +3068,7 @@ function renderStyle() {
     const b = $(group).querySelector('[data-v="auto"]');
     if (b) b.textContent = st[val] === 'auto' && r && names[r[val]] ? `Auto · ${names[r[val]]}` : 'Auto';
   };
-  autoLabel('introChips', 'intro', { shutter: 'Kino-Rollladen', rush: 'Bilderflut', reveal: 'Aufblende', countdown: 'Countdown', grid: '9er-Raster', knockout: 'Durch den Namen', cinema: 'Titelkarte', city: 'Ortsname', hook: 'Stärkstes Bild', type: 'Wort für Wort', split: 'Split' });
+  autoLabel('introChips', 'intro', { welcome: 'Welcome to…', shutter: 'Kino-Rollladen', rush: 'Bilderflut', reveal: 'Aufblende', countdown: 'Countdown', grid: '9er-Raster', knockout: 'Durch den Namen', cinema: 'Titelkarte', city: 'Ortsname', hook: 'Stärkstes Bild', type: 'Wort für Wort', split: 'Split' });
   autoLabel('outroChips', 'outro', { credits: 'Schlusstitel', loop: 'Loop', freeze: 'Standbild', split: 'Split', strip: 'Filmstreifen' });
   autoLabel('frameChips', 'frame', { full: 'Vollbild', band: 'Kinoband' });
   autoLabel('paceChips', 'pace', { ruhig: 'ruhig', mittel: 'mittel', schnell: 'schnell' });
