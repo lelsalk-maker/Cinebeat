@@ -44,10 +44,13 @@ function layoutChrono(ctx, segs0, queue, bias) {
   // Zeitbedarf der Fotos nach fester Richtlänge (nicht nach der aktuellen Schnittlänge – sonst würden Videos
   // jede gewonnene Sekunde wieder aufessen)
   const imgShot = level >= 3 ? Math.max(0.5, beatDur) : level >= 2 ? Math.max(0.55, fr.shotMin * 0.55) : level >= 1 ? fr.shotMin * 0.75 : fr.shotMin;
-  const imgNeedT = Math.max(0, nImg - specialCap) * (allOn ? imgShot * 0.9 : avgLen * 0.4);
+  // (die Plätze sind so lang, wie der Song sie vorgibt – in ruhigen Teilen mindestens zwei Schläge: dichter als die
+  // mittlere Platzlänge wird es für Fotos nur über Split-Screens und Serien, die eigens gezählt sind)
+  const imgNeedT = Math.max(0, nImg - specialCap) * (allOn ? Math.max(imgShot, avgLen) * 0.9 : avgLen * 0.4);
   const vBudget = Math.max(vids.reduce((a, v) => a + minW(v), 0) * (allOn ? 0.6 : 1), normTime - imgNeedT, normTime * (allOn ? 0.15 : 0.6));
   const shrink = vWant > 0 ? Math.min(1, vBudget / vWant) : 1;
-  const want = (v) => userVideoLen(v) || Math.max(minW(v), videoPlay(v, fr.vmax) * shrink);
+  // (vf < 1: die Suche kürzt die Videos, weil sonst Fotos fehlen würden – nie unter ihre Mindestzeit)
+  const want = (v) => userVideoLen(v) || Math.max(minW(v), videoPlay(v, fr.vmax) * shrink * (ctx.vf || 1));
   // gemeinsam laufende Videos (2–3 im Split-Screen), wenn die Zeit knapp ist
   const vSplitOK = s.split !== 'off' && (shrink < 0.8 || level >= 2);
   let sinceSplit = 9;
@@ -63,6 +66,7 @@ function layoutChrono(ctx, segs0, queue, bias) {
     return img - Math.max(0, nN - vT / Math.max(0.3, avg)) - cap + bias;
   };
   let repeatPtr = 0;
+  const lied = (s.order || 'lied') === 'lied', deferN = new Map();
   const repeatImg = () => {
     const imgs = queue.filter((m) => m.kind === 'image');
     if (!imgs.length) return null;
@@ -77,6 +81,17 @@ function layoutChrono(ctx, segs0, queue, bias) {
     }
     if (i < hookIdx && !(intro === 'split' && i === 0)) continue;
     if (skipSeg(g) || g.replaySeg || g.knock || g.flash) continue;
+    // „Zum Lied“: ein Video wartet auf seine Stelle – ein ruhiges nicht im Drop, ein bewegtes nicht in der Strophe, wenn die
+    // passende Stelle bald kommt (höchstens eine Phrase, sechs Fotos); dafür ziehen die nächsten Fotos vor. Zwei Videos
+    // stehen nicht direkt hintereinander, wenn ein Foto dazwischen passt. (Nie bei verschobenen Aufnahmen oder fester Länge.)
+    if (lied && i > hookIdx && normal(g) && !g.tap && q[qi] && q[qi].kind === 'video' && q[qi + 1] && q[qi + 1].kind === 'image' && !pinned.has(q[qi].id) && !pinned.has(q[qi + 1].id) && !userVideoLen(q[qi])) {
+      const v = q[qi], lv = videoLively(v), n = deferN.get(v.id) || 0;
+      const misfit = (t) => (isCalmLabel(sectionAt(an, win.start + t + 0.01).label) ? lv > 0.65 : lv < 0.35);
+      let defer = false;
+      if (n < 6 && misfit(g.start)) for (let k = i + 1; k < sg.length && sg[k].start - g.start <= barDur * 4.05; k++) if (!misfit(sg[k].start)) { defer = true; break; }
+      if (!defer && n < 1 && sg[i - 1] && sg[i - 1].vslot) defer = true;
+      if (defer) { q[qi] = q[qi + 1]; q[qi + 1] = v; deferN.set(v.id, n + 1); }
+    }
     const head = q[qi];
     // ist ein Video an der Reihe, wird die Foto-Serie/der Stapel/das Raster hier zu seinem Platz (Reihenfolge bleibt)
     const videoNext = head && head.kind === 'video';
@@ -132,7 +147,7 @@ function layoutChrono(ctx, segs0, queue, bias) {
       const room = (x < sg.length ? sg[x].start : sg[sg.length - 1].end) - g.start;
       // (nach Tageszeit geordnet genügt derselbe Tagesblock, streng nach Uhrzeit derselbe Moment; folgen weitere
       // Videos, rückt das nächste passende Foto vor sie)
-      const same = (m) => Math.abs((m.time || 0) - (head.time || 0)) <= 5 * 60000 || (s.order !== 'streng' && dayBlock(m) != null && dayBlock(m) === dayBlock(head));
+      const same = (m) => (s.order || 'lied') === 'lied' || Math.abs((m.time || 0) - (head.time || 0)) <= 5 * 60000 || (s.order !== 'streng' && dayBlock(m) != null && dayBlock(m) === dayBlock(head));
       let nk = qi + 1;
       while (nk < Math.min(q.length, qi + 5) && q[nk].kind === 'video') nk++;
       const nx = q[nk];
@@ -198,6 +213,12 @@ function layoutChrono(ctx, segs0, queue, bias) {
       while (end - g.start < w * 0.95 && j + 1 < sg.length && absorb(sg[j + 1]) && sg[j + 1].end - g.start <= w * 1.2 && keepRoom(j + 1)) { j++; end = sg[j].end; }
       const nx = sg[j + 1];
       if (end - g.start < w * 0.9 && absorb(nx) && nx.end - g.start <= Math.min(w * 1.3, videoSpan(head) / 0.8) && nx.end - g.start - w < w - (end - g.start) && keepRoom(j + 1)) { j++; end = nx.end; }
+      // ein Video endet auf einem ganzen Schlag: hat es ein Serienstück im halben Schlag übernommen, nimmt es das nächste
+      // dazu (oder gibt das letzte zurück)
+      if (!bRel.some((x) => Math.abs(x - end) < 0.02) && sg[j].burst) {
+        if (sg[j + 1] && sg[j + 1].burst && absorb(sg[j + 1]) && bRel.some((x) => Math.abs(x - sg[j + 1].end) < 0.02)) { j++; end = sg[j].end; }
+        else if (j > i && bRel.some((x) => Math.abs(x - sg[j - 1].end) < 0.02)) { j--; end = sg[j].end; }
+      }
       // bliebe das Video unter seiner Mindestspielzeit (mind. 1,2 s bzw. zwei Schläge) und ist der nächste Platz zu lang zum
       // Übernehmen: auf einem Schlag teilen – das Video läuft bis dorthin, das Foto danach behält mindestens zwei Schläge
       {
@@ -211,6 +232,31 @@ function layoutChrono(ctx, segs0, queue, bias) {
           }
         }
       }
+      // die Fotos davor rücken auf ihren Schlägen zusammen, damit das Video früher beginnt (need Sekunden) – jedes behält
+      // mindestens zwei Schläge; Abschnittswechsel, Szenenanfänge und Tipps bleiben, wo sie sind
+      const pullEarlier = (need) => {
+        if (need <= 0 || g.tap || g.w >= 10) return;
+        const bi = (t) => { let k = -1, d = 0.03; for (let x = 0; x < bRel.length; x++) { const e = Math.abs(bRel[x] - t); if (e < d) { d = e; k = x; } } return k; };
+        const chain = [];
+        for (let k = i - 1; k > startI && chain.length < 10; k--) {
+          const x = sg[k];
+          if (!x.mediaId || x.vslot || x.splitIds || !normal(x) || bi(x.start) < 0 || bi(x.end) < 0) break;
+          chain.push(x);
+          // (dieses Foto gibt nur hinten ab, sein Anfang bleibt)
+          if (x.tap || x.w >= 10 || x.sceneStart || isSecCut(x.start)) break;
+        }
+        const room2 = (x) => Math.max(0, bi(x.end) - bi(x.start) - 2);
+        let r = Math.min(Math.ceil(need / beatDur), chain.reduce((a, x) => a + room2(x), 0));
+        const g0 = bi(g.start);
+        if (r > 0 && g0 - r >= 0) {
+          g.start = bRel[g0 - r];
+          for (const x of chain) {
+            if (!r) break;
+            const give = Math.min(r, room2(x)), e0 = bi(x.end), s0 = bi(x.start);
+            x.end = bRel[e0 - r]; r -= give; x.start = bRel[s0 - r];
+          }
+        }
+      };
       // Songdynamik: der Drop/Refrain setzt mit einem Schnitt ein – ein Video davor endet auf dem Einsatz,
       // wenn es dabei fast seine Länge behält (mit Speed-Ramp immer: es beschleunigt in den Drop hinein)
       for (let k = j - 1; k >= i; k--) {
@@ -226,6 +272,8 @@ function layoutChrono(ctx, segs0, queue, bias) {
           const b = bRel.filter((x) => x <= g.start - need + 0.02 && x >= pv.start + beatDur * 2 - 0.02).pop();
           if (b != null && b < g.start - 0.05) { pv.end = b; g.start = b; }
         }
+        // „Zum Lied“: das Video soll trotzdem fast ganz laufen und genau auf dem Einsatz enden
+        if (lied && !userL) pullEarlier(Math.min(w, videoSpan(head)) * 0.9 - (end - g.start) - beatDur * 0.5);
         break;
       }
       // von dir festgelegte Länge: der Platz endet auf dem Schlag, der ihr am nächsten liegt (zu kurz: vom nächsten Platz
@@ -245,35 +293,15 @@ function layoutChrono(ctx, segs0, queue, bias) {
           const bb = bRel.filter((x) => x >= pv.start + beatDur * 2 - 0.02 && x < g.start - 0.05).reduce((a, x) => (a == null || Math.abs(g.start - x - need) < Math.abs(g.start - a - need) ? x : a), null);
           if (bb != null) { pv.end = bb; g.start = bb; }
         }
-        // reicht auch das nicht (z. B. am Filmende): die Fotos davor rücken auf ihren Schlägen zusammen – jedes behält
-        // mindestens zwei Schläge; Abschnittswechsel, Szenenanfänge und Tipps bleiben, wo sie sind
-        if (end - g.start < userL - tol && !g.tap && g.w < 10) {
-          const bi = (t) => { let k = -1, d = 0.03; for (let x = 0; x < bRel.length; x++) { const e = Math.abs(bRel[x] - t); if (e < d) { d = e; k = x; } } return k; };
-          const chain = [];
-          for (let k = i - 1; k > startI && chain.length < 10; k--) {
-            const x = sg[k];
-            if (!x.mediaId || x.vslot || x.splitIds || !normal(x) || bi(x.start) < 0 || bi(x.end) < 0) break;
-            chain.push(x);
-            // (dieses Foto gibt nur hinten ab, sein Anfang bleibt)
-            if (x.tap || x.w >= 10 || x.sceneStart || isSecCut(x.start)) break;
-          }
-          const room2 = (x) => Math.max(0, bi(x.end) - bi(x.start) - 2);
-          let r = Math.min(Math.ceil((userL - tol - (end - g.start)) / beatDur), chain.reduce((a, x) => a + room2(x), 0));
-          const g0 = bi(g.start);
-          if (r > 0 && g0 - r >= 0) {
-            g.start = bRel[g0 - r];
-            for (const x of chain) {
-              if (!r) break;
-              const give = Math.min(r, room2(x)), e0 = bi(x.end), s0 = bi(x.start);
-              x.end = bRel[e0 - r]; r -= give; x.start = bRel[s0 - r];
-            }
-          }
-        }
+        // reicht auch das nicht (z. B. am Filmende): die Fotos davor rücken auf ihren Schlägen zusammen
+        if (end - g.start < userL - tol) pullEarlier(userL - tol - (end - g.start));
         if (end > target + tol) {
           const cut = nearB(g.start + Math.min(userL * 0.8, userL - beatDur * 0.4), end - beatDur * 0.9);
           if (cut != null && Math.abs(cut - target) < Math.abs(end - target)) { sg.splice(j + 1, 0, { start: cut, end, w: 1 }); end = cut; }
         }
       }
+      // „Zum Lied“: steht das Video am Filmende und reicht die Zeit nicht, rücken die Fotos davor zusammen
+      if (lied && !userL && j === sg.length - 1) pullEarlier(Math.min(w, videoSpan(head)) * 0.9 - (end - g.start) - beatDur * 0.5);
       const merged = { start: g.start, end, w: g.w, vslot: true, freezeAt: undefined };
       if (group.length > 1) { merged.vsplitIds = group.map((m) => m.id); qi += group.length; } else { merged.vid = head.id; merged.mediaId = head.id; qi++; }
       sg.splice(i, j - i + 1, merged);

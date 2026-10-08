@@ -53,7 +53,7 @@ function percentile(arr, p) {
  * Taktphase (Downbeats), Energie je Beat und eine Hüllkurve für die Anzeige.
  */
 /** Version der Analyse: gespeicherte Songs mit älterer Version werden einmal neu analysiert. */
-const AN_VER = 9;
+const AN_VER = 10;
 
 /**
  * Mithören: findet in der Mikrofonaufnahme den genauen Einsatz des Songs nach dem Startsignal.
@@ -475,6 +475,7 @@ async function analyzeAudio(buffer, onProgress) {
   }
   const drums = detectDrums(beatsSteady, pSec, lowE, hiE, toFrame, nFrames);
   const vocal = detectVocals(beats, pSec, timbreF, chromaF, toFrame, nFrames);
+  const mood = songMood({ timbreF, nFrames, beats, kicks: drums.kicks, beatRms });
   const db = Array.from(beatRms, (v) => 20 * Math.log10(v + 1e-7));
   const lo = percentile(db, 0.05), hi = percentile(db, 0.97);
   const energyRaw = db.map((v) => Math.max(0, Math.min(1, (v - lo) / Math.max(1e-6, hi - lo))));
@@ -540,12 +541,35 @@ async function analyzeAudio(buffer, onProgress) {
     kicks: drums.kicks,
     vocal: vocal.level,
     vocalOn: vocal.onsets,
+    mood,
     snares: drums.snares,
     duration,
     firstSound,
     lastSound: Math.max(firstSound + 1, lastSound),
     env,
   };
+}
+
+/**
+ * Charakter des Songs (0…1): Klanghelligkeit (Höhen gegen Tiefen), Druck (Bassdrum-Dichte) und Dynamik (Abstand leiser
+ * und lauter Stellen). Dur/Moll ist bei dieser Frequenzauflösung nicht verlässlich messbar und bleibt offen (null) –
+ * eigene Beats bringen es aus ihrer Komposition mit. Daraus wählt die Auto-Regie Look, Bewegung und Übergänge.
+ */
+function songMood({ timbreF, nFrames, beats, kicks, beatRms }) {
+  let lo = 0, hi = 0, n = 0;
+  for (let f = 0; f < nFrames; f++) {
+    const a = (timbreF[f * 12] + timbreF[f * 12 + 1] + timbreF[f * 12 + 2]) / 3;
+    if (!(a > -8)) continue; // Stille
+    lo += a;
+    hi += (timbreF[f * 12 + 8] + timbreF[f * 12 + 9] + timbreF[f * 12 + 10] + timbreF[f * 12 + 11]) / 4;
+    n++;
+  }
+  const tilt = n ? (hi - lo) / n : -2.7;
+  const db = Array.from(beatRms, (v) => 20 * Math.log10(v + 1e-7)).sort((a, b) => a - b);
+  const q = (p) => db[Math.max(0, Math.min(db.length - 1, Math.round(p * (db.length - 1))))] || 0;
+  const kickD = beats.length ? kicks.length / beats.length : 0;
+  const cl = (x) => +Math.max(0, Math.min(1, x)).toFixed(2);
+  return { minor: null, bright: cl((tilt + 4.2) / 2.4), drive: cl(kickD * 0.9 + 0.1), dyn: cl((q(0.95) - q(0.2)) / 18) };
 }
 
 /**

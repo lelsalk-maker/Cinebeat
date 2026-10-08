@@ -46,9 +46,11 @@ const wav = readFileSync(`${OUT}/Song.wav`).toString('base64');
       // 2. Einstellungs-Änderungen hängen an der Aufnahme: nach einem Ausschluss davor bleiben sie, wo sie hingehören
       const Y = S0.find((id, k) => k > 10 && id[0] === 'p' && own(P0, id).length), V = S0.find((id) => id[0] === 'v' && own(P0, id).length);
       const ovm = { media: { [Y]: { trans: TR.DIP }, [V]: { speed: 0.5 } } };
-      media.find((m) => m.id === S0[2]).excluded = true;
+      // (ausgeschlossen wird ein Foto weit vorn, nie die beiden geprüften Aufnahmen selbst)
+      const X2 = S0.find((id, k) => k >= 2 && id !== Y && id !== V && id[0] === 'p');
+      media.find((m) => m.id === X2).excluded = true;
       const P2 = plan(st, ovm);
-      media.find((m) => m.id === S0[2]).excluded = false;
+      media.find((m) => m.id === X2).excluded = false;
       const cy = own(P2, Y)[0], cv = own(P2, V)[0];
       if (own(P2, Y).length && (!cy || !cy.tin || cy.tin.type !== TR.DIP)) f.push(`${nm}: Übergang hängt nicht mehr an ${Y} (${cy && JSON.stringify({ i: cy.i, tin: cy.tin, start: cy.start, len: cy.end - cy.start, prev: P2.clips[cy.i - 1] && Object.keys(P2.clips[cy.i - 1]).filter((k) => P2.clips[cy.i - 1][k] === true) })})`);
       if (!cv || Math.abs((cv.rate || 1) - 0.5) > 0.01) f.push(`${nm}: Zeitlupe hängt nicht mehr an ${V} (${cv && cv.rate})`);

@@ -25,6 +25,8 @@ function planOnce(opts) {
   const gAll = allOn && mengeOf(s) !== 'auto' ? mengeOf(s) : allOn;
   // Chronologischer Durchlauf (Ortsfilme, Reels, Storys): Aufnahmen strikt nach Aufnahmezeit
   const chrono = !chapters && !flight;
+  // Reihenfolge „Zum Lied“ (Standard): Aufnahmen nach Songstelle, nicht nach Aufnahmetag
+  const lied = (s.order || 'lied') === 'lied' && !flight;
   const level = opts._level || 0;
 
   // Schnittpunkte, ausbalanciert gegen die Menge des Materials
@@ -435,18 +437,26 @@ function planOnce(opts) {
   const recutJit = (m) => (s.recut ? ((((hashStr(m.id) ^ Math.imul(s.recut, 2654435761)) >>> 0) % 1000) / 1000) * 0.25 : 0);
   if (chrono) {
     const all0 = orderChrono(goodMedia(usable, gAll));
-    // Startbild: das stärkste Foto der ersten Momente (die Reihenfolge verschiebt sich dafür höchstens um wenige Plätze)
-    const early = all0.slice(0, Math.max(3, Math.ceil(all0.length * 0.15)));
+    // Startbild: das stärkste Foto der ersten Momente (die Reihenfolge verschiebt sich dafür höchstens um wenige Plätze);
+    // „Zum Lied“: das stärkste, kräftigste Foto überhaupt – der Einstieg soll packen
+    const early = lied ? all0 : all0.slice(0, Math.max(3, Math.ceil(all0.length * 0.15)));
     // („Neu schneiden“: reihum eines der fast gleich starken – außer du hast das Startbild festgelegt)
-    const earlyImg = early.filter((m) => m.kind === 'image').sort((a, b) => (b.score || 0) - (a.score || 0));
-    const hkCand = earlyImg.filter((m) => (m.score || 0) >= (earlyImg[0] ? earlyImg[0].score || 0 : 0) - 0.2).slice(0, 3);
+    const hkVal = (m) => (m.score || 0) + (lied ? 0.25 * mediaEnergy(m) : 0);
+    const earlyImg = early.filter((m) => m.kind === 'image').sort((a, b) => hkVal(b) - hkVal(a));
+    const hkCand = earlyImg.filter((m) => hkVal(m) >= (earlyImg[0] ? hkVal(earlyImg[0]) : 0) - (lied ? 0.12 : 0.2)).slice(0, 3);
     const hk = intro === 'split' ? null : (settings.hookId && all0.find((m) => m.id === settings.hookId)) || (s.recut && hkCand.length ? hkCand[s.recut % hkCand.length] : earlyImg[0]) || all0[0] || null;
-    // innerhalb eines Moments (wenige Minuten) darf ein Bild aus dem vorigen hervorgehen (Match-Cuts, Farbfluss)
-    const flowed = spreadSimilar(flowOrder(all0.filter((m) => m !== hk), s.match !== 'off'));
+    // innerhalb eines Moments (wenige Minuten) darf ein Bild aus dem vorigen hervorgehen (Match-Cuts, Farbfluss);
+    // „Zum Lied“: die Momente stehen dort, wo sie zur Songstelle passen
+    const vWant = (v) => userVideoLen(v) || Math.max(Math.min(videoSpan(v) * 0.96, Math.max(2.4, barDur)), videoPlay(v, fr.vmax) * (opts._vf || 1));
+    const nPreSeg = segs.filter((g) => g.pre || g.leader || g.reveal || g.rush || g.gridSeg).length;
+    const hookEnd = hk && segs[nPreSeg] ? segs[nPreSeg].end : 0;
+    const flowed = lied
+      ? spreadSimilar(songQueue(all0.filter((m) => m !== hk), { an, win, segs, startAt: hookEnd, want: vWant, us: s.us !== 'off', ramp: s.ramp === 'drop' }))
+      : spreadSimilar(flowOrder(all0.filter((m) => m !== hk), s.match !== 'off'));
     // eigene Reihenfolge aus der Zeitleiste geht vor
     let queue = applyMoves(applyOrder(hk ? [hk, ...flowed] : flowed, overrides.order), overrides.moves);
     const pinned = new Set((overrides.moves || []).flatMap((x) => [x.id, x.before]).concat(overrides.order || []).filter(Boolean));
-    const chronoCtx = { pinned, s, an, win, fr, level, allOn, intro, outro, rush, reveal, leader, gridPlan, special, splitFit, splitN, barDur, beatDur, isPeakSec, scenes: sceneStarts(all0) };
+    const chronoCtx = { pinned, s, an, win, fr, level, allOn, intro, outro, rush, reveal, leader, gridPlan, special, splitFit, splitN, barDur, beatDur, isPeakSec, scenes: lied ? new Set() : sceneStarts(all0), vf: opts._vf || 1 };
     let res = layoutChrono(chronoCtx, segs, queue, 0);
     // alle Aufnahmen: fehlen am Ende noch welche, früher etwas mehr zusammenfassen (Split-Screens)
     for (let k = 0; k < 2 && allOn && res.dropped.length; k++) {
@@ -464,8 +474,9 @@ function planOnce(opts) {
         for (const g of res.segs) {
           const w = g.mediaId && !g.splitIds && byQ0.get(g.mediaId);
           if (!w || w.kind !== 'image' || w === hk || special(g) || g.vslot || g.repeat || g.replaySeg || g.end - g.start < beatDur * 1.8) continue;
-          if (dayBlock(w) !== dayBlock(d)) continue;
-          const dt = Math.abs((w.time || 0) - (d.time || 0));
+          if (!lied && dayBlock(w) !== dayBlock(d)) continue;
+          // („Zum Lied“: der ähnlichste Partner – gleicher Moment, gleiche Farbe)
+          const dt = lied ? Math.abs((w.time || 0) - (d.time || 0)) / 60000 + (w.avg && d.avg ? Math.hypot(w.avg[0] - d.avg[0], w.avg[1] - d.avg[1], w.avg[2] - d.avg[2]) : 60) : Math.abs((w.time || 0) - (d.time || 0));
           if (dt < bd) { bd = dt; best = g; }
         }
         if (!best) { left.push(d); continue; }
@@ -499,12 +510,12 @@ function planOnce(opts) {
           if (!w || w.kind !== 'image' || w.fav || w === hk || keepS(w) >= keepS(d) - 0.02) return false;
           if (sl.g.splitIds && splitFit(w) !== splitFit(d)) return false;
           if (strict) return Math.abs((w.time || 0) - (d.time || 0)) <= 3 * 60000;
-          return must || dayBlock(w) === dayBlock(d);
+          return must || lied || dayBlock(w) === dayBlock(d);
         };
         const cand = slots.filter(fits);
         if (!cand.length) { nowOut.push(d); continue; }
         // die schwächste; bei Favoriten ohne Platz im eigenen Abschnitt die zeitlich nächste
-        const same = cand.filter((sl) => dayBlock(byQ.get(idAt(sl))) === dayBlock(d));
+        const same = lied ? cand : cand.filter((sl) => dayBlock(byQ.get(idAt(sl))) === dayBlock(d));
         const pool = same.length ? same : cand.sort((x, y) => Math.abs((byQ.get(idAt(x)).time || 0) - (d.time || 0)) - Math.abs((byQ.get(idAt(y)).time || 0) - (d.time || 0))).slice(0, 3);
         const sl = pool.reduce((a2, x) => (keepS(byQ.get(idAt(x))) < keepS(byQ.get(idAt(a2))) ? x : a2));
         const w = byQ.get(idAt(sl));
@@ -702,8 +713,9 @@ function planOnce(opts) {
         const ms = cl.map((x) => byId.get(x.mediaId)).filter(Boolean);
         if (ms.length === cl.length && ms.length > 2) {
           const blockT = new Map();
-          for (const m of ms) { const k = dayBlock(m) || ''; blockT.set(k, Math.min(blockT.get(k) ?? Infinity, m.time || 0)); }
-          const order = ms.map((m, k) => ({ m, k, bt: blockT.get(dayBlock(m) || '') })).sort((a, b) => a.bt - b.bt || a.k - b.k).map((x) => x.m);
+          const blk = (m) => (lied ? '' : dayBlock(m) || '');
+          for (const m of ms) { const k = blk(m); blockT.set(k, Math.min(blockT.get(k) ?? Infinity, m.time || 0)); }
+          const order = ms.map((m, k) => ({ m, k, bt: blockT.get(blk(m)) })).sort((a, b) => a.bt - b.bt || a.k - b.k).map((x) => x.m);
           // Videos zuerst: die lange genug Einstellung, die ihrem Platz in der Reihenfolge am nächsten liegt
           const free = new Set(cl.map((_, j) => j));
           order.forEach((m, r) => {
@@ -1052,9 +1064,10 @@ function planOnce(opts) {
   const userMoved = new Set((overrides.moves || []).flatMap((x) => [x.id, x.before]).concat(overrides.order || []).filter(Boolean));
   const nUs = usOn ? clips.filter((c) => isUs(byId.get(c.mediaId))).length : 0;
   if (byTime) {
-    const ar = arrangeBlocks(clips, { byId, ovOf, moved: userMoved, us: usOn, aspect: outAspect, vary: s.recut ? ((s.seed >>> 0) ^ (s.recut * 2654435761)) >>> 0 : 0 });
+    const ar = arrangeBlocks(clips, { byId, ovOf, moved: userMoved, us: usOn, aspect: outAspect, vary: s.recut ? ((s.seed >>> 0) ^ (s.recut * 2654435761)) >>> 0 : 0, lied, energyAt: lied ? songEnergyAt(an, win) : null });
     // weiche Szenenübergänge bleiben auf ihren Taktanfängen (musikalische Stelle, nicht die Aufnahme)
-    if (ar.moved) {
+    if (ar.moved && lied) dir.notes.push(`Reihenfolge zum Lied: ${ar.moved} Aufnahmen so gesetzt, dass die Bildenergie der Songstelle folgt${usOn && nUs ? ', ihr die ruhigen Passagen tragt' : ''}, starke Bilder auf Einsätze und lange Plätze kommen, Momente beieinander bleiben und Nachbarn weich ineinander übergehen – unabhängig vom Aufnahmetag.`);
+    else if (ar.moved) {
       dir.notes.push(`Reihenfolge nach Tageszeit: in ${ar.blocks} ${ar.blocks === 1 ? 'Tagesblock' : 'Tagesblöcken'} (Morgen & Mittag bzw. Nachmittag & Abend) ${ar.moved} Aufnahmen so gesetzt, dass${usOn && nUs ? ' ihr die ruhigen Passagen tragt, Natur und Dinge die schnellen,' : ''} Totalen und starke Bilder lange Plätze bekommen, die Bildenergie zur Songstelle passt und nie zwei ähnliche Bilder aufeinander folgen. Die Tage bleiben in ihrer Reihenfolge.`);
     }
   } else if (usOn) {
@@ -1064,13 +1077,13 @@ function planOnce(opts) {
 
   // Feinschliff wie ein Cutter: Standzeit nach Bildinhalt, stärkstes Bild auf den Einsatz und ans Ende
   if (!flight && s.cutter !== 'off') {
-    const cp = cutterPolish(clips, { an, win, byId, beatDur, ovOf, moved: userMoved, us: usOn, blocks: byTime, taps: (overrides.taps || []).map((t) => t - win.start) });
+    const cp = cutterPolish(clips, { an, win, byId, beatDur, ovOf, moved: userMoved, us: usOn, blocks: lied ? 'moment' : byTime, taps: (overrides.taps || []).map((t) => t - win.start) });
     if (cp.retimed || cp.hero) dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Feinschliff: ${[cp.retimed ? `${cp.retimed} Schnitte um ein bis zwei Beats verschoben, damit Totalen und starke Bilder wirken und Details knapp bleiben` : '', cp.hero ? `${cp.hero}× das stärkste Bild aus der Nähe auf den Einsatz bzw. ans Ende gesetzt` : ''].filter(Boolean).join('; ')}.`);
   }
 
   // Wir-Vorrang zum Schluss: eure Fotos auf die langen Plätze in ihrer Nähe
   if (usOn && !flight) {
-    const ul = usLength(clips, { byId, ovOf, moved: userMoved, blocks: byTime, beatDur, beats: Array.from(an.beats).map((x) => x - win.start), taps: (overrides.taps || []).map((t) => t - win.start) });
+    const ul = usLength(clips, { byId, ovOf, moved: userMoved, blocks: lied ? 'moment' : byTime, beatDur, beats: Array.from(an.beats).map((x) => x - win.start), taps: (overrides.taps || []).map((t) => t - win.start) });
     if (ul) dir.notes.push(`Wir-Vorrang: ${ul}× euer Foto auf den längeren Platz in seiner Nähe gesetzt.`);
   }
 
@@ -1082,7 +1095,7 @@ function planOnce(opts) {
     const run = clips.slice(k, e + 1), ids = [];
     // aus demselben Tagesabschnitt wie die Einstellung danach (die Geschichte springt nicht)
     const anchor = byId.get((clips[e + 1] || clips[k - 1] || {}).mediaId);
-    const blk = anchor && byTime ? dayBlock(anchor) : null;
+    const blk = anchor && byTime && !lied ? dayBlock(anchor) : null;
     const take = (c) => {
       if (!c || c.flash || c.grid || c.gridMid || c.recap || c.leader || c.pre) return;
       for (const id of c.split ? c.split.ids : c.stack ? c.stack.ids : [c.mediaId]) { const m = byId.get(id); if (m && m.kind === 'image' && !ids.includes(id) && (blk == null || dayBlock(m) === blk)) ids.push(id); }

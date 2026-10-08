@@ -357,7 +357,8 @@ function planAudit(plan, media, an) {
   const atLimit = D >= fr.max - bar * 1.6 - 0.05 || songEnd;
   if (allMediaOn(plan.resolved) && cap.droppedIds && cap.droppedIds.length && !fixedLen && !atLimit) add('fehlt', 0, `${cap.droppedIds.length} Aufnahmen fehlen`);
   // 8. Reihenfolge: Tagesblöcke nie vertauscht (Vorschau-Einstiege ausgenommen)
-  if (plan.resolved.order !== 'streng') {
+  // (nur „Nach Tageszeit“: „Zum Lied“ ordnet bewusst nach Songstelle, „Streng“ prüft die Uhrzeit anders)
+  if (plan.resolved.order === 'tageszeit') {
     // Startbild-Einstiege (Aufblende, Countdown, Raster) und Vorschauen zeigen bewusst das stärkste Bild der Reise vorab
     const seq = clips.filter((c) => !c.flash && !c.rush && !c.pre && !c.reveal && !c.revealHit && !c.leader && !c.knock && !c.grid && c.role !== 'hook' && c.role !== 'rush' && !c.replay && !c.miniRew && media[c.mediaIndex] && media[c.mediaIndex].time).map((c) => media[c.mediaIndex]);
     // Wiederholungen (zu wenig Material für die gewählte Länge) zählen nicht als Reihenfolge

@@ -188,10 +188,15 @@
               <span class="sw-text"><b>Wir-Vorrang</b><span>Von euch als WIR markierte Aufnahmen: ruhige Passagen, mehr Zeit, eigener Wir-Moment und Schlussbild. Markieren im Material.</span></span>
               <span class="sw" aria-hidden="true"><i></i></span>
             </button>
-            <button type="button" class="switch-row" id="orderBtn" role="switch" aria-checked="true">
-              <span class="sw-text"><b>Reihenfolge nach Tageszeit</b><span>Tage bleiben in ihrer Folge; innerhalb von Morgen &amp; Mittag bzw. Nachmittag &amp; Abend setzt die Regie jedes Bild dorthin, wo es am besten wirkt. Aus: streng nach Uhrzeit</span></span>
-              <span class="sw" aria-hidden="true"><i></i></span>
-            </button>
+          </div>
+          <div class="field">
+            <span class="field-label" id="orderLabel">Reihenfolge</span>
+            <div class="formats variants" role="radiogroup" aria-labelledby="orderLabel" id="orderChips">
+              <button type="button" role="radio" data-v="lied"><b>Zum Lied</b><span>jede Szene an ihre Stelle</span></button>
+              <button type="button" role="radio" data-v="tageszeit"><b>Nach Tagen</b><span>Tag für Tag</span></button>
+              <button type="button" role="radio" data-v="streng"><b>Nach Uhrzeit</b><span>streng</span></button>
+            </div>
+            <p class="hint small" id="orderHint"></p>
           </div>
           <div class="field">
             <span class="field-label" id="fmtLabel">Wofür?</span>

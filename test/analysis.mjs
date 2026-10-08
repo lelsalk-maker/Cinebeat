@@ -48,8 +48,10 @@ const res = await p.evaluate(async (b64) => {
   const media = [];
   for (let k = 0; k < 24; k++) { const c = base[k % base.length]; media.push({ id: 'm' + k, kind: 'image', name: 'B', canvas: c, w: c.width, h: c.height, time: T + k * 4 * 60000 + (k >= 8 ? 120 * 60000 : 0) + (k >= 16 ? 120 * 60000 : 0), ...scoreImage(c, c.width, c.height), hash: [k * 7919, k], avg: [(k * 37) % 255, (k * 91) % 255, (k * 53) % 255] }); }
   const pl = buildPlan({ an, media, settings: { format: '9:16', look: 'natur', pace: 'auto', intro: 'hook', outro: 'auto', length: 'auto', songStart: 'auto', frame: 'auto', split: 'off', seed: 2, target: 'reel' }, overrides: { texts: [], stickers: [] } });
+  // Szenenwechsel auf dem Takt: bei „Nach Tagen“ (bei „Zum Lied“ stehen die Szenen nach der Songstelle)
+  const plS = buildPlan({ an, media, settings: { format: '9:16', look: 'natur', pace: 'auto', intro: 'hook', outro: 'auto', length: 'auto', songStart: 'auto', frame: 'auto', split: 'off', seed: 2, target: 'reel', order: 'tageszeit' }, overrides: { texts: [], stickers: [] } });
   const bars = pl.beats.filter((_, i) => pl.downs[i]);
-  const starts = pl.clips.filter((c) => c.sceneStart);
+  const starts = plS.clips.filter((c) => c.sceneStart);
   out.sceneClips = starts.map((c) => `${c.start.toFixed(2)} ${c.mediaId} ${bars.some((x) => Math.abs(x - c.start) < 0.04) ? 'Takt' : 'neben'} ${c.tin ? TR_NAMES[c.tin.type] : ''}`);
   if (starts.length < 2) fails.push('Szenenwechsel fehlen');
   if (starts.filter((c) => bars.some((x) => Math.abs(x - c.start) < 0.04)).length < starts.length - 1) fails.push('Szenenwechsel nicht auf dem Takt');

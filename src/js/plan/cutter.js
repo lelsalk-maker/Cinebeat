@@ -90,7 +90,7 @@ function cutterPolish(clips, ctx) {
       if (!d || !plain(n) || own(n) || n.role === 'hook' || keys.includes(k + d)) continue;
       const nm = img(n);
       // nach Tageszeit: im selben Tagesblock; streng: höchstens 3 min Aufnahmezeit
-      if (blocks ? dayBlock(nm) !== dayBlock(m) : Math.abs((nm.time || 0) - (m.time || 0)) > 3 * 60 * 1000) continue;
+      if (blocks === 'moment' ? Math.abs((nm.time || 0) - (m.time || 0)) > 10 * 60 * 1000 : blocks ? dayBlock(nm) !== dayBlock(m) : Math.abs((nm.time || 0) - (m.time || 0)) > 3 * 60 * 1000) continue;
       if (val(nm) > bestS) { bestS = val(nm); bestK = k + d; }
     }
     if (bestK >= 0) { const o = clips[bestK]; [c.mediaId, o.mediaId] = [o.mediaId, c.mediaId]; hero++; }

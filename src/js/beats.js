@@ -83,6 +83,23 @@ function beatForm(form, pre = 4) {
 }
 
 /** Welche Beats passen zu diesen Einstellungen (Look, Variante, Format, Musikvideo)? Beste zuerst, mit Begründung. */
+/** Charakter jedes Beat-Stils für die Auto-Regie: passender Look (wenn das Material ihn offen lässt) und Stimmung. */
+const BEAT_CHAR = {
+  sommer: { look: 'golden', label: 'sonnig und leicht' },
+  nacht: { look: 'blau', label: 'nächtlich, mit Neon-Glanz', dark: true },
+  lofi: { look: 'film', label: 'ruhig und warm', calm: true },
+  stadt: { look: 'kino', label: 'treibend und urban', driving: true, dark: true },
+  gipfel: { look: 'kino', label: 'episch, mit großem Aufbau', epic: true, dark: true },
+  glow: { look: 'natur', label: 'hell und euphorisch', driving: true },
+  strand: { look: 'golden', label: 'warm und groovig' },
+  roadtrip: { look: 'natur', label: 'hell und beschwingt' },
+  diner: { look: 'diner', label: 'retro und funky', driving: true },
+  drift: { look: 'kino', label: 'dunkel und treibend', driving: true, dark: true },
+  bounce: { look: 'natur', label: 'treibend und verspielt', driving: true },
+  skyline: { look: 'natur', label: 'urban und leicht' },
+  fiesta: { look: 'golden', label: 'heiß und tanzbar', driving: true },
+};
+
 function suggestBeats(st = {}) {
   const score = {}, why = {};
   for (const k of Object.keys(BEAT_STYLES)) score[k] = 0;
@@ -697,7 +714,7 @@ async function renderBeat(r, { preview = false, sampleRate = 44100 } = {}) {
   const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
   const buffer = new OAC(2, 1, SR).createBuffer(2, N, SR);
   buffer.getChannelData(0).set(outL); buffer.getChannelData(1).set(outR);
-  return { buffer, truth: { beats, barStart, sections, kicks, snares, bpm: r.bpm, t0, duration: buffer.duration } };
+  return { buffer, truth: { beats, barStart, sections, kicks, snares, bpm: r.bpm, t0, duration: buffer.duration, mode: S.mode, style: r.style } };
 }
 
 /**
@@ -725,6 +742,8 @@ async function analyzeBeat(buffer, truth, onProgress) {
   an.kicks = truth.kicks.slice().sort((a, b) => a - b);
   an.snares = truth.snares.slice().sort((a, b) => a - b);
   an.bpm = truth.bpm; an.beatPeriod = B;
+  // Charakter aus der Komposition: Druck aus den echten Bassdrums, Tongeschlecht aus der Tonleiter des Stils
+  an.mood = { ...(an.mood || {}), drive: +Math.min(1, (an.kicks.length / Math.max(1, n)) * 0.9 + 0.1).toFixed(2), minor: truth.mode ? (/minor|phrygian/.test(truth.mode) ? 1 : truth.mode === 'dorian' ? 0.5 : 0) : null, style: truth.style || null };
   an.barStart = truth.barStart.filter((t) => t < buffer.duration - 0.05);
   an.downIdx = an.barStart.map((t) => Math.round((t - truth.t0) / B));
   an.phrasePhase = 0;

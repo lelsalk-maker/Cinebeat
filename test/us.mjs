@@ -22,7 +22,7 @@ const r = await p.evaluate(async (b64) => {
   // 24 Fotos einer Szene (je 1 min Abstand), jedes dritte „wir“
   const media = Array.from({ length: 24 }, (_, i) => { const c = sc[i % sc.length]; return { id: 'm' + i, kind: 'image', name: 'M' + i, canvas: c, w: c.width, h: c.height, time: 1.7e12 + i * 60000, ...scoreImage(c, c.width, c.height), us: i % 3 === 0 }; });
   const byId = new Map(media.map((m) => [m.id, m]));
-  const s = { format: '9:16', look: 'natur', pace: 'auto', intro: 'auto', outro: 'auto', length: 'auto', songStart: 'auto', frame: 'auto', seed: 4, allMedia: 'on' };
+  const s = { format: '9:16', look: 'natur', pace: 'auto', intro: 'auto', outro: 'auto', length: 'auto', songStart: 'auto', frame: 'auto', seed: 4, allMedia: 'on', order: 'tageszeit' };
   const stat = (plan) => {
     let calmUs = 0, calmN = 0, fastUs = 0, fastN = 0, usT = 0, usN = 0, oT = 0, oN = 0;
     for (const c of plan.clips) {

@@ -36,7 +36,7 @@ const res = await p.evaluate(async (b64) => {
     }
     return list;
   };
-  const S0 = { format: '9:16', look: 'natur', pace: 'auto', intro: 'auto', outro: 'auto', length: 'auto', songStart: 'auto', frame: 'auto', split: 'auto', seed: 4 };
+  const S0 = { format: '9:16', look: 'natur', pace: 'auto', intro: 'auto', outro: 'auto', length: 'auto', songStart: 'auto', frame: 'auto', split: 'auto', seed: 4, order: 'tageszeit' };
   const plan = (media, st) => buildPlan({ an, media, settings: { ...S0, ...st }, overrides: { texts: [], stickers: [] } });
   // Reihenfolge der Aufnahmen im Film (ohne Vorschau-Rollen wie Countdown, Aufblende, Bilderflut, Rewind)
   const preview = (c) => c.role === 'leader' || c.role === 'reveal' || c.role === 'rew' || c.role === 'tease' || c.role === 'rush' || c.replay || c.loop || c.strip || (c.grid && !c.gridMid);

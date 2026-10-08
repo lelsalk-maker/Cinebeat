@@ -41,7 +41,9 @@ function normalizeSettings(st, defaults) {
     variant: pick1(s.variant, ['ausgewogen', 'ruhig', 'energisch'], 'ausgewogen'),
     effekte: pick1(s.effekte, ['schlicht', 'dezent', 'kreativ'], 'schlicht'),
     us: pick1(s.us, ['auto', 'off'], 'auto'),
-    order: pick1(s.order, ['tageszeit', 'streng'], 'tageszeit'),
+    // Reihenfolge: „Zum Lied“ ist Standard; ältere Projekte (vor Version 2) hatten „Nach Tagen“ nur als Voreinstellung
+    order: pick1(!(s.sv >= 2) && s.order === 'tageszeit' ? 'lied' : s.order, ['lied', 'tageszeit', 'streng'], 'lied'),
+    sv: 2,
     mv: pick1(s.mv, ['off', 'on'], 'off'),
     match: pick1(s.match, ['auto', 'off'], 'auto'),
     morph: pick1(s.morph, ['off', 'on'], 'off'),
@@ -81,9 +83,16 @@ function normalizeSettings(st, defaults) {
   };
 }
 
+const ORDER_HINT = {
+  lied: 'Jede Szene steht dort, wo sie zum Lied passt: kräftige Bilder und bewegte Videos in Refrain und Drop, ruhige Bilder, ruhige Videos und eure Wir-Fotos in den ruhigen Teilen, das stärkste Bild auf dem Einsatz. Momente bleiben beieinander, Farben gehen weich ineinander über – unabhängig vom Aufnahmetag.',
+  tageszeit: 'Tage bleiben in ihrer Folge; innerhalb von Morgen & Mittag bzw. Nachmittag & Abend setzt die Regie jedes Bild dorthin, wo es am besten wirkt.',
+  streng: 'Streng nach Uhrzeit der Aufnahme.',
+};
+
 /* ---------- Stil-Vorlage: ein Stil für alle Filme der Reise ---------- */
 const STYLE_KEYS = ['variant', 'effekte', 'quer', 'us', 'order', 'mv', 'look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'allMedia', 'menge', 'color', 'accent', 'parallax', 'drift', 'echo', 'stack', 'mini', 'chapKnock', 'chapMap', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
-const styleOf = (st) => Object.fromEntries(STYLE_KEYS.map((k) => [k, st[k]]));
+// (sv: Stand der Einstellungen – eine gespeicherte Vorlage mit „Nach Tagen“ ist dann bewusst gewählt)
+const styleOf = (st) => ({ ...Object.fromEntries(STYLE_KEYS.map((k) => [k, st[k]])), sv: 2 });
 /** Einstellungen für neue Filme: Standard, darüber die Vorlage der Reise */
 function baseSettings(defaults) {
   return normalizeSettings({ ...defaults, ...((S.trip && S.trip.style) || {}), seed: Math.floor(Math.random() * 1e6) }, defaults);
@@ -408,7 +417,7 @@ function openWishSheet(mode = 'cut', menge) {
   const ctx = S.ctx;
   if (!ctx || !ctx.song) return;
   const st = ctx.rec.settings, an = ctx.song.an;
-  const w0 = { variant: st.variant, effekte: st.effekte, bw: wishBW(st), quer: st.quer, length: st.length === 'full' ? 'full' : 'auto', allMedia: st.allMedia };
+  const w0 = { variant: st.variant, effekte: st.effekte, order: st.order || 'lied', bw: wishBW(st), quer: st.quer, length: st.length === 'full' ? 'full' : 'auto', allMedia: st.allMedia };
   const w = { ...w0 };
   const land = ctx.media.filter(isQuer).length;
   const story = st.format === '9:16' && st.target !== 'reel';
@@ -423,6 +432,10 @@ function openWishSheet(mode = 'cut', menge) {
       schlicht: 'Nur Schnitte genau auf dem Takt und weiche Blenden an ruhigen Stellen. Kein Schnickschnack.',
       dezent: 'Dazu einzelne besondere Momente, wo der Song sie trägt.',
       kreativ: 'Die Regie spielt mehr: Echos, Farbmomente, Bild im Bild.' }],
+    isFlight(ctx.rec) ? null : ['order', 'Wie sollen die Aufnahmen geordnet sein?', [['lied', 'Zum Lied'], ['tageszeit', 'Nach Tagen'], ['streng', 'Nach Uhrzeit']], {
+      lied: 'Jede Szene dort, wo sie zum Lied passt – kräftige Bilder und bewegte Videos in Refrain und Drop, ruhige in die ruhigen Teile, Momente bleiben beieinander. Der Aufnahmetag spielt keine Rolle.',
+      tageszeit: 'Tag für Tag; innerhalb von Morgen & Mittag bzw. Nachmittag & Abend frei nach dem Lied.',
+      streng: 'Streng nach Uhrzeit der Aufnahme.' }],
     ['bw', 'Schwarzweiß?', [['kein', 'Kein'], ['moment', 'Farbmoment'], ['ganz', 'Ganzer Film']], {
       kein: 'Alles in Farbe. Einzelne Bilder legst du im Material fest (Bild antippen → Schwarzweiß).',
       moment: 'Schwarzweiß bis zum Höhepunkt, dort kommt die Farbe. Einzelne Bilder legst du im Material fest.',
@@ -456,7 +469,7 @@ function openWishSheet(mode = 'cut', menge) {
     if (!e.target.closest('#wishGo')) return;
     closeSheet();
     // nur Geändertes übernehmen: eigene Feineinstellungen (z. B. eine feste Länge in Sekunden) bleiben sonst stehen
-    for (const k of ['variant', 'effekte', 'quer', 'allMedia', 'length']) if (w[k] !== w0[k]) st[k] = w[k];
+    for (const k of ['variant', 'effekte', 'order', 'quer', 'allMedia', 'length']) if (w[k] !== w0[k]) st[k] = w[k];
     if (w.bw !== w0.bw) {
       if (w.bw === 'ganz') { st.look = 'noir'; st.color = 'off'; }
       else {
@@ -3020,7 +3033,8 @@ function renderStyle() {
   setRadio($('effekteChips'), st.effekte || 'schlicht');
   $('mvBtn').setAttribute('aria-checked', String(st.mv === 'on'));
   $('usBtn').setAttribute('aria-checked', String(st.us !== 'off'));
-  $('orderBtn').setAttribute('aria-checked', String(st.order !== 'streng'));
+  setRadio($('orderChips'), st.order || 'lied');
+  $('orderHint').textContent = ORDER_HINT[st.order || 'lied'];
   $('allChips').hidden = S.ctx.kind === 'bestof' || isFlight(S.ctx.rec);
   $('capHint').textContent = capacityText();
   setRadio($('preChips'), st.pre);
@@ -4155,7 +4169,7 @@ async function init() {
   bindSetting('allChips', 'allMedia');
   bindSetting('variantChips', 'variant');
   bindSetting('effekteChips', 'effekte');
-  $('orderBtn').addEventListener('click', () => { const st = S.ctx.rec.settings; st.order = st.order === 'streng' ? 'tageszeit' : 'streng'; commit(); savePlaceSoon(); scheduleRebuild(0); });
+  bindSetting('orderChips', 'order');
   $('usBtn').addEventListener('click', () => { const st = S.ctx.rec.settings; st.us = st.us === 'off' ? 'auto' : 'off'; commit(); savePlaceSoon(); scheduleRebuild(0); });
   $('mvBtn').addEventListener('click', () => { const st = S.ctx.rec.settings; st.mv = st.mv === 'on' ? 'off' : 'on'; commit(); savePlaceSoon(); engine && (engine.t = 0); scheduleRebuild(0); });
   bindSetting('colorChips', 'color');

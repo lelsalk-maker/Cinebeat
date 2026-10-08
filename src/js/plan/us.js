@@ -70,19 +70,29 @@ function usLength(clips, { byId, ovOf = () => null, moved = new Set(), blocks = 
   let sc = 0, ch = 0;
   for (const c of clips) { if (c.sceneStart) sc++; if (c.chapter) ch++; scene.push(sc); chap.push(ch); }
   const len = (c) => c.end - c.start;
-  const near = (a, b) => (blocks ? dayBlock(a) === dayBlock(b) : Math.abs((a.time || 0) - (b.time || 0)) <= 3 * 60000);
+  // („Zum Lied“: mit dem längsten fremden Foto im ganzen Film bzw. Kapitel – euer Vorrang wiegt schwerer als ein Moment am Stück)
+  const near = (a, b) => (blocks === 'moment' ? true : blocks ? dayBlock(a) === dayBlock(b) : Math.abs((a.time || 0) - (b.time || 0)) <= 3 * 60000);
   const wir = clips.map((c, k) => k).filter((k) => plain(clips[k]) && isUs(img(clips[k]))).sort((a, b) => len(clips[a]) - len(clips[b]));
   const done = new Set();
   let swaps = 0;
   for (const k of wir) {
     const a = clips[k];
     if (done.has(k)) continue;
-    let best = -1, bl = len(a) + beatDur * 0.5;
+    let best = -1, bl = len(a) + beatDur * 0.5, bv = -Infinity;
     const R = blocks ? clips.length : 6;
+    // („Zum Lied“: der Einsatz eines Refrains/Drops behält sein starkes Bild; lieber ein Foto am Rand seines Moments,
+    // damit kein Moment mittendrin zerrissen wird)
+    const hero = (c) => c.sectionChange && (c.label === 'drop' || c.label === 'chorus');
+    const sameM = (x, y) => x && y && img(x) && img(y) && Math.abs((img(x).time || 0) - (img(y).time || 0)) <= 10 * 60000;
     for (let d = -R; d <= R; d++) {
       const j = k + d, b = clips[j];
       if (!d || done.has(j) || !plain(b) || isUs(img(b)) || chap[j] !== chap[k] || (!blocks && scene[j] !== scene[k]) || !near(img(a), img(b))) continue;
-      if (len(b) > bl) { bl = len(b); best = j; }
+      if (blocks === 'moment' && (hero(a) || hero(b))) continue;
+      // nie aus der Mitte eines Moments heraus; ein Wir-Foto in seinem Moment bleibt dort (der Moment hat seinen Platz als Ganzes)
+      if (blocks === 'moment' && ((sameM(clips[j - 1], b) && sameM(clips[j + 1], b)) || sameM(clips[k - 1], a) || sameM(clips[k + 1], a))) continue;
+      if (len(b) <= bl) continue;
+      const v = len(b) - (blocks === 'moment' ? beatDur * ((sameM(clips[j - 1], b) ? 1 : 0) + (sameM(clips[j + 1], b) ? 1 : 0)) : 0);
+      if (v > bv) { bv = v; best = j; }
     }
     if (best < 0) continue;
     const b = clips[best];

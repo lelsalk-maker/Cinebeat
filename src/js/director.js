@@ -201,21 +201,52 @@ function colorMatch(list) {
   return { corr, target };
 }
 
-function autoLook(list, format) {
-  if (!list.length) return { look: 'natur', why: '' };
+/**
+ * Stil des Lieds aus seinem Charakter (an.mood: Helligkeit, Druck, Dynamik, bei eigenen Beats Dur/Moll) und Tempo:
+ * ruhig, treibend, episch, dunkel – daraus Look, Schnitttempo und Kamerabewegung.
+ */
+function songStyle(an) {
+  const md = (an && an.mood) || {};
+  // eigener Beat: die App kennt seine Stilrichtung
+  const bc = md.style && typeof BEAT_CHAR !== 'undefined' && BEAT_CHAR[md.style];
+  if (bc) return { calm: !!bc.calm, driving: !!bc.driving, dark: !!bc.dark, epic: !!bc.epic, label: bc.label, look: bc.look };
+  const drive = md.drive != null ? md.drive : 0.5, bright = md.bright != null ? md.bright : 0.6, dyn = md.dyn != null ? md.dyn : 0.5;
+  const bpm = (an && an.bpm) || 110;
+  const calm = bpm < 88 || (drive < 0.4 && bpm < 100);
+  const driving = !calm && drive >= 0.6 && bpm >= 108;
+  const dark = md.minor != null ? md.minor >= 0.6 : bright < 0.42;
+  const epic = !calm && !driving && dyn >= 0.62;
+  const label = calm ? (dark ? 'ruhig und melancholisch' : 'ruhig und warm') : driving ? (dark ? 'treibend und dunkel' : 'treibend und hell') : epic ? 'episch, mit großem Aufbau' : dark ? 'atmosphärisch und dunkel' : 'hell und beschwingt';
+  return { calm, driving, dark, epic, label, look: null };
+}
+
+function autoLook(list, format, an) {
+  const st = an ? songStyle(an) : null;
+  const base = autoLookMaterial(list, format);
+  if (!st || !base.neutral) return base;
+  // das Material lässt den Look offen: der Stil des Lieds entscheidet
+  const film = format === '16:9' || format === '2.39';
+  if (st.look) return { look: st.look === 'natur' && film ? 'kino' : st.look, why: `das Lied ist ${st.label}` };
+  if (st.calm) return base.warm > 0.04 && !st.dark ? { look: 'golden', why: `das Lied ist ${st.label}, dein Material warm` } : { look: 'film', why: `das Lied ist ${st.label}: zurückhaltende Farben, feines Korn` };
+  if (st.epic || st.dark) return { look: 'kino', why: `das Lied ist ${st.label}` };
+  return { look: film ? 'kino' : 'natur', why: `das Lied ist ${st.label}: klare, kräftige Farben` };
+}
+
+function autoLookMaterial(list, format) {
+  if (!list.length) return { look: 'natur', why: '', neutral: true, warm: 0 };
   let r = 0, b = 0, l = 0, c = 0, n = 0;
   for (const m of list) {
     if (!m.avg) continue;
     r += m.avg[0]; b += m.avg[2]; l += m.luma || 0.45; c += m.color || 0.5; n++;
   }
-  if (!n) return { look: format === '16:9' || format === '2.39' ? 'kino' : 'natur', why: '' };
+  if (!n) return { look: format === '16:9' || format === '2.39' ? 'kino' : 'natur', why: '', neutral: true, warm: 0 };
   r /= n; b /= n; l /= n; c /= n;
   const warm = (r - b) / 255;
-  if (l < 0.3) return { look: 'blau', why: 'dein Material ist eher dunkel und abendlich' };
-  if (warm > 0.13 && l > 0.38) return { look: 'golden', why: 'dein Material ist warm und sonnig' };
-  if (c < 0.35) return { look: 'film', why: 'dein Material hat ruhige, zurückhaltende Farben' };
-  if (format === '16:9' || format === '2.39') return { look: 'kino', why: 'Filmformat mit farbigem Material' };
-  return { look: 'natur', why: 'dein Material hat kräftige, natürliche Farben' };
+  if (l < 0.3) return { look: 'blau', why: 'dein Material ist eher dunkel und abendlich', warm };
+  if (warm > 0.13 && l > 0.38) return { look: 'golden', why: 'dein Material ist warm und sonnig', warm };
+  if (c < 0.35) return { look: 'film', why: 'dein Material hat ruhige, zurückhaltende Farben', warm };
+  if (format === '16:9' || format === '2.39') return { look: 'kino', why: 'Filmformat mit farbigem Material', neutral: true, warm };
+  return { look: 'natur', why: 'dein Material hat kräftige, natürliche Farben', neutral: true, warm };
 }
 
 /**
@@ -360,13 +391,23 @@ function direct(an, media, s, chapters, flight) {
     for (let i = 0; i < an.beats.length; i++) if (an.beats[i] >= win.start && an.beats[i] < win.end) { en += an.energy[i]; cnt++; }
     en /= Math.max(1, cnt);
     rs.pace = en > 0.8 ? 'schnell' : en < 0.4 ? 'ruhig' : 'mittel';
+    // der Stil des Lieds zählt mit: ein ruhiges Lied schneidet ruhiger, ein treibendes nie träge
+    const sty = songStyle(an);
+    if (sty.calm && rs.pace === 'mittel') rs.pace = 'ruhig';
+    else if (sty.driving && rs.pace === 'ruhig') rs.pace = 'mittel';
     const why = rs.pace === 'schnell' ? 'ein energiegeladener Songteil' : rs.pace === 'ruhig' ? 'ein ruhiger Songteil, die Bilder bekommen Zeit' : 'Song und Bilder halten sich die Waage';
     notes.push(`Schnitttempo ${rs.pace}: ${why}.`);
+  }
+  // Stil des Lieds: zu einem ruhigen Lied eine sanfte Kamera (eigene Wahl und Variante „Energisch“ bleiben)
+  {
+    const sty = songStyle(an);
+    if (sty.calm && (rs.motionAmt || 'medium') === 'medium' && s.variant !== 'energisch') rs.motionAmt = 'soft';
+    notes.push(`Stil des Lieds: ${sty.label}${sty.calm ? ' – ruhigere Schnitte, sanfte Kamerabewegung' : sty.driving ? ' – Schnitte auf den Schlägen, klare Bewegung' : ''}.`);
   }
 
   // Look
   if (s.look === 'auto') {
-    const al = autoLook(list, s.format);
+    const al = autoLook(list, s.format, an);
     rs.look = al.look;
     notes.push(`Look ${LOOKS[al.look].label}${al.why ? ': ' + al.why : ''}.`);
   }

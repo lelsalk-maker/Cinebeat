@@ -34,10 +34,13 @@ function buildPlan(opts) {
   const nAll = best.capacity.images + best.capacity.videos;
   const start = drop(best) > nAll * 0.4 ? 3 : drop(best) > nAll * 0.2 ? 2 : 1;
   const maxLv = drop(best) ? 4 : 2;
+  const take = (p) => { if (drop(p) < drop(best) || (drop(p) === drop(best) && (p._m.vShort < best._m.vShort || (p._m.vShort === best._m.vShort && p._m.repeats < best._m.repeats)))) best = p; };
   for (let lv = start; lv <= maxLv && (drop(best) || best._m.vShort); lv++) {
-    const p = searchPlan({ ...opts, _level: lv, _need: drop(best) });
-    if (drop(p) < drop(best) || (drop(p) === drop(best) && (p._m.vShort < best._m.vShort || (p._m.vShort === best._m.vShort && p._m.repeats < best._m.repeats)))) best = p;
+    take(searchPlan({ ...opts, _level: lv, _need: drop(best) }));
+    // fehlen auf dieser Stufe noch Fotos: erst die Videos etwas kürzer (nie unter einem Takt), dann weiter verdichten
+    if (drop(best)) take(searchPlan({ ...opts, _level: lv, _need: drop(best), _vf: 0.6 }));
   }
+  for (const vf of [0.4, 0.25]) if (drop(best)) take(searchPlan({ ...opts, _level: Math.max(start, best._m.level), _need: drop(best), _vf: vf }));
   return best;
 }
 
