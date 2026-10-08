@@ -9,7 +9,7 @@ await page.waitForSelector('.place');
 await page.click('.place');
 await page.waitForFunction(() => CineBeat.S.plan && document.getElementById('busy').hidden, null, { timeout: 120000 });
 const fails = [];
-const tile = await page.$('.hook-main[data-go="hook"]');
+const tile = await page.$('.chk[data-go="hook"]');
 if (!tile) fails.push('keine Hook-Karte');
 const before = await page.evaluate(() => CineBeat.S.hook && CineBeat.S.hook.score);
 if (!(before >= 0 && before <= 100)) fails.push('Wert ' + before);
@@ -24,7 +24,7 @@ if (tile) {
   const after = await page.evaluate(() => CineBeat.S.hook && CineBeat.S.hook.score);
   const msg = await page.evaluate(() => (document.querySelector('.toast') || {}).textContent || '');
   if (!(after >= before)) fails.push(`schlechter ${before} → ${after}`);
-  if (!/Hook/.test(msg)) fails.push('keine Rückmeldung: ' + msg);
+  if (!/Einstieg/.test(msg)) fails.push('keine Rückmeldung: ' + msg);
 }
 // Plausibilität im Planer: schneller Einstieg schlägt die langsame Kino-Aufblende, Bild von euch vorn hebt „Menschen“
 const p2 = await b.newPage();

@@ -36,14 +36,15 @@ function normalizeSettings(st, defaults) {
     outro: pick1(s.outro, ['auto', 'credits', 'loop', 'freeze', 'split', 'strip'], 'auto'),
     pre: pick1(s.pre, ['off', 'countdown', 'rewind'], 'off'),
     target: pick1(s.target, ['story', 'reel'], 'story'),
-    allMedia: pick1(s.allMedia, ['on', 'off'], 'on'),
+    // Standard „Beste Auswahl“: die Regie wählt die stärksten Aufnahmen statt alles einzubinden (ältere Stände bis sv 2 hatten „Alle“)
+    allMedia: pick1(!(s.sv >= 3) && s.allMedia === 'on' ? 'off' : s.allMedia, ['on', 'off'], 'off'),
     menge: pick1(s.menge, ['auto', 'mehr', 'max'], 'auto'),
     variant: pick1(s.variant, ['ausgewogen', 'ruhig', 'energisch'], 'ausgewogen'),
     effekte: pick1(s.effekte, ['schlicht', 'dezent', 'kreativ'], 'schlicht'),
     us: pick1(s.us, ['auto', 'off'], 'auto'),
     // Reihenfolge: „Zum Lied“ ist Standard; ältere Projekte (vor Version 2) hatten „Nach Tagen“ nur als Voreinstellung
     order: pick1(!(s.sv >= 2) && s.order === 'tageszeit' ? 'lied' : s.order, ['lied', 'tageszeit', 'streng'], 'lied'),
-    sv: 2,
+    sv: 3,
     mv: pick1(s.mv, ['off', 'on'], 'off'),
     match: pick1(s.match, ['auto', 'off'], 'auto'),
     morph: pick1(s.morph, ['off', 'on'], 'off'),
@@ -92,7 +93,7 @@ const ORDER_HINT = {
 /* ---------- Stil-Vorlage: ein Stil für alle Filme der Reise ---------- */
 const STYLE_KEYS = ['variant', 'effekte', 'quer', 'us', 'order', 'mv', 'look', 'font', 'motion', 'motionAmt', 'pre', 'intro', 'outro', 'match', 'morph', 'ramp', 'stamp', 'midGrid', 'midCount', 'allMedia', 'menge', 'color', 'accent', 'parallax', 'drift', 'echo', 'stack', 'mini', 'chapKnock', 'chapMap', 'pace', 'frame', 'split', 'burst', 'km', 'mapTheme', 'mapInk', 'mapLand', 'flightView', 'showTitle', 'showChapters', 'showStats'];
 // (sv: Stand der Einstellungen – eine gespeicherte Vorlage mit „Nach Tagen“ ist dann bewusst gewählt)
-const styleOf = (st) => ({ ...Object.fromEntries(STYLE_KEYS.map((k) => [k, st[k]])), sv: 2 });
+const styleOf = (st) => ({ ...Object.fromEntries(STYLE_KEYS.map((k) => [k, st[k]])), sv: 3 });
 /** Einstellungen für neue Filme: Standard, darüber die Vorlage der Reise */
 function baseSettings(defaults) {
   return normalizeSettings({ ...defaults, ...((S.trip && S.trip.style) || {}), seed: Math.floor(Math.random() * 1e6) }, defaults);
@@ -1905,6 +1906,8 @@ async function rebuild(opts = {}) {
   const size = outputSize(s.format, 'preview', shortCss ? Math.min(720, Math.round(shortCss * Math.min(2, window.devicePixelRatio || 1))) : 540);
   const wasPlaying = engine.setProject({ plan, media, audioBuffer: ctx.song.buffer, size });
   engine.selectedOverlay = S.selOverlay;
+  // Einstieg merken: die anderen Orte der Reise nehmen dann einen anderen (Abwechslung über die ganze Reise)
+  if (ctx.kind === 'place' && plan.intro && ctx.rec.lastIntro !== plan.intro) { ctx.rec.lastIntro = plan.intro; ctx.rec.lastIntroAt = Date.now(); }
   updatePlanInfo();
   renderRegie();
   // Material zeigt immer den aktuellen Stand (im Film / draußen)
@@ -1934,8 +1937,14 @@ async function rebuild(opts = {}) {
 }
 
 /** Eingaben für den Planer (Neuberechnung und Suche nach dem besten Schnitt nutzen dieselben). */
+/** Einstiege der anderen Orte dieser Reise (die zuletzt bearbeiteten zuerst, höchstens drei). */
+function otherIntros(ctx) {
+  if (!ctx || ctx.kind !== 'place') return [];
+  return S.places.filter((p) => p.id !== ctx.rec.id && !p.demo && inTrip(p) && p.lastIntro).sort((a, b) => (b.lastIntroAt || 0) - (a.lastIntroAt || 0)).slice(0, 3).map((p) => p.lastIntro);
+}
+
 function planOpts(ctx, media) {
-  const settings = { ...ctx.rec.settings, title: ctxTitle(), subtitle: ctxSub(), hookId: ctx.rec.hookId };
+  const settings = { ...ctx.rec.settings, title: ctxTitle(), subtitle: ctxSub(), hookId: ctx.rec.hookId, avoidIntros: otherIntros(ctx) };
   const chapters = ctx.kind === 'bestof' ? ctx.chapters.map((c) => ({ title: c.title, media: filmMedia(ctx, c.media) })) : null;
   return { an: ctx.song.an, media, settings, overrides: ctx.rec.overrides, chapters, trip: tripContext(), flight: ctx.kind === 'place' && isFlight(ctx.rec) ? flightData(ctx.rec) : null };
 }
@@ -2053,7 +2062,7 @@ async function cutFilm(n = 8, avoid = null) {
     if (S.ctx === ctx && hr && hr.settings && (hr.errorsTo < hr.errorsFrom || hr.to >= hr.from + 8)) {
       Object.assign(st, hr.settings);
       ctx.rec.hookId = hr.hookId;
-      hookMsg = ` Hook ${hr.from} → ${hr.to} von 100.`;
+      hookMsg = ' Einstieg verstärkt.';
     }
   } catch (e) { console.error(e); }
   busy(null);
@@ -3164,12 +3173,41 @@ function drawSongMap() {
   }
 }
 
+/**
+ * Auto-Regie wählt aus statt alles anzubieten: in der Regie-Ebene zeigt „Einstieg“ nur Auto, die drei Einstiege, die
+ * zu Format und Material am besten passen (nicht die der anderen Orte dieser Reise), und die eigene Wahl. „Alle“ klappt
+ * die übrigen auf; die Werkbank zeigt immer alles.
+ */
+function curateIntros(st) {
+  const box = $('introChips');
+  if (!box || !S.ctx) return;
+  const media = S.ctx.media.filter((m) => !m.bad && !m.excluded);
+  const imgs = media.filter((m) => m.kind === 'image').length, hasTitle = !!(ctxTitle() || '').trim() && st.showTitle !== false;
+  const film = st.format === '16:9' || st.format === '2.39';
+  const cand = film ? ['cinema', 'reveal', hasTitle ? 'city' : 'hook', 'type']
+    : hasTitle ? [media.length >= 4 && 'welcome', 'city', 'knockout', imgs >= 6 && 'rush', 'hook'] : ['hook', imgs >= 6 && 'rush', 'split', 'reveal'];
+  const avoid = otherIntros(S.ctx);
+  const rec = cand.filter(Boolean).filter((x) => !avoid.includes(x)).slice(0, 3);
+  for (const b of box.querySelectorAll('[data-v]')) b.classList.toggle('extra', !(b.dataset.v === 'auto' || rec.includes(b.dataset.v) || b.dataset.v === st.intro));
+  let more = $('introMore');
+  if (!more) {
+    more = document.createElement('button');
+    more.type = 'button'; more.id = 'introMore'; more.className = 'chip-more';
+    more.addEventListener('click', () => { box.classList.toggle('all'); curateIntros(S.ctx.rec.settings); });
+    box.after(more);
+  }
+  const n = box.querySelectorAll('.extra').length;
+  more.hidden = !n;
+  more.textContent = box.classList.contains('all') ? 'Weniger zeigen' : `Alle Einstiege (${n} weitere)`;
+}
+
 function renderStyle() {
   const st = S.ctx.rec.settings;
   const r = S.plan ? S.plan.resolved : st;
   setRadio($('fmtChips'), st.format);
   setRadio($('paceChips'), st.pace);
   setRadio($('introChips'), st.intro);
+  curateIntros(st);
   setRadio($('outroChips'), st.outro);
   setRadio($('frameChips'), st.frame);
   setRadio($('querChips'), st.quer || 'auto');
@@ -3315,14 +3353,15 @@ function renderRegie() {
   if (good && S.ctx.song && S.ctx.song.an) {
     try { S.hook = hookScore(p, filmMedia(S.ctx), S.ctx.song.an); } catch (e) { S.hook = null; }
   }
-  // Hook als breite Karte mit Leiste: der Wert, der im Feed über Weiterwischen entscheidet, und die Verbesserung mit einem Tipp
-  const h = S.hook;
-  const hookCard = h ? `<div class="hook-card${h.errors ? ' bad' : h.score >= 75 ? ' good' : ''}">
-      <button type="button" class="hook-main" data-go="hook" aria-label="Hook ${h.score} von 100: Details">
-        <span class="hook-k">Hook</span><b>${h.score}<small> / 100</small></b><i>${esc(hookVerdict(h, true))}</i>
-        <span class="hook-meter" aria-hidden="true"><i style="width:${Math.max(3, h.score)}%"></i></span>
-      </button>
-      ${h.score < 90 || h.errors ? '<button type="button" class="btn small primary-outline hook-fix" id="hookFix">Verbessern</button>' : ''}
+  // Film-Check statt einer Punktzahl: was messbar stimmt, mit Häkchen; was nicht, mit Hinweis und „Verbessern“
+  let chk = [];
+  if (good && S.hook && S.ctx.song && S.ctx.song.an) { try { chk = filmCheck(p, filmMedia(S.ctx), S.ctx.song.an, S.hook); } catch (e) { chk = []; } }
+  S.check = chk;
+  const okN = chk.filter((x) => x.ok).length;
+  const hookCard = chk.length ? `<div class="check-card${okN === chk.length ? ' good' : ''}">
+      <div class="check-head"><span class="hook-k">Film-Check</span><b>${okN} von ${chk.length}</b>
+        ${chk.some((x) => x.key === 'hook' && !x.ok) ? '<button type="button" class="btn small primary-outline hook-fix" id="hookFix">Einstieg verbessern</button>' : ''}</div>
+      <ul class="check-list">${chk.map((x) => `<li><button type="button" class="chk${x.ok ? ' ok' : ''}" data-go="${x.key === 'hook' ? 'hook' : 'check'}" title="${esc(x.detail)}"><i aria-hidden="true">${x.ok ? '✓' : '!'}</i><span>${esc(x.label)}</span></button></li>`).join('')}</ul>
     </div>` : '';
   dec.innerHTML = hookCard + items.map(([k, l, v, sub]) => `<button type="button" class="dec" data-go="${k}"><span>${l}</span><b>${esc(v)}</b>${sub ? `<i>${esc(sub)}</i>` : ''}</button>`).join('');
   const hf = $('hookFix');
@@ -3348,13 +3387,33 @@ function hookVerdict(h, short) {
   return h.score >= 75 ? (short ? 'stoppt beim Scrollen' : 'Keine Fehler. Stoppt beim Scrollen.') : h.score >= 55 ? (short ? 'fehlerfrei, geht stärker' : 'Keine Fehler. Solide, die Hinweise machen ihn stärker.') : (short ? 'fehlerfrei, eher ruhig' : 'Keine Fehler, aber ein eher ruhiger Einstieg – die Hinweise unten helfen.');
 }
 
+/** Film-Check im Detail: jede Eigenschaft mit Erklärung. */
+function openCheckSheet() {
+  const chk = S.check || [];
+  if (!chk.length) return;
+  const body = openSheet(`
+    <h3 id="sheetTitle">Film-Check · ${chk.filter((x) => x.ok).length} von ${chk.length}</h3>
+    <p class="hint">Gemessen am fertigen Schnitt – kein Geschmack, sondern was im Feed und zur Musik zählt.</p>
+    <ul class="hook-parts">${chk.map((x) => `<li class="${x.ok ? 'ok' : 'low'}"><span>${x.ok ? '✓' : '!'} ${esc(x.label)}</span><small>${esc(x.detail)}</small></li>`).join('')}</ul>
+    <div class="sheet-actions">
+      ${chk.some((x) => x.key === 'hook' && !x.ok) ? '<button class="btn primary" data-act="improve" type="button">Einstieg verbessern</button>' : ''}
+      <button class="btn ghost" data-act="close" type="button">Schließen</button>
+    </div>`);
+  body.addEventListener('click', (e) => {
+    const a = e.target.closest('[data-act]');
+    if (!a) return;
+    closeSheet();
+    if (a.dataset.act === 'improve') improveHookNow();
+  });
+}
+
 function openHookSheet() {
   const h = S.hook;
   if (!h) return;
   const errs = h.parts.filter((x) => x.kind === 'fehler'), hints = h.parts.filter((x) => x.kind !== 'fehler');
   const bad = errs.filter((x) => x.v < 0.5);
   const body = openSheet(`
-    <h3 id="sheetTitle">Hook · ${h.score} von 100</h3>
+    <h3 id="sheetTitle">Einstieg · die ersten 1,5 Sekunden</h3>
     <p class="hint">${hookVerdict(h)} Gemessen wird kein Geschmack, sondern was in den ersten 1,5 Sekunden im Feed über Weiterwischen entscheidet.</p>
     <span class="field-label">Fehler</span>
     ${bad.length ? `<ul class="hook-parts">${bad.map((x) => `<li class="low"><span>${esc(x.label)}</span><small>${esc(x.tip)}</small></li>`).join('')}</ul>` : `<p class="hint small hook-ok">Keine Fehler: ${errs.map((x) => esc(x.label)).join(' · ')}.</p>`}
@@ -3383,18 +3442,19 @@ async function improveHookNow() {
   let r;
   try { r = await improveHook(planOpts(ctx, media), (k, n) => busy(`Probiere Einstiege, Songstart und Startbild … ${k} von ${n}`)); } catch (err) { console.error(err); r = null; }
   busy(null);
-  if (!r || !r.settings) { toast(r ? (r.errorsFrom ? `Die ${r.errorsFrom === 1 ? 'Fehlerstelle lässt' : 'Fehlerstellen lassen'} sich mit deinem Material nicht automatisch beheben – die Hinweise im Hook zeigen, was hilft (z. B. ein anderes Startbild).` : `Der Hook ist schon das Stärkste, was dein Material hergibt (${r.from}/100), ohne den übrigen Film zu verschlechtern.`) : 'Konnte den Hook nicht prüfen.'); return; }
+  if (!r || !r.settings) { toast(r ? (r.errorsFrom ? 'Den Fehler im Einstieg kann ich mit deinem Material nicht automatisch beheben – ein anderes Startbild hilft (im Material „Als Startbild“).' : 'Der Einstieg ist schon der stärkste, den dein Material hergibt, ohne den übrigen Film zu verschlechtern.') : 'Konnte den Einstieg nicht prüfen.'); return; }
   Object.assign(ctx.rec.settings, r.settings);
   ctx.rec.hookId = r.hookId;
   commit(); savePlaceSoon();
   engine.t = 0;
   await rebuild();
-  toast(`Hook verbessert: ${r.from} → ${r.to} von 100${r.errorsFrom > r.errorsTo ? `, ${r.errorsFrom - r.errorsTo} Fehler behoben` : ''}. Rückgängig mit ↶.`);
+  toast(`Einstieg verstärkt${r.errorsFrom > r.errorsTo ? ', Fehler behoben' : ''}: Startbild, Songstelle oder Einstieg gewechselt. Rückgängig mit ↶.`);
 }
 
 /** Von einer Entscheidung direkt zur passenden Einstellung springen. */
 function goDecision(k) {
   if (k === 'hook') { openHookSheet(); return; }
+  if (k === 'check') { openCheckSheet(); return; }
   if (k === 'media') S.matFilter = S.plan && S.plan.capacity && S.plan.capacity.droppedIds.length ? 'out' : 'all';
   const target = { len: ['format', 'lenChips'], intro: ['flow', 'introChips'], outro: ['flow', 'outroChips'], look: ['style', 'lookGrid'], pace: ['style', 'paceChips', 'grpRhythm'], media: ['material', 'mediaGrid'] }[k];
   if (!target) return;

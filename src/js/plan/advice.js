@@ -263,7 +263,9 @@ async function improveHook(opts, onProgress, only = {}) {
   const bestUs = imgs.filter((m) => isUs(m)).sort((a, b) => (b.score || 0) - (a.score || 0))[0];
   const hooks = [s0.hookId || null, byScore[0] && byScore[0].id, bestUs && bestUs.id].filter((v, i, a) => a.indexOf(v) === i);
   // only.intros / only.starts: was durchprobiert werden darf (z. B. nur, was der Nutzer auf Auto gelassen hat)
-  const intros = (only.intros || [s0.intro || 'auto', 'rush', 'hook', 'knockout']).filter((v, i, a) => a.indexOf(v) === i);
+  // Abwechslung über die Reise: Einstiege der anderen Orte werden nicht durchprobiert
+  const avoid = s0.avoidIntros || [];
+  const intros = (only.intros || [s0.intro || 'auto', 'rush', 'hook', 'knockout']).filter((v, i, a) => a.indexOf(v) === i && (i === 0 || !avoid.includes(v)));
   const starts = (only.starts || [s0.songStart == null ? 'auto' : s0.songStart, 'hook', 'prehook']).filter((v, i, a) => a.indexOf(v) === i);
   // zuerst Fehler beheben, dann den Stopp-Wert heben
   let best = { h: h0, e: hs0.errors, settings: null, hookId: s0.hookId || null };
@@ -373,5 +375,45 @@ function planAudit(plan, media, an) {
       if (a !== b && seq[i].time < seq[i - 1].time) { add('reihenfolge', i, `Tagesblock ${b} nach ${a} (Position ${i}: ${seq[i - 1].id}→${seq[i].id})`); break; }
     }
   }
+  return out;
+}
+
+/**
+ * Film-Check statt einer Punktzahl: sechs messbare Eigenschaften eines fertigen Schnitts, jede erfüllt oder mit
+ * konkretem Hinweis. Liefert [{ key, ok, label, detail }] – Einstieg (Stopp-Kraft der ersten 1,5 s), Takt (jede Regel
+ * gegen den Song), Abwechslung (keine gleichen Motive hintereinander), Lesbarkeit der Titel, ruhige Videostellen,
+ * Schnitte und Gesang (nicht mitten in eine Zeile in ruhigen Teilen).
+ */
+function filmCheck(plan, media, an, hook) {
+  const byId = new Map(media.map((m) => [m.id, m]));
+  const out = [];
+  const h = hook || hookScore(plan, media, an);
+  out.push({ key: 'hook', ok: !h.errors && h.score >= 70, label: !h.errors && h.score >= 70 ? 'Einstieg stoppt beim Scrollen' : h.errors ? 'Einstieg hat einen Fehler' : 'Einstieg kann stärker sein', detail: h.errors ? 'Schwarzbild, Standbild oder schwaches erstes Bild am Anfang.' : 'Bewegung, früher Schnitt und ein starkes Motiv in den ersten 1,5 s.' });
+  let audit = [];
+  try { audit = planAudit(plan, media, an).concat(planSyncAudit(plan, an)); } catch (e) { audit = []; }
+  out.push({ key: 'takt', ok: !audit.length, label: audit.length ? `${audit.length} ${audit.length === 1 ? 'Stelle weicht' : 'Stellen weichen'} vom Song ab` : 'Jeder Schnitt sitzt im Takt', detail: audit.length ? audit[0].msg : 'Schnitte, Effekte und Einblendungen auf Schlag, Takt oder Einsatz.' });
+  const plain = plan.clips.filter((c) => c.mediaId && !c.split && !c.flash && !c.rush && !c.burst && !c.welcome && !c.grid && !c.stack && !c.loop && !c.recap);
+  let twins = 0;
+  for (let i = 1; i < plain.length; i++) if (sameMotif(byId.get(plain[i - 1].mediaId), byId.get(plain[i].mediaId))) twins++;
+  out.push({ key: 'motiv', ok: !twins, label: twins ? `${twins}× gleiches Motiv hintereinander` : 'Nie zwei gleiche Motive hintereinander', detail: twins ? 'Dein Material hat hier zu wenig Abwechslung – Neu schneiden oder ein ähnliches Bild ausschließen.' : 'Ähnliche Strände, Plätze und Serien stehen nie direkt nebeneinander.' });
+  const titles = plan.overlays.filter((o) => ['city', 'lower', 'chapter'].includes(o.type) && o.text);
+  const weak = titles.filter((o) => !o.place).length;
+  out.push({ key: 'text', ok: !weak, label: !titles.length ? 'Keine Titel im Film' : weak ? 'Titel ohne Kontrastprüfung' : titles.some((o) => o.behind) ? 'Ortsname hinter den Bergen, gut lesbar' : 'Titel an ruhiger Stelle, gut lesbar', detail: 'Schriftfarbe und Abdunklung nach dem Bild darunter (Kontrast ≥ 4,5 : 1).' });
+  let shaky = 0;
+  for (const c of plan.clips) {
+    const m = byId.get(c.mediaId);
+    if (!m || m.kind !== 'video' || !m.shakes || c.srcOffset == null) continue;
+    const a = c.srcOffset, z = a + (c.visEnd - c.visStart) * (c.rate || 1);
+    if (m.shakes.some((x) => x.t >= a - 0.2 && x.t <= z && x.j > 0.6)) shaky++;
+  }
+  out.push({ key: 'video', ok: !shaky, label: shaky ? `${shaky} Videostelle${shaky === 1 ? '' : 'n'} wackelig` : 'Videos an ruhigen, starken Stellen', detail: shaky ? 'Im Material antippen und einen ruhigeren Ausschnitt wählen.' : 'Bewegungshöhepunkte, Lachen und Menschen zuerst; kein Wackeln, kein Start-Ruck.' });
+  const lines = an.vocalLines || [], w0 = plan.win.start, bd = plan.beatDur || an.beatPeriod || 0.5;
+  let inWord = 0;
+  for (const c of plan.clips.slice(1)) {
+    const abs = c.start + w0, lab = c.label;
+    if (lab === 'drop' || lab === 'chorus' || lab === 'build' || c.flash || c.rush || c.burst) continue;
+    if (lines.some(([a, e]) => abs > a + bd * 0.4 && abs < e - bd * 0.3)) inWord++;
+  }
+  out.push({ key: 'gesang', ok: inWord <= 1, label: inWord > 1 ? `${inWord} Schnitte mitten in Gesangszeilen` : lines.length ? 'Schnitte am Ende der Gesangszeilen' : 'Schnitte auf Takt und Phrase', detail: 'In ruhigen Teilen schneidet der Film nie mitten ins Wort.' });
   return out;
 }

@@ -231,11 +231,21 @@ textarea.text-in { resize: vertical; min-height: 70px; }
 .regie h2 { margin: 0; display: flex; align-items: center; gap: 8px; font-family: var(--f-display); font-size: 13px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--beige); }
 .regie h2 svg { width: 17px; height: 17px; }
 .decisions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.check-card { grid-column: 1 / -1; display: grid; gap: 8px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line-2); background: rgba(5, 6, 8, 0.45); }
+.check-card.good { border-color: rgba(228, 213, 183, 0.45); }
+.check-head { display: flex; align-items: center; gap: 10px; }
+.check-head .hook-k { white-space: nowrap; }
+.check-head b { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; flex: 1; white-space: nowrap; }
+.check-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px 10px; }
+.chk { display: flex; align-items: flex-start; gap: 7px; width: 100%; padding: 3px 0; border: 0; background: none; color: var(--text); font-size: 12.5px; line-height: 1.3; text-align: left; cursor: pointer; }
+.chk i { flex: none; width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center; font-style: normal; font-size: 10px; font-weight: 700; background: rgba(226, 122, 110, 0.18); color: #f0a79d; margin-top: 1px; }
+.chk.ok i { background: rgba(228, 213, 183, 0.16); color: var(--beige); }
+.chk:not(.ok) span { color: #f3d0c9; }
 .hook-card { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(228, 213, 183, 0.28); background: rgba(5, 6, 8, 0.45); }
 .hook-card.good { border-color: rgba(228, 213, 183, 0.55); }
 .hook-card.bad { border-color: rgba(226, 122, 110, 0.6); }
 .hook-main { flex: 1; min-width: 0; display: grid; grid-template-columns: auto 1fr; align-items: baseline; column-gap: 10px; row-gap: 4px; padding: 0; border: 0; background: none; color: var(--text); text-align: left; cursor: pointer; }
-.hook-main .hook-k { grid-column: 1 / -1; font: 600 9.5px/1.2 var(--f-sans); letter-spacing: 0.12em; text-transform: uppercase; color: var(--beige-2); }
+.hook-k, .hook-main .hook-k { grid-column: 1 / -1; font: 600 9.5px/1.2 var(--f-sans); letter-spacing: 0.12em; text-transform: uppercase; color: var(--beige-2); }
 .hook-main b { font: 600 22px/1 var(--f-display); font-variant-numeric: tabular-nums; }
 .hook-main b small { font-size: 12px; font-weight: 500; color: var(--muted); }
 .hook-main > i { font-style: normal; font-size: 12px; color: var(--muted); min-width: 0; }
@@ -567,3 +577,8 @@ body.comparing .mini, body.comparing .mini-bar { display: none !important; }
 .beat-card[aria-checked="true"] { border-color: var(--beige); background: var(--navy-2); box-shadow: inset 0 0 0 1px var(--beige); }
 .beat-now { font: 12px/1.4 var(--f-mono); color: var(--beige); font-variant-numeric: tabular-nums; }
 .beat-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* Auto-Regie wählt aus: in der Regie nur die passenden Einstiege, der Rest auf Wunsch */
+.app[data-level="regie"] #introChips:not(.all) .extra { display: none; }
+.chip-more { justify-self: start; margin-top: 2px; padding: 4px 0; border: 0; background: none; color: var(--beige-2); font-size: 12.5px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.app[data-level="bench"] .chip-more { display: none; }

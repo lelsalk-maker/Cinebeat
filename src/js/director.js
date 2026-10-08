@@ -441,6 +441,18 @@ function direct(an, media, s, chapters, flight) {
     else if (fr.kind === 'film') rs.intro = D >= 25 ? 'cinema' : 'type';
     else if (D <= 18) rs.intro = hasTitle ? 'city' : 'hook';
     else rs.intro = pick([hasTitle ? 'city' : 'hook', 'hook', 'type', ...(rs.split !== 'off' ? ['split'] : []), ...(list.length >= 12 && rs.pace !== 'ruhig' ? ['rush'] : [])]);
+    // Abwechslung über die Reise: haben die anderen Orte schon diesen Einstieg, nimmt dieser Ort einen anderen,
+    // der zu Stil und Material passt (schlicht bleibt schlicht: Ortsname, stärkstes Bild, Wort für Wort)
+    const avoid = s.avoidIntros || [];
+    if (!flight && !(chapters && chapters.length) && avoid.includes(rs.intro)) {
+      const simple = effectsOf(s) === 'schlicht';
+      const alt = (simple ? [hasTitle && 'city', 'hook', hasTitle && 'type'] : [hasTitle && 'city', 'hook', hasTitle && 'type', hasTitle && 'knockout', list.filter((m) => m.kind === 'image').length >= 6 && 'rush', rs.split !== 'off' && 'split'])
+        .filter(Boolean).filter((x) => !avoid.includes(x));
+      if (alt.length) {
+        rs.intro = alt[(hashStr((s.title || '') + ':v') >>> 0) % alt.length];
+        notes.push('Abwechslung: die anderen Orte der Reise beginnen schon so – hier ein anderer Einstieg.');
+      }
+    }
   }
   if (flight) rs.intro = 'flight';
   if (rs.intro === 'grid' && list.length < 4) rs.intro = hasTitle ? 'city' : 'hook';
