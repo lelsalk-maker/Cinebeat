@@ -8,9 +8,9 @@ const uid = (p) => (p || 'x') + Date.now().toString(36) + Math.random().toString
 const DEFAULT_SETTINGS = { format: '9:16', look: 'auto', pace: 'auto', intro: 'auto', outro: 'auto', length: 'auto', songStart: 'auto', frame: 'auto', split: 'auto', seed: 7 };
 const BESTOF_DEFAULTS = { ...DEFAULT_SETTINGS, format: '16:9' };
 const SECTION_DE = { intro: 'Intro', verse: 'Strophe', build: 'Aufbau', chorus: 'Refrain', drop: 'Drop', break: 'Break', outro: 'Outro' };
-const SECTION_COLOR = { intro: '#243453', verse: '#34507a', build: '#6e93c9', chorus: '#c7b48f', drop: '#e4d5b7', break: '#1c2a42', outro: '#243453' };
+const SECTION_COLOR = { intro: '#2c2d33', verse: '#3c3e47', build: '#4d6db8', chorus: '#2f6bff', drop: '#7aa7ff', break: '#232328', outro: '#2c2d33' };
 const LOOK_SWATCH = {
-  auto: 'conic-gradient(from 200deg at 50% 60%, #2c4a74, #c7b48f, #6e93c9, #e4d5b7, #2c4a74)',
+  auto: 'conic-gradient(from 200deg at 50% 60%, #2a2c33, #2f6bff, #7aa7ff, #e9e9ec, #2a2c33)',
   natur: 'linear-gradient(120deg,#35607e,#7c9c78 55%,#e2d6b4)',
   golden: 'linear-gradient(120deg,#6a4020,#d99a4e 55%,#f3d9a8)',
   kino: 'linear-gradient(120deg,#0c3440,#1f6f78 40%,#d98a45 75%,#f1c27f)',
@@ -722,7 +722,7 @@ function openStartCheck(raw, st, meta) {
     <button class="btn ghost small" id="stRedo" type="button">Neu aufnehmen</button>`, () => { stopPlay(); if (ac) ac.close().catch(() => {}); if (!done) { done = true; useMicTake(raw, at, meta); } });
   const cv = body.querySelector('#stWave'), zm = body.querySelector('#stZoom'), info = body.querySelector('#stInfo');
   const css = getComputedStyle(document.documentElement), col = (v, f) => css.getPropertyValue(v).trim() || f;
-  const C = { bg: col('--black', '#050608'), cut: col('--line', '#1e2b42'), wave: col('--beige', '#e4d5b7'), dim: col('--muted', '#8b95a8'), mark: col('--tungsten', '#f2c98a'), text: col('--text', '#eceae4') };
+  const C = { bg: col('--black', '#0b0b0d'), cut: col('--line', '#26262b'), wave: col('--beige', '#7aa7ff'), dim: col('--muted', '#9b9ba3'), mark: col('--tungsten', '#f2c98a'), text: col('--text', '#f3f3f1') };
   function view() { if (at < v0 + 0.15 || at > v0 + span - 0.15) v0 = Math.max(0, Math.min(dur - span, at - 0.6)); }
   // Wellenform von v bis v+sp in einen Canvas; was vor der Linie liegt (wird weggeschnitten), im Schatten
   function paint(c, v, sp, head) {
@@ -1193,8 +1193,8 @@ function videoPlaceholder(w, h) {
   const s = 160 / Math.max(w, h, 1), c = document.createElement('canvas');
   c.width = Math.max(2, Math.round(w * s)); c.height = Math.max(2, Math.round(h * s));
   const x = c.getContext('2d');
-  x.fillStyle = '#14203a'; x.fillRect(0, 0, c.width, c.height);
-  x.fillStyle = '#e8dcc4'; x.beginPath();
+  x.fillStyle = '#1e1e22'; x.fillRect(0, 0, c.width, c.height);
+  x.fillStyle = '#7aa7ff'; x.beginPath();
   const cx = c.width / 2, cy = c.height / 2, r = Math.min(c.width, c.height) * 0.16;
   x.moveTo(cx - r * 0.6, cy - r); x.lineTo(cx + r, cy); x.lineTo(cx - r * 0.6, cy + r); x.closePath(); x.fill();
   return thumbFrom(c, c.width, c.height, 160);
@@ -1996,7 +1996,7 @@ function showFlow(media) {
     const tg = flowTarget(st);
     const peak = (an.sections || []).find((x) => x.label === 'drop' || x.label === 'chorus');
     const songLen = Math.max(0, Math.min(an.duration, an.lastSound + 0.2) - Math.max(0, an.firstSound));
-    const bar = (an.sections || []).map((x) => `<i style="flex:${Math.max(0.001, x.end - x.start).toFixed(2)};background:${SECTION_COLOR[x.label] || '#34507a'}" title="${SECTION_DE[x.label] || ''}"></i>`).join('');
+    const bar = (an.sections || []).map((x) => `<i style="flex:${Math.max(0.001, x.end - x.start).toFixed(2)};background:${SECTION_COLOR[x.label] || '#3c3e47'}" title="${SECTION_DE[x.label] || ''}"></i>`).join('');
     const [a, b] = adv.images, [va, vb] = adv.videos;
     const vTxt = vb ? (va ? `${va}–${vb} Videos` : `bis ${vb} ${vb === 1 ? 'Video' : 'Videos'}`) : 'keine Videos nötig';
     const allOn = allMediaOn(st) && ctx.kind === 'place' && !isFlight(ctx.rec);
@@ -2116,7 +2116,7 @@ function buildStripBase() {
   const off = document.createElement('canvas');
   off.width = w; off.height = h;
   const x = off.getContext('2d');
-  x.fillStyle = '#0a101b';
+  x.fillStyle = '#111113';
   x.fillRect(0, 0, w, h);
   const plan = S.plan;
   if (!plan || !S.ctx || !S.ctx.song) { stripBase = off; return; }
@@ -2147,7 +2147,7 @@ function buildStripBase() {
   plan.clips.forEach((cl, i) => {
     if (cl.loop) return;
     const x0 = X(cl.start), x1 = X(cl.end);
-    x.fillStyle = i === S.selClip ? '#e4d5b7' : cl.split ? '#6e93c9' : i % 2 ? '#2a3a57' : '#1c2a42';
+    x.fillStyle = i === S.selClip ? '#7aa7ff' : cl.split ? '#4d6db8' : i % 2 ? '#35353b' : '#232328';
     x.fillRect(x0, h - 9 * dpr, Math.max(1, x1 - x0 - dpr), 7 * dpr);
     if (i > 0) {
       x.fillStyle = 'rgba(236,234,228,0.28)';
@@ -2169,10 +2169,10 @@ function drawStrip(t) {
   // mitgetippte Momente (gespeicherte beige, gerade getippte im Kinolicht)
   const tp = (S.ctx && S.ctx.rec.overrides.taps) || [];
   const mark = (songT, col) => { const t = songT - S.plan.win.start; if (t < 0 || t > S.plan.duration) return; const x0 = (t / S.plan.duration) * c.width; x.fillStyle = col; x.beginPath(); x.moveTo(x0 - 4 * dpr, 0); x.lineTo(x0 + 4 * dpr, 0); x.lineTo(x0, 6 * dpr); x.fill(); };
-  for (const t of tp) mark(t, '#e4d5b7');
-  for (const t of TAP.list) mark(t, '#f2c98a');
+  for (const t of tp) mark(t, '#7aa7ff');
+  for (const t of TAP.list) mark(t, '#ffffff');
   // Abspielmarke in warmem Kinolicht (--tungsten): „läuft gerade“ hebt sich vom beigen Bedienelement ab
-  x.fillStyle = '#f2c98a';
+  x.fillStyle = '#7aa7ff';
   x.fillRect(Math.round(px - dpr), 0, 2 * dpr, c.height);
   c.setAttribute('aria-valuenow', String(Math.round((tt / S.plan.duration) * 100)));
 }
@@ -2512,7 +2512,7 @@ function drawTripMap() {
   const oy = -10; // Platz für die Legende unten
   const pr = (la, lo) => [W / 2 + (lo - mx) * cf * sc, H / 2 + oy - (la - my) * sc];
   const g = x.createLinearGradient(0, 0, 0, H);
-  g.addColorStop(0, col('--night', '#0a101b')); g.addColorStop(1, col('--black', '#050608'));
+  g.addColorStop(0, col('--night', '#111113')); g.addColorStop(1, col('--black', '#0b0b0d'));
   x.fillStyle = g; x.fillRect(0, 0, W, H);
   // Land: feines Punkteraster (gleiche Weltkarte wie die Etappenkarte im Film); die Küste wird zwischen den
   // Rasterzellen weich interpoliert, damit sie auch bei starkem Zoom rund statt blockig wirkt
@@ -2523,7 +2523,7 @@ function drawTripMap() {
     return (v(i, j) * (1 - fb) + v(i, j + 1) * fb) * (1 - fa) + (v(i + 1, j) * (1 - fb) + v(i + 1, j + 1) * fb) * fa;
   };
   const gap = 6, r = 0.95;
-  x.fillStyle = col('--line-2', '#2a3a57');
+  x.fillStyle = col('--line-2', '#35353b');
   for (let py = gap / 2; py < H; py += gap) {
     for (let px = gap / 2; px < W; px += gap) {
       const la = my - (py - H / 2 - oy) / sc, lo = mx + (px - W / 2) / (sc * cf);
@@ -2541,7 +2541,7 @@ function drawTripMap() {
       P[i][0] -= ux * push; P[i][1] -= uy * push; P[k][0] += ux * push; P[k][1] += uy * push;
     }
   }
-  const beige = col('--beige', '#e4d5b7');
+  const beige = col('--beige', '#7aa7ff');
   // Route: sanfte Bögen zwischen den Etappen
   x.lineCap = 'round'; x.lineJoin = 'round'; x.strokeStyle = beige; x.lineWidth = 1.6; x.globalAlpha = 0.85;
   x.beginPath();
@@ -2556,7 +2556,7 @@ function drawTripMap() {
   x.font = `600 10px ${css.getPropertyValue('--f-mono') || 'monospace'}`; x.textAlign = 'center'; x.textBaseline = 'middle';
   const labels = [];
   P.forEach((q, i) => {
-    x.fillStyle = col('--black', '#050608'); x.beginPath(); x.arc(q[0], q[1], 9, 0, Math.PI * 2); x.fill();
+    x.fillStyle = col('--black', '#0b0b0d'); x.beginPath(); x.arc(q[0], q[1], 9, 0, Math.PI * 2); x.fill();
     x.strokeStyle = beige; x.lineWidth = 1.4; x.stroke();
     x.fillStyle = beige; x.fillText(String(i + 1), q[0], q[1] + 0.5);
     labels.push(q);
@@ -2572,7 +2572,7 @@ function drawTripMap() {
     const clash = placed.some((b) => rect[0] < b[0] + b[2] && rect[0] + rect[2] > b[0] && rect[1] < b[1] + b[3] && rect[1] + rect[3] > b[1]) || labels.some((p, k) => k !== i && Math.abs(p[0] - (lx + w / 2)) < w / 2 + 10 && Math.abs(p[1] - ly) < 12);
     if (clash) return;
     placed.push(rect);
-    x.fillStyle = col('--text', '#eceae4'); x.globalAlpha = 0.92; x.fillText(name, lx, ly); x.globalAlpha = 1;
+    x.fillStyle = col('--text', '#f3f3f1'); x.globalAlpha = 0.92; x.fillText(name, lx, ly); x.globalAlpha = 1;
   });
   tripMapState.pts = P.map((q, i) => ({ x: q[0], y: q[1], id: stops[i].id }));
   const km = tripKm(stops);
@@ -3145,7 +3145,7 @@ function drawSongMap() {
   const x = c.getContext('2d');
   const an = ctx.song.an;
   const D = an.duration;
-  x.fillStyle = '#0f1a2c';
+  x.fillStyle = '#17171a';
   x.fillRect(0, 0, w, h);
   for (const s of an.sections) {
     x.fillStyle = SECTION_COLOR[s.label] || '#444';
@@ -3165,10 +3165,10 @@ function drawSongMap() {
   x.fill();
   if (S.plan) {
     const a = (S.plan.win.start / D) * w, b = (S.plan.win.end / D) * w;
-    x.strokeStyle = '#e4d5b7';
+    x.strokeStyle = '#7aa7ff';
     x.lineWidth = 2 * dpr;
     x.strokeRect(a + dpr, dpr, Math.max(2, b - a - 2 * dpr), h - 2 * dpr);
-    x.fillStyle = 'rgba(228,213,183,0.08)';
+    x.fillStyle = 'rgba(47,107,255,0.1)';
     x.fillRect(a, 0, b - a, h);
   }
 }

@@ -56,7 +56,7 @@ const head = (extra, csp) => `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <title>CineBeat</title>
 <meta name="description" content="${desc}">
-<meta name="theme-color" content="#050608">
+<meta name="theme-color" content="#0b0b0d">
 <meta name="color-scheme" content="dark">
 ${extra}
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}img{max-width:100%}</style>
