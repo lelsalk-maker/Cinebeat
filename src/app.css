@@ -307,6 +307,12 @@ details.more[open] { display: grid; gap: 16px; }
 .mic-count.go b { color: var(--beige); }
 .mic-meter { height: 6px; border-radius: 3px; background: var(--navy); overflow: hidden; }
 .mic-meter span { display: block; height: 100%; background: var(--beige); transform-origin: left; transform: scaleX(0); transition: transform 80ms linear; }
+.st-wave { display: block; width: 100%; height: 120px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--black); touch-action: none; cursor: ew-resize; }
+.st-zoom { height: 56px; cursor: default; }
+.st-wave:focus-visible { outline: 2px solid var(--beige); outline-offset: 2px; }
+.st-info { font-variant-numeric: tabular-nums; }
+.st-nudge { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.st-nudge .btn { padding: 0 6px; font-variant-numeric: tabular-nums; }
 .song-map-wrap { display: grid; gap: 7px; }
 #songMap { width: 100%; height: 64px; display: block; border-radius: 10px; background: var(--navy); cursor: pointer; touch-action: none; }
 .song-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font: 10.5px/1.3 var(--f-mono); color: var(--muted); }

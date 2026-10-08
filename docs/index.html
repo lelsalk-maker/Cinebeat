@@ -329,6 +329,12 @@ details.more[open] { display: grid; gap: 16px; }
 .mic-count.go b { color: var(--beige); }
 .mic-meter { height: 6px; border-radius: 3px; background: var(--navy); overflow: hidden; }
 .mic-meter span { display: block; height: 100%; background: var(--beige); transform-origin: left; transform: scaleX(0); transition: transform 80ms linear; }
+.st-wave { display: block; width: 100%; height: 120px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--black); touch-action: none; cursor: ew-resize; }
+.st-zoom { height: 56px; cursor: default; }
+.st-wave:focus-visible { outline: 2px solid var(--beige); outline-offset: 2px; }
+.st-info { font-variant-numeric: tabular-nums; }
+.st-nudge { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.st-nudge .btn { padding: 0 6px; font-variant-numeric: tabular-nums; }
 .song-map-wrap { display: grid; gap: 7px; }
 #songMap { width: 100%; height: 64px; display: block; border-radius: 10px; background: var(--navy); cursor: pointer; touch-action: none; }
 .song-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font: 10.5px/1.3 var(--f-mono); color: var(--muted); }
@@ -1840,62 +1846,69 @@ function percentile(arr, p) {
 const AN_VER = 10;
 
 /**
- * Mithören: findet in der Mikrofonaufnahme den genauen Einsatz des Songs nach dem Startsignal.
- * 1. Den hohen Startton (beepHz) in der Aufnahme suchen: so zählt die echte Zeit, nicht die geschätzte (Latenzen).
- * 2. Für den Einsatz nur tiefe Frequenzen betrachten (Tiefpass): der Piepton stört dann nicht, Bass und Schlagzeug schon.
- * 3. Rauschpegel aus der Pause vor dem Signal, dann der erste deutlich und anhaltend lautere Moment, auf ms zurückverfolgt.
- * Liefert { at (Sample), go (Sample des Starttons), found, early (Song lief schon vorher) }.
+ * Mithören: findet in der Mikrofonaufnahme den genauen Einsatz des Songs – ohne Startton, egal wann Play gedrückt wurde.
+ * 1. Pegel je Millisekunde (ohne Brummen unter 30 Hz), daraus 10-ms-Rahmen.
+ * 2. Rauschen = die ruhigste Drittelsekunde, Songpegel = die lauten Stellen.
+ * 3. Der Song ist der erste Moment deutlich über dem Rauschen, nach dem es hörbar weitergeht
+ *    (ein Klick, Husten oder das Tippen aufs Display zählt nicht).
+ * 4. Von dort zurück über leise Intros bis an den ersten Ton, dann auf die Millisekunde und das Sample genau.
+ * Liefert { at (Sample), found, early (Song lief schon beim Start der Aufnahme), snr (dB), prev (Sample eines Geräuschs kurz davor oder −1) }.
  */
-function findSongStart(d, sr, goEst, beepHz = 1976) {
-  const hop = Math.max(1, Math.round(sr * 0.005)), win = Math.max(hop, Math.round(sr * 0.01));
-  // Startton per Goertzel suchen (±0,5 s um die Schätzung)
-  let go = goEst, best = 0, sum = 0, cnt = 0;
-  const w = 2 * Math.cos((2 * Math.PI * beepHz) / sr);
-  for (let i = Math.max(0, goEst - Math.round(sr * 0.5)); i < Math.min(d.length - win, goEst + Math.round(sr * 0.5)); i += hop) {
-    let s0 = 0, s1 = 0, s2 = 0, e = 0;
-    for (let k = i; k < i + win; k++) { s0 = d[k] + w * s1 - s2; s2 = s1; s1 = s0; e += d[k] * d[k]; }
-    const pw = (s1 * s1 + s2 * s2 - w * s1 * s2) / win / Math.max(1e-9, e);
-    sum += pw; cnt++;
-    if (pw > best) { best = pw; go = i; }
+function findSongStart(d, sr) {
+  const n = d.length, bl = Math.max(1, Math.round(sr / 1000)), nb = Math.floor(n / bl);
+  if (nb < 400) return { at: 0, found: false, early: false, snr: 0 };
+  // Gleichanteil und Brummen raus (Hochpass erster Ordnung, ~30 Hz)
+  const hp = new Float32Array(n), R = 1 - (2 * Math.PI * 30) / sr;
+  let x1 = 0, y1 = 0;
+  for (let i = 0; i < n; i++) { const y = d[i] - x1 + R * y1; x1 = d[i]; y1 = y; hp[i] = y; }
+  const ms = new Float32Array(nb);
+  for (let b = 0; b < nb; b++) { let s = 0; for (let i = b * bl, e = i + bl; i < e; i++) s += hp[i] * hp[i]; ms[b] = s / bl; }
+  const nf = Math.floor(nb / 10), f = new Float32Array(nf);
+  for (let j = 0; j < nf; j++) { let s = 0; for (let b = j * 10; b < j * 10 + 10; b++) s += ms[b]; f[j] = Math.sqrt(s / 10); }
+  const sorted = (a) => Float32Array.from(a).sort();
+  // Rauschen: Median der ruhigsten 300 ms
+  let N = Infinity;
+  for (let j = 0; j + 30 <= nf; j += 5) N = Math.min(N, sorted(f.subarray(j, j + 30))[15]);
+  N = Math.max(N, 1e-7);
+  const fs = sorted(f), M = fs[Math.floor(nf * 0.95)];
+  const snr = 20 * Math.log10(M / N);
+  if (M < N * 4) return { at: 0, found: false, early: false, snr };
+  const T = Math.max(N * 4, Math.sqrt(N * M));
+  const loud = (a, z, k) => { let c = 0; a = Math.max(0, a); z = Math.min(nf, z); for (let j = a; j < z; j++) if (f[j] > N * k) c++; return z > a ? c / (z - a) : 0; };
+  // längste Pause (Rahmen am Rauschen) zwischen a und z
+  const gap = (a, z) => { let g = 0, c = 0; for (let k = a; k < Math.min(nf, z); k++) { c = f[k] <= N * 2 ? c + 1 : 0; g = Math.max(g, c); } return g; };
+  // erster deutlich lauter Moment, nach dem die Musik weiterläuft: sofort hörbar, 3 s ohne Pause über 0,4 s
+  // (ein Klick, Husten, Tippen oder ein kurzer Satz davor zählt so nicht)
+  let j = -1;
+  for (let k = 0; k < nf; k++) if (f[k] > T && loud(k, k + 10, 2.5) >= 0.5 && loud(k, k + 200, 3) >= 0.2 && gap(k, k + 300) < 40) { j = k; break; }
+  if (j < 0) return { at: 0, found: false, early: false, snr };
+  // zurück durch ein leises Intro, solange davor noch Musik zu hören ist
+  let j0 = j;
+  while (j0 > 0 && loud(j0 - 30, j0, 2.5) >= 0.25) j0 -= 10;
+  // erster Rahmen, der hörbar weitergeht (nicht nur ein Knacken)
+  let k0 = j0;
+  for (let k = Math.max(0, j0 - 30); k <= j0 + 10 && k < nf; k++) if (f[k] > N * 3 && loud(k, k + 10, 2.5) >= 0.5) { k0 = k; break; }
+  // auf die Millisekunde: zurück, solange der Pegel noch über dem Rauschen liegt
+  const mN = N * N;
+  let b0 = k0 * 10;
+  for (let b = Math.max(0, k0 * 10 - 10); b < Math.min(nb, k0 * 10 + 10); b++) if (ms[b] > mN * 9) { b0 = b; break; }
+  while (b0 > 2 && (ms[b0 - 1] + ms[b0 - 2] + ms[b0 - 3]) / 3 > mN * 1.5) b0--;
+  // … und aufs Sample: erster Viertel-Millisekunden-Abschnitt deutlich über dem Rauschen
+  const q = Math.max(4, Math.round(sr / 4000));
+  let at = b0 * bl, acc = 0;
+  const a0 = Math.max(0, (b0 - 2) * bl), a1 = Math.min(n - q, (b0 + 2) * bl);
+  for (let i = a0; i < a0 + q; i++) acc += Math.abs(hp[i]);
+  for (let i = a0; i < a1; i++) {
+    if (acc / q > N * 1.6) { at = i + (q >> 1); break; }
+    acc += Math.abs(hp[i + q]) - Math.abs(hp[i]);
   }
-  const beepFound = cnt && best > (sum / cnt) * 6 && best > 0.2;
-  if (!beepFound) go = goEst;
-  else go += Math.round(sr * 0.012);
-  // schmaler Kerbfilter genau auf dem Startton (zweimal): der Piepton verschwindet, die Musik bleibt vollständig
-  const lp = Float32Array.from(d);
-  const w0 = (2 * Math.PI * beepHz) / sr, al = Math.sin(w0) / (2 * 6), cw = Math.cos(w0);
-  const b0 = 1 / (1 + al), b1 = (-2 * cw) / (1 + al), a1 = b1, a2 = (1 - al) / (1 + al);
-  for (let pass = 0; pass < 2; pass++) {
-    let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
-    for (let i = 0; i < lp.length; i++) { const x = lp[i], y = b0 * x + b1 * x1 + b0 * x2 - a1 * y1 - a2 * y2; x2 = x1; x1 = x; y2 = y1; y1 = y; lp[i] = y; }
-  }
-  const rms = (i) => { let s = 0, n = 0; for (let k = Math.max(0, i); k < Math.min(lp.length, i + win); k++) { s += lp[k] * lp[k]; n++; } return n ? Math.sqrt(s / n) : 0; };
-  const nA = Math.max(0, go - Math.round(sr * 0.85)), nB = Math.max(nA + hop, go - Math.round(sr * 0.12));
-  const nf = [];
-  for (let i = nA; i < nB; i += hop) nf.push(rms(i));
-  nf.sort((x, y) => x - y);
-  const noise = nf.length ? nf[Math.floor(nf.length * 0.5)] : 0;
-  const quiet = nf.length ? nf[Math.floor(nf.length * 0.2)] : 0;
-  const a = go - Math.round(sr * 0.03), z = Math.min(lp.length - win, go + Math.round(sr * 5));
-  let peak = 0;
-  for (let i = a; i < Math.min(z, a + Math.round(sr * 3)); i += hop) peak = Math.max(peak, rms(i));
-  if (peak <= 1e-6) return { at: go, go, found: false, early: false, beep: beepFound };
-  const early0 = quiet > peak * 0.1;
-  if (early0) return { at: go, go, found: false, early: true, beep: beepFound };
-  const early = false;
-  const thr = Math.max(noise * 4, peak * 0.08, 1e-5);
-  for (let i = a; i < z; i += hop) {
-    if (rms(i) <= thr) continue;
-    let m = 0;
-    for (let k = 1; k <= 10; k++) m += rms(i + k * hop);
-    if (m / 10 < thr * 0.7) continue;
-    let j = i;
-    const lo = Math.max(noise * 1.8, thr * 0.25);
-    for (let s2 = 0; s2 < 8 && j - hop > a && rms(j - hop) > lo; s2++) j -= hop;
-    // das Messfenster reicht 10 ms nach vorn: der Einsatz liegt etwa in seiner Mitte
-    return { at: j + Math.round(win * 0.6), go, found: true, early, beep: beepFound };
-  }
-  return { at: go, go, found: false, early, beep: beepFound };
+  // Song lief schon, als die Aufnahme begann
+  if (at < sr * 0.15) return { at: 0, found: true, early: true, snr };
+  // war kurz davor (bis 3 s) noch etwas Deutliches zu hören? Dann kann man dort beginnen (Prüfblatt)
+  let prev = -1;
+  for (let k = Math.floor(at / bl / 10) - 4; k >= Math.max(0, Math.floor(at / bl / 10) - 300); k--) if (f[k] > N * 4 && loud(k - 2, k + 3, 3) >= 0.6) { prev = k; break; }
+  if (prev >= 0) { while (prev > 0 && f[prev - 1] > N * 2) prev--; prev *= 10 * bl; }
+  return { at, found: true, early: false, snr, prev };
 }
 
 async function analyzeAudio(buffer, onProgress) {
@@ -14594,7 +14607,7 @@ function micErrorText(e) {
   return `Mikrofon konnte nicht gestartet werden (${n || 'unbekannt'}). Öffne CineBeat neu und versuch es noch einmal.`;
 }
 
-function openMicSheet() {
+function openMicSheet(pre = {}) {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { toast(inFrame ? micErrorText(null) : `Mithören braucht die Web-App über https: ${APP_URL}`, true); return; }
   engine.pause();
   let rec = null;
@@ -14602,9 +14615,9 @@ function openMicSheet() {
   const body = openSheet(`
     <h3 id="sheetTitle">Song mithören</h3>
     <p class="hint">Spiel den Song auf einem <b>zweiten Gerät</b> oder Lautsprecher ab, z. B. Spotify am Laptop. Auf demselben iPhone stoppt iOS die Musik, sobald das Mikrofon läuft.</p>
-    <label class="field"><span class="field-label">Songname für Instagram</span><input class="text-in" id="micName" maxlength="60" placeholder="z. B. Titel – Interpret" autocomplete="off"></label>
-    <label class="field"><span class="field-label">Ich starte den Song bei</span><input class="text-in" id="micOffset" inputmode="numeric" value="0:00" maxlength="5" aria-describedby="micOffHint"></label>
-    <p class="hint small" id="micOffHint">Stell den Song auf dem zweiten Gerät auf diese Stelle (am besten 0:00) und lass ihn pausiert. Nach dem Start zählt die App drei Töne herunter: <b>beim dritten, hohen Ton auf Play drücken</b>. Den genauen Einsatz misst die App selbst, deine Reaktionszeit spielt keine Rolle.</p>
+    <label class="field"><span class="field-label">Songname für Instagram</span><input class="text-in" id="micName" maxlength="60" placeholder="z. B. Titel – Interpret" autocomplete="off" value="${esc(pre.name || '')}"></label>
+    <label class="field"><span class="field-label">Ich starte den Song bei</span><input class="text-in" id="micOffset" inputmode="numeric" value="${esc(pre.offset != null ? fmtClock(pre.offset) : '0:00')}" maxlength="5" aria-describedby="micOffHint"></label>
+    <p class="hint small" id="micOffHint">Stell den Song auf dem zweiten Gerät auf diese Stelle (am besten 0:00) und lass ihn pausiert. Nach dem Start zählt die App lautlos 3 – 2 – 1 herunter: <b>bei „Los“ auf Play drücken</b>. Ob etwas früher oder später, ist egal: Die App hört selbst, wann der Song einsetzt, und schneidet genau dort. Danach kannst du den Start anhören und auf 10 ms genau verschieben.</p>
     <div class="mic-count" id="micCount" hidden aria-live="assertive"><b id="micNum">3</b><span id="micCue">Bereit machen …</span></div>
     ${inFrame ? `<p class="note">Im Claude-Link sperrt die Umgebung das Mikrofon. Öffne CineBeat über <b>${APP_URL}</b>, dort fragt das iPhone nach dem Zugriff.</p>` : ''}
     <p class="note" id="micDenied" hidden></p>
@@ -14636,11 +14649,9 @@ function openMicSheet() {
       });
       go.textContent = 'Fertig';
       go.disabled = true;
-      // Countdown: drei Töne im Sekundenabstand, der dritte (höher) ist das Startsignal
-      const t0 = rec.now() + 0.9;
-      goAt = t0 + 2;
+      // lautloser Countdown: kein Ton kann in die Aufnahme geraten; die Stille davor misst das Raumrauschen
+      goAt = rec.now() + 2.9;
       rec.goAt = goAt;
-      [0, 1, 2].forEach((k) => rec.beep(t0 + k, k === 2 ? 1976 : 1480));
       const cnt = body.querySelector('#micCount'), num = body.querySelector('#micNum'), cue = body.querySelector('#micCue');
       cnt.hidden = false;
       body.querySelector('#micTime').textContent = 'gleich geht es los';
@@ -14649,7 +14660,7 @@ function openMicSheet() {
         const left = goAt - rec.now();
         if (left > 2.05) { num.textContent = '3'; cue.textContent = 'Bereit machen …'; }
         else if (left > 1.05) { num.textContent = '2'; cue.textContent = 'Finger auf Play'; }
-        else if (left > 0.05) { num.textContent = '1'; cue.textContent = 'beim nächsten Ton starten'; }
+        else if (left > 0.05) { num.textContent = '1'; cue.textContent = 'gleich'; }
         else { num.textContent = 'Los'; cue.textContent = 'jetzt Play drücken'; cnt.classList.add('go'); }
         cnt.classList.toggle('pulse', left > 0.05 && (left % 1) > 0.8);
         if (left > -1.2) requestAnimationFrame(tick); else { cnt.hidden = true; cnt.classList.remove('go'); }
@@ -14664,7 +14675,7 @@ function openMicSheet() {
       if (d) { d.textContent = micErrorText(e); d.hidden = false; }
     }
   });
-  async function finish() {
+  function finish() {
     if (!rec) return;
     const r = rec;
     rec = null;
@@ -14673,22 +14684,129 @@ function openMicSheet() {
     const name = body.querySelector('#micName').value.trim() || 'Mitgehörter Song';
     const offset = parseClock(body.querySelector('#micOffset').value);
     closeSheet();
-    try {
-      busy('Analysiere Songaufbau …');
-      // genauer Einsatz des Songs nach dem Startsignal: ab dort beginnt die Aufnahme (Sample 0 = eingetragene Stelle)
-      const st = findSongStart(raw.getChannelData(0), raw.sampleRate, goS || 0, 1976);
-      const cut = st.found && !st.early ? st.at : Math.round((goS || 0) + raw.sampleRate * 0.25);
-      const buffer = trimBuffer(raw, cut);
-      if (!st.found || st.early) toast(st.early ? 'Der Song lief schon vor dem Startton. Für genaue Schnitte: Song pausieren, neu mithören und beim hohen Ton starten.' : 'Den Einsatz konnte ich nicht sicher hören. Die Startzeit kann etwas abweichen.', true);
-      const an = await analyzeAudio(buffer, (p) => busy(`Analysiere Songaufbau … ${Math.round(p * 100)} %`));
-      const song = { id: uid('s'), name, buffer, an, mic: true, offset };
-      keepSong(song);
-      saveSong(song);
-      await useSong(song);
-    } catch (e) {
-      busy(null);
-      toast('Das war zu leise oder zu kurz. Versuch es etwas lauter und länger.', true);
+    // Einsatz des Songs in der ganzen Aufnahme suchen, dann zum Prüfen zeigen
+    const st = findSongStart(raw.getChannelData(0), raw.sampleRate);
+    openStartCheck(raw, st, { name, offset, goS });
+  }
+}
+
+/**
+ * Start prüfen: zeigt den erkannten Song-Einsatz in der Wellenform. Linie ziehen oder um 10/50 ms verschieben,
+ * ab der Linie anhören (der erste Ton muss sofort und vollständig kommen), dann schneidet die App genau dort.
+ * Schließen übernimmt die Linie: die Aufnahme geht nie verloren.
+ */
+function openStartCheck(raw, st, meta) {
+  const sr = raw.sampleRate, d = raw.getChannelData(0), dur = raw.length / sr, span = 1.6;
+  const clampAt = (t) => Math.max(0, Math.min(dur - 1, t));
+  let at = clampAt(st.found && !st.early ? st.at / sr : st.early ? 0 : meta.goS / sr + 0.3);
+  const prev = st.prev >= 0 ? st.prev / sr : -1;
+  let v0 = 0, ac = null, src = null, playFrom = 0, playT0 = 0, done = false;
+  const fmtS = (t) => t.toFixed(3).replace('.', ',') + ' s';
+  const status = st.early ? 'Der Song lief schon, als die Aufnahme begann. Für genaue Schnitte: neu aufnehmen und erst bei „Los“ auf Play drücken.'
+    : !st.found ? 'Den Einsatz konnte ich nicht sicher hören. Zieh die Linie auf den ersten Ton.'
+      : 'Erkannt: Ab der Linie beginnt der Song. Anhören – der erste Ton muss sofort und vollständig kommen.';
+  const body = openSheet(`
+    <h3 id="sheetTitle">Start prüfen</h3>
+    <p class="hint">${status}</p>
+    <canvas class="st-wave" id="stWave" tabindex="0" role="slider" aria-label="Song-Start in der Aufnahme" aria-valuemin="0" aria-valuemax="${Math.round(dur * 1000)}"></canvas>
+    <canvas class="st-wave st-zoom" id="stZoom" aria-hidden="true"></canvas>
+    <p class="hint small st-info" id="stInfo"></p>
+    <div class="st-nudge" role="group" aria-label="Start verschieben">
+      <button class="btn small" type="button" data-d="-0.05" aria-label="50 Millisekunden früher">−50 ms</button>
+      <button class="btn small" type="button" data-d="-0.01" aria-label="10 Millisekunden früher">−10 ms</button>
+      <button class="btn small" type="button" data-d="0.01" aria-label="10 Millisekunden später">+10 ms</button>
+      <button class="btn small" type="button" data-d="0.05" aria-label="50 Millisekunden später">+50 ms</button>
+    </div>
+    ${prev >= 0 ? `<p class="hint small" id="stPrevHint">Kurz davor ist noch etwas zu hören. Gehört das schon zum Song? <button class="btn small ghost" type="button" id="stPrev">Dort beginnen</button></p>` : ''}
+    <div class="row">
+      <button class="btn small primary-outline" type="button" id="stPlay">Ab Start anhören</button>
+      <button class="btn small ghost" type="button" id="stLead">Mit 1 s Vorlauf</button>
+    </div>
+    <button class="btn primary big" id="stOk" type="button">Passt – Song analysieren</button>
+    <button class="btn ghost small" id="stRedo" type="button">Neu aufnehmen</button>`, () => { stopPlay(); if (ac) ac.close().catch(() => {}); if (!done) { done = true; useMicTake(raw, at, meta); } });
+  const cv = body.querySelector('#stWave'), zm = body.querySelector('#stZoom'), info = body.querySelector('#stInfo');
+  const css = getComputedStyle(document.documentElement), col = (v, f) => css.getPropertyValue(v).trim() || f;
+  const C = { bg: col('--black', '#050608'), cut: col('--line', '#1e2b42'), wave: col('--beige', '#e4d5b7'), dim: col('--muted', '#8b95a8'), mark: col('--tungsten', '#f2c98a'), text: col('--text', '#eceae4') };
+  function view() { if (at < v0 + 0.15 || at > v0 + span - 0.15) v0 = Math.max(0, Math.min(dur - span, at - 0.6)); }
+  // Wellenform von v bis v+sp in einen Canvas; was vor der Linie liegt (wird weggeschnitten), im Schatten
+  function paint(c, v, sp, head) {
+    const dpr = Math.min(3, window.devicePixelRatio || 1), W = Math.max(200, Math.round(c.clientWidth * dpr)), H = Math.max(40, Math.round(c.clientHeight * dpr));
+    if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+    const g = c.getContext('2d'), x = (t) => ((t - v) / sp) * W, mid = H / 2;
+    g.fillStyle = C.bg; g.fillRect(0, 0, W, H);
+    g.fillStyle = C.cut; g.fillRect(0, 0, Math.max(0, x(at)), H);
+    let pk = 1e-4;
+    const a0 = Math.max(0, Math.floor(v * sr)), a1 = Math.min(d.length, Math.floor((v + sp) * sr));
+    for (let i = a0; i < a1; i++) pk = Math.max(pk, Math.abs(d[i]));
+    const per = (a1 - a0) / W;
+    for (let px = 0; px < W; px++) {
+      let lo = 0, hi = 0;
+      for (let i = Math.floor(a0 + px * per), e = Math.min(a1, Math.floor(a0 + (px + 1) * per) + 1); i < e; i++) { const y = d[i]; if (y < lo) lo = y; if (y > hi) hi = y; }
+      g.fillStyle = v + (px / W) * sp < at ? C.dim : C.wave;
+      g.fillRect(px, mid - (hi / pk) * mid * 0.92, 1, Math.max(1, ((hi - lo) / pk) * mid * 0.92));
     }
+    if (prev >= 0 && prev > v && prev < v + sp) { g.fillStyle = C.dim; for (let y = 0; y < H; y += 6 * dpr) g.fillRect(x(prev), y, dpr, 3 * dpr); }
+    g.fillStyle = C.mark; g.fillRect(x(at) - dpr, 0, 2 * dpr, H);
+    if (head != null && head > v && head < v + sp) { g.fillStyle = C.text; g.fillRect(x(head), 0, dpr, H); }
+  }
+  function draw(head) {
+    paint(cv, v0, span, head);
+    // Lupe: 80 ms um die Linie, damit 10-ms-Schritte sichtbar sind
+    paint(zm, at - 0.02, 0.08);
+    cv.setAttribute('aria-valuenow', String(Math.round(at * 1000)));
+    cv.setAttribute('aria-valuetext', `${fmtS(at)} der Aufnahme`);
+    info.textContent = `Start bei ${fmtS(at)} der Aufnahme · ${fmtClock(meta.offset)} im Song · Lupe unten: 80 ms`;
+  }
+  function setAt(t) { at = clampAt(t); view(); stopPlay(); draw(); }
+  function stopPlay() { if (src) { try { src.stop(); } catch (e) { /* schon aus */ } src = null; } }
+  function play(from, len) {
+    stopPlay();
+    try {
+      if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+      ac.resume().catch(() => {});
+      const s = ac.createBufferSource();
+      s.buffer = raw; s.connect(ac.destination);
+      playFrom = Math.max(0, from); playT0 = ac.currentTime + 0.03;
+      s.start(playT0, playFrom, len);
+      s.onended = () => { if (src === s) { src = null; draw(); } };
+      src = s;
+      const tick = () => { if (src !== s || !cv.isConnected) return; draw(playFrom + Math.max(0, ac.currentTime - playT0)); requestAnimationFrame(tick); };
+      tick();
+    } catch (e) { toast('Abspielen ging gerade nicht.', true); }
+  }
+  view(); draw();
+  setTimeout(() => { try { body.querySelector('#stOk').focus({ preventScroll: true }); } catch (e) { /* egal */ } }, 60);
+  if (window.ResizeObserver) new window.ResizeObserver(() => { if (cv.isConnected) draw(); }).observe(cv);
+  for (const bt of body.querySelectorAll('.st-nudge button')) bt.addEventListener('click', () => setAt(at + +bt.dataset.d));
+  const fromX = (e) => { const r = cv.getBoundingClientRect(); return v0 + ((e.clientX - r.left) / r.width) * span; };
+  cv.addEventListener('pointerdown', (e) => { cv.setPointerCapture(e.pointerId); at = clampAt(fromX(e)); stopPlay(); draw(); });
+  cv.addEventListener('pointermove', (e) => { if (cv.hasPointerCapture(e.pointerId)) { at = clampAt(fromX(e)); draw(); } });
+  cv.addEventListener('pointerup', () => { view(); draw(); });
+  cv.addEventListener('keydown', (e) => {
+    const k = { ArrowLeft: -0.01, ArrowRight: 0.01, ArrowDown: -0.05, ArrowUp: 0.05 }[e.key];
+    if (k) { e.preventDefault(); setAt(at + k); }
+  });
+  const pv = body.querySelector('#stPrev');
+  if (pv) pv.addEventListener('click', () => { setAt(prev); body.querySelector('#stPrevHint').hidden = true; });
+  body.querySelector('#stPlay').addEventListener('click', () => play(at, 3));
+  body.querySelector('#stLead').addEventListener('click', () => play(at - 1, 3.5));
+  body.querySelector('#stOk').addEventListener('click', () => closeSheet());
+  body.querySelector('#stRedo').addEventListener('click', () => { done = true; closeSheet(); openMicSheet({ name: meta.name, offset: meta.offset }); });
+}
+
+/** Mitgehörte Aufnahme ab dem geprüften Start zuschneiden, analysieren und als Song nehmen. */
+async function useMicTake(raw, at, meta) {
+  try {
+    busy('Analysiere Songaufbau …');
+    const buffer = trimBuffer(raw, Math.round(at * raw.sampleRate));
+    const an = await analyzeAudio(buffer, (p) => busy(`Analysiere Songaufbau … ${Math.round(p * 100)} %`));
+    const song = { id: uid('s'), name: meta.name, buffer, an, mic: true, offset: meta.offset };
+    keepSong(song);
+    saveSong(song);
+    await useSong(song);
+  } catch (e) {
+    busy(null);
+    toast('Das war zu leise oder zu kurz. Versuch es etwas lauter und länger.', true);
   }
 }
 
@@ -14750,16 +14868,6 @@ function micRecorder(ctx, stream, onTick) {
     now: () => ctx.currentTime,
     /** Sample der Aufnahme, das zum Zeitpunkt t (AudioContext) gehört */
     sampleAt: (t) => Math.max(0, Math.round((t - (t0 == null ? ctx.currentTime : t0)) * ctx.sampleRate)),
-    /** kurzer, weicher Piepton zum Zeitpunkt t */
-    beep(t, freq) {
-      const o = ctx.createOscillator(), g = ctx.createGain();
-      o.type = 'sine'; o.frequency.value = freq;
-      g.gain.setValueAtTime(0, t);
-      g.gain.linearRampToValueAtTime(0.5, t + 0.008);
-      g.gain.setTargetAtTime(0, t + 0.07, 0.025);
-      o.connect(g).connect(ctx.destination);
-      o.start(t); o.stop(t + 0.25);
-    },
     stop() {
       proc.onaudioprocess = null;
       try { src.disconnect(); proc.disconnect(); } catch (e) { /* ignore */ }
@@ -18117,7 +18225,7 @@ async function init() {
     if (t) openMediaSheet(t.dataset.id);
   });
   for (const id of ['fileMedia', 'fileMedia2']) $(id).addEventListener('change', (e) => { const fl = Array.from(e.target.files || []); e.target.value = ''; addFiles(fl); });
-  $('micSong').addEventListener('click', openMicSheet);
+  $('micSong').addEventListener('click', () => openMicSheet());
   $('beatSong').addEventListener('click', openBeatSheet);
   $('regieDecisions').addEventListener('click', (e) => { const b = e.target.closest('[data-go]'); if (b) goDecision(b.dataset.go); });
   $('flowStage').addEventListener('click', async (e) => {

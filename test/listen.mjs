@@ -1,5 +1,6 @@
-// Mithören mit Countdown: das Mikrofon wird durch einen synthetischen Song ersetzt, der kurz nach dem „Los“ einsetzt.
-// Prüft Countdown-Anzeige, Zuschnitt auf den Einsatz (die Aufnahme beginnt genau mit dem Song) und die Startzeit für Instagram.
+// Mithören mit lautlosem Countdown: das Mikrofon wird durch einen synthetischen Song ersetzt, der kurz nach dem „Los“ einsetzt.
+// Prüft Countdown-Anzeige, das Blatt „Start prüfen“ (Linie, ±10 ms, Anhören), den Zuschnitt auf den Einsatz
+// (die Aufnahme beginnt genau mit dem Song) und die Startzeit für Instagram.
 import { chromium } from '/opt/node22/lib/node_modules/playwright/index.mjs';
 const OUT = process.env.OUT || '/tmp/cinebeat-test';
 const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
@@ -49,6 +50,25 @@ if (c2 !== 'Los') errs.push('kein „Los“');
 await page.waitForFunction(() => !document.getElementById('micGo').disabled, null, { timeout: 40000 });
 await page.waitForTimeout(3000);
 await page.click('#micGo');
+await page.waitForSelector('#stOk');
+await page.waitForTimeout(300);
+await page.screenshot({ path: `${OUT}/listen_start.png` });
+const val = () => page.evaluate(() => +document.getElementById('stWave').getAttribute('aria-valuenow'));
+const v0 = await val();
+await page.click('.st-nudge [data-d="0.01"]');
+const v1 = await val();
+await page.click('.st-nudge [data-d="-0.05"]');
+await page.click('.st-nudge [data-d="0.05"]');
+await page.click('.st-nudge [data-d="-0.01"]');
+const v2 = await val();
+await page.click('#stPlay');
+await page.waitForTimeout(400);
+const sc = await page.evaluate(() => ({ info: document.getElementById('stInfo').textContent, hint: document.querySelector('#sheetBody .hint').textContent }));
+console.log('Start prüfen:', v0, 'ms →', v1, '→', v2, '|', sc.info, '|', sc.hint.slice(0, 40));
+if (!(v0 > 2500 && v0 < 6000)) errs.push('Start-Linie unplausibel: ' + v0);
+if (v1 - v0 !== 10 || v2 !== v0) errs.push('Verschieben um 10 ms klappt nicht');
+if (!/^Erkannt/.test(sc.hint)) errs.push('Einsatz nicht als erkannt gemeldet');
+await page.click('#stOk');
 await page.waitForFunction(() => CineBeat.S.ctx.song.mic && document.getElementById('busy').hidden && CineBeat.S.plan, null, { timeout: 90000 });
 const r = await page.evaluate(() => {
   const s = CineBeat.S.ctx.song, d = s.buffer.getChannelData(0), sr = s.buffer.sampleRate;

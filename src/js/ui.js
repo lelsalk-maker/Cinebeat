@@ -602,7 +602,7 @@ function micErrorText(e) {
   return `Mikrofon konnte nicht gestartet werden (${n || 'unbekannt'}). Öffne CineBeat neu und versuch es noch einmal.`;
 }
 
-function openMicSheet() {
+function openMicSheet(pre = {}) {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { toast(inFrame ? micErrorText(null) : `Mithören braucht die Web-App über https: ${APP_URL}`, true); return; }
   engine.pause();
   let rec = null;
@@ -610,9 +610,9 @@ function openMicSheet() {
   const body = openSheet(`
     <h3 id="sheetTitle">Song mithören</h3>
     <p class="hint">Spiel den Song auf einem <b>zweiten Gerät</b> oder Lautsprecher ab, z. B. Spotify am Laptop. Auf demselben iPhone stoppt iOS die Musik, sobald das Mikrofon läuft.</p>
-    <label class="field"><span class="field-label">Songname für Instagram</span><input class="text-in" id="micName" maxlength="60" placeholder="z. B. Titel – Interpret" autocomplete="off"></label>
-    <label class="field"><span class="field-label">Ich starte den Song bei</span><input class="text-in" id="micOffset" inputmode="numeric" value="0:00" maxlength="5" aria-describedby="micOffHint"></label>
-    <p class="hint small" id="micOffHint">Stell den Song auf dem zweiten Gerät auf diese Stelle (am besten 0:00) und lass ihn pausiert. Nach dem Start zählt die App drei Töne herunter: <b>beim dritten, hohen Ton auf Play drücken</b>. Den genauen Einsatz misst die App selbst, deine Reaktionszeit spielt keine Rolle.</p>
+    <label class="field"><span class="field-label">Songname für Instagram</span><input class="text-in" id="micName" maxlength="60" placeholder="z. B. Titel – Interpret" autocomplete="off" value="${esc(pre.name || '')}"></label>
+    <label class="field"><span class="field-label">Ich starte den Song bei</span><input class="text-in" id="micOffset" inputmode="numeric" value="${esc(pre.offset != null ? fmtClock(pre.offset) : '0:00')}" maxlength="5" aria-describedby="micOffHint"></label>
+    <p class="hint small" id="micOffHint">Stell den Song auf dem zweiten Gerät auf diese Stelle (am besten 0:00) und lass ihn pausiert. Nach dem Start zählt die App lautlos 3 – 2 – 1 herunter: <b>bei „Los“ auf Play drücken</b>. Ob etwas früher oder später, ist egal: Die App hört selbst, wann der Song einsetzt, und schneidet genau dort. Danach kannst du den Start anhören und auf 10 ms genau verschieben.</p>
     <div class="mic-count" id="micCount" hidden aria-live="assertive"><b id="micNum">3</b><span id="micCue">Bereit machen …</span></div>
     ${inFrame ? `<p class="note">Im Claude-Link sperrt die Umgebung das Mikrofon. Öffne CineBeat über <b>${APP_URL}</b>, dort fragt das iPhone nach dem Zugriff.</p>` : ''}
     <p class="note" id="micDenied" hidden></p>
@@ -644,11 +644,9 @@ function openMicSheet() {
       });
       go.textContent = 'Fertig';
       go.disabled = true;
-      // Countdown: drei Töne im Sekundenabstand, der dritte (höher) ist das Startsignal
-      const t0 = rec.now() + 0.9;
-      goAt = t0 + 2;
+      // lautloser Countdown: kein Ton kann in die Aufnahme geraten; die Stille davor misst das Raumrauschen
+      goAt = rec.now() + 2.9;
       rec.goAt = goAt;
-      [0, 1, 2].forEach((k) => rec.beep(t0 + k, k === 2 ? 1976 : 1480));
       const cnt = body.querySelector('#micCount'), num = body.querySelector('#micNum'), cue = body.querySelector('#micCue');
       cnt.hidden = false;
       body.querySelector('#micTime').textContent = 'gleich geht es los';
@@ -657,7 +655,7 @@ function openMicSheet() {
         const left = goAt - rec.now();
         if (left > 2.05) { num.textContent = '3'; cue.textContent = 'Bereit machen …'; }
         else if (left > 1.05) { num.textContent = '2'; cue.textContent = 'Finger auf Play'; }
-        else if (left > 0.05) { num.textContent = '1'; cue.textContent = 'beim nächsten Ton starten'; }
+        else if (left > 0.05) { num.textContent = '1'; cue.textContent = 'gleich'; }
         else { num.textContent = 'Los'; cue.textContent = 'jetzt Play drücken'; cnt.classList.add('go'); }
         cnt.classList.toggle('pulse', left > 0.05 && (left % 1) > 0.8);
         if (left > -1.2) requestAnimationFrame(tick); else { cnt.hidden = true; cnt.classList.remove('go'); }
@@ -672,7 +670,7 @@ function openMicSheet() {
       if (d) { d.textContent = micErrorText(e); d.hidden = false; }
     }
   });
-  async function finish() {
+  function finish() {
     if (!rec) return;
     const r = rec;
     rec = null;
@@ -681,22 +679,129 @@ function openMicSheet() {
     const name = body.querySelector('#micName').value.trim() || 'Mitgehörter Song';
     const offset = parseClock(body.querySelector('#micOffset').value);
     closeSheet();
-    try {
-      busy('Analysiere Songaufbau …');
-      // genauer Einsatz des Songs nach dem Startsignal: ab dort beginnt die Aufnahme (Sample 0 = eingetragene Stelle)
-      const st = findSongStart(raw.getChannelData(0), raw.sampleRate, goS || 0, 1976);
-      const cut = st.found && !st.early ? st.at : Math.round((goS || 0) + raw.sampleRate * 0.25);
-      const buffer = trimBuffer(raw, cut);
-      if (!st.found || st.early) toast(st.early ? 'Der Song lief schon vor dem Startton. Für genaue Schnitte: Song pausieren, neu mithören und beim hohen Ton starten.' : 'Den Einsatz konnte ich nicht sicher hören. Die Startzeit kann etwas abweichen.', true);
-      const an = await analyzeAudio(buffer, (p) => busy(`Analysiere Songaufbau … ${Math.round(p * 100)} %`));
-      const song = { id: uid('s'), name, buffer, an, mic: true, offset };
-      keepSong(song);
-      saveSong(song);
-      await useSong(song);
-    } catch (e) {
-      busy(null);
-      toast('Das war zu leise oder zu kurz. Versuch es etwas lauter und länger.', true);
+    // Einsatz des Songs in der ganzen Aufnahme suchen, dann zum Prüfen zeigen
+    const st = findSongStart(raw.getChannelData(0), raw.sampleRate);
+    openStartCheck(raw, st, { name, offset, goS });
+  }
+}
+
+/**
+ * Start prüfen: zeigt den erkannten Song-Einsatz in der Wellenform. Linie ziehen oder um 10/50 ms verschieben,
+ * ab der Linie anhören (der erste Ton muss sofort und vollständig kommen), dann schneidet die App genau dort.
+ * Schließen übernimmt die Linie: die Aufnahme geht nie verloren.
+ */
+function openStartCheck(raw, st, meta) {
+  const sr = raw.sampleRate, d = raw.getChannelData(0), dur = raw.length / sr, span = 1.6;
+  const clampAt = (t) => Math.max(0, Math.min(dur - 1, t));
+  let at = clampAt(st.found && !st.early ? st.at / sr : st.early ? 0 : meta.goS / sr + 0.3);
+  const prev = st.prev >= 0 ? st.prev / sr : -1;
+  let v0 = 0, ac = null, src = null, playFrom = 0, playT0 = 0, done = false;
+  const fmtS = (t) => t.toFixed(3).replace('.', ',') + ' s';
+  const status = st.early ? 'Der Song lief schon, als die Aufnahme begann. Für genaue Schnitte: neu aufnehmen und erst bei „Los“ auf Play drücken.'
+    : !st.found ? 'Den Einsatz konnte ich nicht sicher hören. Zieh die Linie auf den ersten Ton.'
+      : 'Erkannt: Ab der Linie beginnt der Song. Anhören – der erste Ton muss sofort und vollständig kommen.';
+  const body = openSheet(`
+    <h3 id="sheetTitle">Start prüfen</h3>
+    <p class="hint">${status}</p>
+    <canvas class="st-wave" id="stWave" tabindex="0" role="slider" aria-label="Song-Start in der Aufnahme" aria-valuemin="0" aria-valuemax="${Math.round(dur * 1000)}"></canvas>
+    <canvas class="st-wave st-zoom" id="stZoom" aria-hidden="true"></canvas>
+    <p class="hint small st-info" id="stInfo"></p>
+    <div class="st-nudge" role="group" aria-label="Start verschieben">
+      <button class="btn small" type="button" data-d="-0.05" aria-label="50 Millisekunden früher">−50 ms</button>
+      <button class="btn small" type="button" data-d="-0.01" aria-label="10 Millisekunden früher">−10 ms</button>
+      <button class="btn small" type="button" data-d="0.01" aria-label="10 Millisekunden später">+10 ms</button>
+      <button class="btn small" type="button" data-d="0.05" aria-label="50 Millisekunden später">+50 ms</button>
+    </div>
+    ${prev >= 0 ? `<p class="hint small" id="stPrevHint">Kurz davor ist noch etwas zu hören. Gehört das schon zum Song? <button class="btn small ghost" type="button" id="stPrev">Dort beginnen</button></p>` : ''}
+    <div class="row">
+      <button class="btn small primary-outline" type="button" id="stPlay">Ab Start anhören</button>
+      <button class="btn small ghost" type="button" id="stLead">Mit 1 s Vorlauf</button>
+    </div>
+    <button class="btn primary big" id="stOk" type="button">Passt – Song analysieren</button>
+    <button class="btn ghost small" id="stRedo" type="button">Neu aufnehmen</button>`, () => { stopPlay(); if (ac) ac.close().catch(() => {}); if (!done) { done = true; useMicTake(raw, at, meta); } });
+  const cv = body.querySelector('#stWave'), zm = body.querySelector('#stZoom'), info = body.querySelector('#stInfo');
+  const css = getComputedStyle(document.documentElement), col = (v, f) => css.getPropertyValue(v).trim() || f;
+  const C = { bg: col('--black', '#050608'), cut: col('--line', '#1e2b42'), wave: col('--beige', '#e4d5b7'), dim: col('--muted', '#8b95a8'), mark: col('--tungsten', '#f2c98a'), text: col('--text', '#eceae4') };
+  function view() { if (at < v0 + 0.15 || at > v0 + span - 0.15) v0 = Math.max(0, Math.min(dur - span, at - 0.6)); }
+  // Wellenform von v bis v+sp in einen Canvas; was vor der Linie liegt (wird weggeschnitten), im Schatten
+  function paint(c, v, sp, head) {
+    const dpr = Math.min(3, window.devicePixelRatio || 1), W = Math.max(200, Math.round(c.clientWidth * dpr)), H = Math.max(40, Math.round(c.clientHeight * dpr));
+    if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+    const g = c.getContext('2d'), x = (t) => ((t - v) / sp) * W, mid = H / 2;
+    g.fillStyle = C.bg; g.fillRect(0, 0, W, H);
+    g.fillStyle = C.cut; g.fillRect(0, 0, Math.max(0, x(at)), H);
+    let pk = 1e-4;
+    const a0 = Math.max(0, Math.floor(v * sr)), a1 = Math.min(d.length, Math.floor((v + sp) * sr));
+    for (let i = a0; i < a1; i++) pk = Math.max(pk, Math.abs(d[i]));
+    const per = (a1 - a0) / W;
+    for (let px = 0; px < W; px++) {
+      let lo = 0, hi = 0;
+      for (let i = Math.floor(a0 + px * per), e = Math.min(a1, Math.floor(a0 + (px + 1) * per) + 1); i < e; i++) { const y = d[i]; if (y < lo) lo = y; if (y > hi) hi = y; }
+      g.fillStyle = v + (px / W) * sp < at ? C.dim : C.wave;
+      g.fillRect(px, mid - (hi / pk) * mid * 0.92, 1, Math.max(1, ((hi - lo) / pk) * mid * 0.92));
     }
+    if (prev >= 0 && prev > v && prev < v + sp) { g.fillStyle = C.dim; for (let y = 0; y < H; y += 6 * dpr) g.fillRect(x(prev), y, dpr, 3 * dpr); }
+    g.fillStyle = C.mark; g.fillRect(x(at) - dpr, 0, 2 * dpr, H);
+    if (head != null && head > v && head < v + sp) { g.fillStyle = C.text; g.fillRect(x(head), 0, dpr, H); }
+  }
+  function draw(head) {
+    paint(cv, v0, span, head);
+    // Lupe: 80 ms um die Linie, damit 10-ms-Schritte sichtbar sind
+    paint(zm, at - 0.02, 0.08);
+    cv.setAttribute('aria-valuenow', String(Math.round(at * 1000)));
+    cv.setAttribute('aria-valuetext', `${fmtS(at)} der Aufnahme`);
+    info.textContent = `Start bei ${fmtS(at)} der Aufnahme · ${fmtClock(meta.offset)} im Song · Lupe unten: 80 ms`;
+  }
+  function setAt(t) { at = clampAt(t); view(); stopPlay(); draw(); }
+  function stopPlay() { if (src) { try { src.stop(); } catch (e) { /* schon aus */ } src = null; } }
+  function play(from, len) {
+    stopPlay();
+    try {
+      if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+      ac.resume().catch(() => {});
+      const s = ac.createBufferSource();
+      s.buffer = raw; s.connect(ac.destination);
+      playFrom = Math.max(0, from); playT0 = ac.currentTime + 0.03;
+      s.start(playT0, playFrom, len);
+      s.onended = () => { if (src === s) { src = null; draw(); } };
+      src = s;
+      const tick = () => { if (src !== s || !cv.isConnected) return; draw(playFrom + Math.max(0, ac.currentTime - playT0)); requestAnimationFrame(tick); };
+      tick();
+    } catch (e) { toast('Abspielen ging gerade nicht.', true); }
+  }
+  view(); draw();
+  setTimeout(() => { try { body.querySelector('#stOk').focus({ preventScroll: true }); } catch (e) { /* egal */ } }, 60);
+  if (window.ResizeObserver) new window.ResizeObserver(() => { if (cv.isConnected) draw(); }).observe(cv);
+  for (const bt of body.querySelectorAll('.st-nudge button')) bt.addEventListener('click', () => setAt(at + +bt.dataset.d));
+  const fromX = (e) => { const r = cv.getBoundingClientRect(); return v0 + ((e.clientX - r.left) / r.width) * span; };
+  cv.addEventListener('pointerdown', (e) => { cv.setPointerCapture(e.pointerId); at = clampAt(fromX(e)); stopPlay(); draw(); });
+  cv.addEventListener('pointermove', (e) => { if (cv.hasPointerCapture(e.pointerId)) { at = clampAt(fromX(e)); draw(); } });
+  cv.addEventListener('pointerup', () => { view(); draw(); });
+  cv.addEventListener('keydown', (e) => {
+    const k = { ArrowLeft: -0.01, ArrowRight: 0.01, ArrowDown: -0.05, ArrowUp: 0.05 }[e.key];
+    if (k) { e.preventDefault(); setAt(at + k); }
+  });
+  const pv = body.querySelector('#stPrev');
+  if (pv) pv.addEventListener('click', () => { setAt(prev); body.querySelector('#stPrevHint').hidden = true; });
+  body.querySelector('#stPlay').addEventListener('click', () => play(at, 3));
+  body.querySelector('#stLead').addEventListener('click', () => play(at - 1, 3.5));
+  body.querySelector('#stOk').addEventListener('click', () => closeSheet());
+  body.querySelector('#stRedo').addEventListener('click', () => { done = true; closeSheet(); openMicSheet({ name: meta.name, offset: meta.offset }); });
+}
+
+/** Mitgehörte Aufnahme ab dem geprüften Start zuschneiden, analysieren und als Song nehmen. */
+async function useMicTake(raw, at, meta) {
+  try {
+    busy('Analysiere Songaufbau …');
+    const buffer = trimBuffer(raw, Math.round(at * raw.sampleRate));
+    const an = await analyzeAudio(buffer, (p) => busy(`Analysiere Songaufbau … ${Math.round(p * 100)} %`));
+    const song = { id: uid('s'), name: meta.name, buffer, an, mic: true, offset: meta.offset };
+    keepSong(song);
+    saveSong(song);
+    await useSong(song);
+  } catch (e) {
+    busy(null);
+    toast('Das war zu leise oder zu kurz. Versuch es etwas lauter und länger.', true);
   }
 }
 
@@ -758,16 +863,6 @@ function micRecorder(ctx, stream, onTick) {
     now: () => ctx.currentTime,
     /** Sample der Aufnahme, das zum Zeitpunkt t (AudioContext) gehört */
     sampleAt: (t) => Math.max(0, Math.round((t - (t0 == null ? ctx.currentTime : t0)) * ctx.sampleRate)),
-    /** kurzer, weicher Piepton zum Zeitpunkt t */
-    beep(t, freq) {
-      const o = ctx.createOscillator(), g = ctx.createGain();
-      o.type = 'sine'; o.frequency.value = freq;
-      g.gain.setValueAtTime(0, t);
-      g.gain.linearRampToValueAtTime(0.5, t + 0.008);
-      g.gain.setTargetAtTime(0, t + 0.07, 0.025);
-      o.connect(g).connect(ctx.destination);
-      o.start(t); o.stop(t + 0.25);
-    },
     stop() {
       proc.onaudioprocess = null;
       try { src.disconnect(); proc.disconnect(); } catch (e) { /* ignore */ }
@@ -4125,7 +4220,7 @@ async function init() {
     if (t) openMediaSheet(t.dataset.id);
   });
   for (const id of ['fileMedia', 'fileMedia2']) $(id).addEventListener('change', (e) => { const fl = Array.from(e.target.files || []); e.target.value = ''; addFiles(fl); });
-  $('micSong').addEventListener('click', openMicSheet);
+  $('micSong').addEventListener('click', () => openMicSheet());
   $('beatSong').addEventListener('click', openBeatSheet);
   $('regieDecisions').addEventListener('click', (e) => { const b = e.target.closest('[data-go]'); if (b) goDecision(b.dataset.go); });
   $('flowStage').addEventListener('click', async (e) => {

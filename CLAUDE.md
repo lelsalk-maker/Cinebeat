@@ -9,7 +9,7 @@ beat-synchrone Filme macht. Läuft komplett auf dem Gerät (iPhone ist Hauptziel
 - `npm test -- changed` – Tests zu geänderten Dateien: nur die Tests, die zu geänderten Dateien gehören (Zuordnung `MAP` in `test/run.mjs`).
 - `npm test` – schnelle Auswahl; `npm test -- all` – alles (~10 min, 4 parallel, `CB_JOBS` ändert das); `npm test -- flow ui` – einzelne; `-v` zeigt jede Testzeile.
 - Ausgabe ist absichtlich knapp: eine Ergebniszeile, Details nur bei Fehlern. Zeitkritische Tests (`SERIAL`) laufen allein am Ende, lange werden zerlegt (`SPLIT`, z. B. `judder/story`).
-- Einzelne Prüfprogramme: Glätte `smooth`, Sprünge Bild für Bild `judder` (`JCONF`), Export nach App-Wechsel `bgexport`, Mithören `listen`, Karten/Kapitel `trip`. Tests brauchen Playwright/Chromium (vorinstalliert).
+- Einzelne Prüfprogramme: Glätte `smooth`, Sprünge Bild für Bild `judder` (`JCONF`), Export nach App-Wechsel `bgexport`, Mithören `listen` (Countdown, Start prüfen, Zuschnitt) und `songstart` (Einsatz-Erkennung `findSongStart` an synthetischen Aufnahmen: spät/früh, leises Intro, Klick/Husten/Satz davor, Song lief schon, nur Rauschen), Karten/Kapitel `trip`. Tests brauchen Playwright/Chromium (vorinstalliert).
 - Veröffentlichen: `docs/sw.js` Cache-Version erhöhen (`cinebeat-vNN`), bauen, committen, pushen; Artefakt mit `dist/cinebeat.html` an die bestehende URL.
 
 ## Aufbau (Reihenfolge im Bündel = `build.mjs`)
@@ -17,7 +17,7 @@ beat-synchrone Filme macht. Läuft komplett auf dem Gerät (iPhone ist Hauptziel
 | --- | --- |
 | `src/js/mediaio.js` | Bild dekodieren, Video-Elemente (iOS: `primeVideo`), WebM-Fix |
 | `meta.js`, `world.js` | EXIF/MP4-Metadaten, Orte, Küstenlinien |
-| `audio.js` | Beats, Takte, Abschnitte (intro/verse/build/drop/chorus/break/outro), Bassdrum/Snare, `AN_VER` (erhöhen ⇒ Neuanalyse). Tempo-Oktave per Bassdrum (150 statt 75), Schnittraster `alignToKick`: Anschlag je Schlag im Signal auf ≈ 1 ms (`attackAt`), dann robuste lokale Tempo-Linie (Theil-Sen, ±8/±16 Schläge) gegen Fehlmessungen (Bass/Flächen), Strecken ohne Bassdrum und Songränder auf dieser Linie |
+| `audio.js` | Beats, Takte, Abschnitte (intro/verse/build/drop/chorus/break/outro), Bassdrum/Snare, `AN_VER` (erhöhen ⇒ Neuanalyse). Tempo-Oktave per Bassdrum (150 statt 75), Schnittraster `alignToKick`: Anschlag je Schlag im Signal auf ≈ 1 ms (`attackAt`), dann robuste lokale Tempo-Linie (Theil-Sen, ±8/±16 Schläge) gegen Fehlmessungen (Bass/Flächen), Strecken ohne Bassdrum und Songränder auf dieser Linie. Mithören: `findSongStart` sucht den Song-Einsatz ohne Startton in der ganzen Aufnahme (UI: lautloser Countdown, Blatt „Start prüfen“ `openStartCheck` mit Lupe, ±10/±50 ms, Anhören) |
 | `score.js` | Bildbewertung: Schärfe, Farbe, Fokus, Layout, Hash; Video-Highlights; `actionCurve`/`motionHits` (Bewegungsmomente bildgenau) |
 | `plan/base.js` | Zufall, `LOOKS` (u. a. `diner`: Farbdia-Look mit `grade.retro` → Shader `retroColor`, selektive Farbtöne, Haut geschützt), `FORMATS`, `TR` (Übergänge), `sectionAt`, `pickWindow` |
 | `plan/cuts.js` | Schnittraster auf Beats (`planCuts`, DP), `adjustCuts` |
