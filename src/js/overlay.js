@@ -20,16 +20,16 @@ const OV_FONTS = {
  */
 const WELCOME_SCRIPT = '"Snell Roundhand", "Savoye LET", "Apple Chancery", "Brush Script MT", "Segoe Script", cursive';
 const WELCOME_FONTS = [
-  { fam: OV_FONTS.serif, wt: 400 },
-  { fam: OV_FONTS.geo, wt: 700, up: true, ls: 0.14 },
-  { fam: WELCOME_SCRIPT, wt: 400, k: 1.25 },
-  { fam: OV_FONTS.typewriter, wt: 400, ls: 0.04 },
-  { fam: '"Impact", "Haettenschweiler", "Arial Black", "Avenir Next Condensed", sans-serif', wt: 900, up: true, sx: 0.9 },
-  { fam: '"Marker Felt", "Chalkboard SE", "Comic Sans MS", cursive', wt: 400 },
-  { fam: '"Copperplate", "Copperplate Gothic Light", "Trajan Pro", Georgia, serif', wt: 400, up: true, ls: 0.1 },
-  { fam: OV_FONTS.sans, wt: 800, up: true, stroke: true, ls: 0.04 },
-  { fam: '"Rockwell", "Courier New", "American Typewriter", serif', wt: 700, sx: 1.08 },
-  { fam: OV_FONTS.book, wt: 400, it: true, k: 1.1 },
+  { fam: OV_FONTS.serif, wt: 400, ls: 0.02 },
+  { fam: '"Avenir Next", "Helvetica Neue", system-ui, sans-serif', wt: 200, up: true, ls: 0.32, k: 0.82 },
+  { fam: WELCOME_SCRIPT, wt: 400, k: 1.3 },
+  { fam: '"American Typewriter", "Courier New", monospace', wt: 300, ls: 0.05, k: 0.92 },
+  { fam: '"Bodoni 72", "Didot", "Bodoni MT", serif', wt: 400, it: true, k: 1.05 },
+  { fam: '"Copperplate", "Copperplate Gothic Light", "Trajan Pro", Georgia, serif', wt: 300, up: true, ls: 0.16, k: 0.86 },
+  { fam: '"Avenir Next", "Helvetica Neue", system-ui, sans-serif', wt: 300, up: true, stroke: true, ls: 0.12, k: 0.9 },
+  { fam: '"Bradley Hand", "Noteworthy", "Segoe Print", cursive', wt: 400, k: 1.05 },
+  { fam: '"Optima", "Candara", "Segoe UI", sans-serif', wt: 400, ls: 0.1, k: 0.95 },
+  { fam: OV_FONTS.book, wt: 400, it: true, ls: 0.02, k: 1.08 },
 ];
 
 /** Kartenstile für Flug und Strecke */
@@ -319,37 +319,47 @@ class OverlayPainter {
    */
   drawWelcome(ctx, o, t, g) {
     const W = g.W, H = g.H, cy = H * 0.5;
-    const base = Math.min(W * 0.15, H * 0.085);
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'alphabetic';
-    ctx.shadowColor = 'rgba(0,0,0,0.5)';
-    ctx.shadowBlur = Math.max(4, base * 0.18);
-    // Zeile „Welcome to…“
-    ctx.globalAlpha = 1;
+    const base = Math.min(W * 0.13, H * 0.074);
+    const sW = base * 0.82, sN = base * 1.1;
+    // Ortsname da: die drei Punkte blenden aus, „Welcome to“ gleitet in die Mitte und nach oben – beide Zeilen stehen
+    // symmetrisch um die Bildmitte (vorher steht „Welcome to…“ allein genau in der Mitte)
+    const hasName = !!o.text;
+    const a = hasName ? cl01((t - o.nameAt) / 0.35) : 0, e = a * a * (3 - 2 * a);
+    const d = (sW * 0.42 + sN * 0.42) * 0.62 + base * 0.08;
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = 'rgba(0,0,0,0.38)';
+    ctx.shadowBlur = Math.max(3, base * 0.12);
     ctx.fillStyle = '#ffffff';
-    ctx.font = `400 ${base * 0.92}px ${WELCOME_SCRIPT}`;
-    ctx.fillText('Welcome to\u2026', W / 2, cy - base * 0.72);
-    // Ortsname: ab dem Schlag, mit kurzem Einblenden; jede Schriftwechsel-Zeit ist zugleich ein Bildwechsel
-    if (o.text && t >= o.nameAt) {
+    ctx.font = `300 ${sW}px ${WELCOME_SCRIPT}`;
+    ctx.textAlign = 'left';
+    const wT = ctx.measureText('Welcome to').width, wE = ctx.measureText('\u2026').width;
+    const x0 = W / 2 - (wT + wE * (1 - e)) / 2, yW = cy - d * e;
+    ctx.globalAlpha = 1;
+    ctx.fillText('Welcome to', x0, yW);
+    if (e < 1) { ctx.globalAlpha = 1 - e; ctx.fillText('\u2026', x0 + wT, yW); }
+    // Ortsname: jede Schriftwechsel-Zeit ist zugleich ein Bildwechsel
+    if (hasName && t >= o.nameAt) {
       let k = 0;
       for (const ft of o.fonts || []) if (t >= ft - 1e-4) k++;
       const st = WELCOME_FONTS[k === 0 ? 0 : 1 + ((k - 1) % (WELCOME_FONTS.length - 1))];
       const txt = st.up ? String(o.text).toUpperCase() : String(o.text);
-      const a = cl01((t - o.nameAt) / 0.3), rise = (1 - (1 - a) * (1 - a)) ;
-      let size = base * 1.3 * (st.k || 1);
+      let size = sN * (st.k || 1);
       const font = (sz) => `${st.it ? 'italic ' : ''}${st.wt} ${sz}px ${st.fam}`;
       ctx.font = font(size);
+      const wid = (ctx.measureText(txt).width + (st.ls || 0) * size * Math.max(0, txt.length - 1)) * (st.sx || 1);
+      if (wid > W * 0.8) { size *= (W * 0.8) / wid; ctx.font = font(size); }
       const track = (st.ls || 0) * size;
-      const wid = (ctx.measureText(txt).width + track * Math.max(0, txt.length - 1)) * (st.sx || 1);
-      if (wid > W * 0.86) { size *= (W * 0.86) / wid; ctx.font = font(size); }
-      ctx.globalAlpha = a;
+      ctx.globalAlpha = e;
       ctx.save();
-      ctx.translate(W / 2, cy + size * 0.36 + (1 - rise) * size * 0.25);
+      ctx.translate(W / 2, cy + d * e + (1 - e) * size * 0.2);
       ctx.scale(st.sx || 1, 1);
-      if ('letterSpacing' in ctx) ctx.letterSpacing = `${(st.ls || 0) * size}px`;
+      // genau mittig: Laufweite gleichmäßig verteilt (auch hinter dem letzten Buchstaben wieder abgezogen)
+      ctx.textAlign = 'center';
+      if ('letterSpacing' in ctx) ctx.letterSpacing = `${track}px`;
+      const dx = 'letterSpacing' in ctx ? track / 2 : 0;
       ctx.fillStyle = '#ffd60a';
       ctx.strokeStyle = '#ffd60a';
-      if (st.stroke) { ctx.lineWidth = Math.max(1.5, size * 0.045); ctx.strokeText(txt, 0, 0); } else ctx.fillText(txt, 0, 0);
+      if (st.stroke) { ctx.lineWidth = Math.max(1, size * 0.028); ctx.strokeText(txt, dx, 0); } else ctx.fillText(txt, dx, 0);
       if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
       ctx.restore();
     }

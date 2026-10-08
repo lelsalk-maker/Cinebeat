@@ -93,17 +93,25 @@ const r = await p.evaluate(async () => {
     const white = (r, g, b2) => r > 235 && g > 235 && b2 > 235, yellow = (r, g, b2) => r > 200 && g > 165 && b2 < 90 && r - b2 > 140;
     const s0 = await shot(0.08), sN = await shot(ovi.nameAt + 0.45);
     const tEnd = ovi.end - 0.03, sE = await shot(tEnd), sA = await shot(ovi.end + 0.12);
-    out.px = { white0: count(s0, 0.3, 0.5, white), yellowName: count(sN, 0.45, 0.6, yellow), endL: +meanL(sE).toFixed(1), afterL: +meanL(sA).toFixed(1) };
-    if (out.px.white0 < 25) f.push('„Welcome to…“ nicht von Anfang an zu sehen');
-    if (out.px.yellowName < 25) f.push('Ortsname nicht gelb zu sehen');
+    out.px = { white0: count(s0, 0.35, 0.65, white), yellowName: count(sN, 0.45, 0.65, yellow), endL: +meanL(sE).toFixed(1), afterL: +meanL(sA).toFixed(1) };
+    // Lage: Ausdehnung und Schwerpunkt der weißen bzw. gelben Schrift
+    const box = (d, test) => { let x0 = W, x1 = -1, ys = 0, n = 0; for (let y = Math.floor(0.3 * H); y < Math.floor(0.7 * H); y++) for (let x = 0; x < W; x++) { const i = (y * W + x) * 4; if (test(d[i], d[i + 1], d[i + 2])) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); ys += y; n++; } } return { x0, x1, cx: (x0 + x1) / 2, cy: n ? ys / n : 0, w: x1 - x0 }; };
+    const w0 = box(s0, white), w1 = box(sN, white), y1 = box(sN, yellow);
+    out.px.box = { w0: [w0.x0, w0.x1, +w0.cy.toFixed(1)], w1: [w1.x0, w1.x1, +w1.cy.toFixed(1)], y1: [y1.x0, y1.x1, +y1.cy.toFixed(1)] };
+    if (Math.abs(w0.cx - W / 2) > 4 || Math.abs(w1.cx - W / 2) > 4 || Math.abs(y1.cx - W / 2) > 4) f.push('Schrift nicht mittig: ' + JSON.stringify(out.px.box));
+    if (Math.abs(w0.cy - H / 2) > H * 0.03) f.push('„Welcome to…“ allein nicht in der Mitte');
+    if (Math.abs((H / 2 - w1.cy) - (y1.cy - H / 2)) > H * 0.035) f.push('Zeilen nicht symmetrisch um die Mitte');
+    if (!(w1.w < w0.w - 3)) f.push('die Punkte nach „Welcome to“ verschwinden nicht');
+    if (out.px.white0 < 20) f.push('„Welcome to…“ nicht von Anfang an zu sehen');
+    if (out.px.yellowName < 20) f.push('Ortsname nicht gelb zu sehen');
     if (out.px.endL > 6) f.push('vor dem Einsatz nicht schwarz');
     if (out.px.afterL < 25) f.push('nach dem Schwarz kein Bild');
     // Schriftwechsel sichtbar: kurz vor und kurz nach einem Wechsel unterscheidet sich der gelbe Schriftzug
     const k = 4, ta = ovi.fonts[k] - 0.04, tb = ovi.fonts[k] + 0.04;
     const ya = await shot(ta), yb = await shot(tb);
-    let diff = 0; for (let y = Math.floor(0.45 * H); y < Math.floor(0.6 * H); y++) for (let x = 0; x < W; x++) { const i = (y * W + x) * 4; if (yellow(ya[i], ya[i + 1], ya[i + 2]) !== yellow(yb[i], yb[i + 1], yb[i + 2])) diff++; }
+    let diff = 0; for (let y = Math.floor(0.45 * H); y < Math.floor(0.65 * H); y++) for (let x = 0; x < W; x++) { const i = (y * W + x) * 4; if (yellow(ya[i], ya[i + 1], ya[i + 2]) !== yellow(yb[i], yb[i + 1], yb[i + 2])) diff++; }
     out.px.fontDiff = diff;
-    if (diff < 30) f.push('Schriftwechsel nicht sichtbar');
+    if (diff < 20) f.push('Schriftwechsel nicht sichtbar');
   }
 
   // Kino-Vorhang: ruhig gleichmäßig öffnen, ein Bild je Zählzeit
