@@ -1042,7 +1042,7 @@ function scoreInWorker(item) {
  * den Takt). Läuft nach dem Einlesen still weiter, pausiert während eines Exports; „Film schneiden“ wartet darauf. */
 const vAct = { queue: [], running: null };
 function queueVideoAction(items) {
-  for (const m of items || []) if (m.kind === 'video' && m.file && !m.hits && !m.bad && !m.loading && !vAct.queue.includes(m)) vAct.queue.push(m);
+  for (const m of items || []) if (m.kind === 'video' && m.file && (!m.hits || !m.loud) && !m.bad && !m.loading && !vAct.queue.includes(m)) vAct.queue.push(m);
   if (!vAct.running && vAct.queue.length) vAct.running = runVideoAction();
 }
 async function runVideoAction() {
@@ -1051,10 +1051,16 @@ async function runVideoAction() {
   while (vAct.queue.length) {
     const m = vAct.queue.shift();
     while (S.exporting) await new Promise((r) => setTimeout(r, 500));
-    let r = null;
-    try { r = await analyzeVideoAction(m.file); } catch (e) { r = null; }
-    m.hits = r ? r.hits : [];
-    if (r && r.act) m.act = r.act;
+    if (!m.hits) {
+      let r = null;
+      try { r = await analyzeVideoAction(m.file); } catch (e) { r = null; }
+      m.hits = r ? r.hits : [];
+      if (r && r.act) m.act = r.act;
+    }
+    // Lautstärkespitzen (Lachen, Jubel) für die Wahl der besten Stelle; große Dateien nicht ganz in den Speicher
+    if (!m.loud) {
+      try { m.loud = m.file.size < 80e6 ? loudPeaks(await decodeAudioFile(await m.file.arrayBuffer())) : []; } catch (e) { m.loud = []; }
+    }
     n++;
     saveWork(m);
   }

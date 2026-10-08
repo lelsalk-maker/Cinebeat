@@ -337,7 +337,9 @@ async function probeVideoFast(file) {
     const poster = document.createElement('canvas');
     poster.width = Math.max(2, Math.round(w * ps)); poster.height = Math.max(2, Math.round(h * ps));
     fr.drawTo(poster);
-    return { duration, w, h, poster, ...sc };
+    // Bildrate der Aufnahme: entscheidet, ob echte Zeitlupe möglich ist (ab 50 fps)
+    const fps = Math.round(track.samples.length / Math.max(0.1, duration));
+    return { duration, w, h, poster, fps, ...sc };
   } catch (e) {
     return null;
   } finally {

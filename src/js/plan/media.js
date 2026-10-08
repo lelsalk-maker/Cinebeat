@@ -322,6 +322,49 @@ function spreadSimilar(order) {
   return order;
 }
 
+/**
+ * Beste Stellen eines Videos nach Inhalt: Bildqualität mit Menschen (Bewertung), Bewegungshöhepunkte (m.hits),
+ * Lautstärkespitzen wie Lachen oder Jubel (m.loud); wackelige Stellen zählen weniger (m.shakes).
+ * Nahe Kandidaten (< 0,6 s) verstärken sich. Liefert [{ t, s }] absteigend.
+ */
+function videoMoments(m) {
+  const out = [];
+  const add = (t, s, kind) => {
+    const near = out.find((o) => Math.abs(o.t - t) < 0.6);
+    if (near) { near.s = Math.max(near.s, s) + 0.12 * Math.min(near.s, s); near.kinds.add(kind); } else out.push({ t, s, kinds: new Set([kind]) });
+  };
+  for (const h of m.highlights || []) add(h.t, h.score || 0.5, 'bild');
+  for (const [t, st] of m.hits || []) add(t, 0.5 + 0.35 * st, 'bewegung');
+  for (const [t, st] of m.loud || []) add(t, 0.55 + 0.35 * st, 'ton');
+  if (m.shakes && m.shakes.length) for (const o of out) {
+    const sh = m.shakes.reduce((b, x) => (Math.abs(x.t - o.t) < Math.abs(b.t - o.t) ? x : b));
+    if (Math.abs(sh.t - o.t) < 1.5) o.s -= 0.3 * sh.j;
+  }
+  return out.sort((a, b) => b.s - a.s).map((o) => ({ t: o.t, s: +o.s.toFixed(3), kinds: [...o.kinds] }));
+}
+
+/** Schwenk eines Videos um die Zeit t (Inhalt wandert je Sekunde um x/y Bildanteile) aus m.pans. */
+function panAt(m, t) {
+  const ps = m && m.pans;
+  if (!ps || !ps.length) return null;
+  return ps.reduce((b, p) => (Math.abs(p.t - t) < Math.abs(b.t - t) ? p : b));
+}
+
+/** Richtung eines Schwenks als Kamerarichtung ('left'|'right'|'up'|'down') oder null bei ruhiger Kamera. */
+function panDir(p) {
+  if (!p || Math.max(Math.abs(p.x), Math.abs(p.y)) < 0.04) return null;
+  return Math.abs(p.x) >= Math.abs(p.y) ? (p.x < 0 ? 'right' : 'left') : (p.y < 0 ? 'down' : 'up');
+}
+
+/**
+ * Wie langsam darf ein Video laufen? Echte Zeitlupe nur aus Aufnahmen mit hoher Bildrate (≥ 50 fps; 120/240 fps
+ * auch deutlich langsamer), sonst nur ein leichtes Tempo-Spiel – sonst ruckelt es sichtbar (Bilder doppelt).
+ */
+function minRate(m) {
+  const f = m && m.fps;
+  return f >= 100 ? 0.25 : f >= 50 ? 0.5 : 0.85;
+}
+
 /** Ken-Burns-Fahrt, die auf dem Bildschwerpunkt landet. */
 function imageMotion(rng, m, outAspect, visDur, role, prevDir, hint, tempo = 1) {
   const mo = fitSubject(imageMotionRaw(rng, m, outAspect, visDur, role, prevDir, hint, tempo), m, outAspect);

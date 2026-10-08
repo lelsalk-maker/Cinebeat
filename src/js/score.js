@@ -263,7 +263,7 @@ async function scoreFrames(grab, W, H, duration) {
     const a = imageMetrics(samplePixels(src, W, H));
     if (!hash) { hash = dHash(src, W, H); avg = a.avg; luma = a.luma; }
     src = await grab(Math.min(duration - 0.05, t + 0.2));
-    let motion = 0, pan = [0, 0];
+    let motion = 0, pan = [0, 0], shake = 0;
     if (src) {
       const g2 = imageMetrics(samplePixels(src, W, H)).gray;
       let s = 0;
@@ -271,10 +271,17 @@ async function scoreFrames(grab, W, H, duration) {
       motion = s / g2.length / 255;
       // Kameraschwenk (Inhalt wandert um pan je 0,2 s): Richtung für Anschlüsse an Fotos und Übergänge
       pan = panShift(a.gray, g2, a.w, a.h);
+      // Wackeln: wechselt die Bewegung binnen 0,2 s Richtung oder Tempo, ist es Handzittern statt Schwenk
+      const src3 = await grab(Math.min(duration - 0.05, t + 0.4));
+      if (src3) {
+        const p2 = panShift(g2, imageMetrics(samplePixels(src3, W, H)).gray, a.w, a.h);
+        shake = Math.min(1, Math.hypot(p2[0] - pan[0], p2[1] - pan[1]) / 0.035);
+      }
     }
-    // Moderate Bewegung ist spannend, extremes Wackeln nicht
+    // Moderate Bewegung ist spannend, extremes Wackeln nicht; Menschen im Bild machen einen Moment stärker
     const motionN = Math.max(0, Math.min(1, motion / 0.06)) * (motion > 0.2 ? 0.5 : 1);
-    res.push({ t, score: 0.7 * combineScore(a) + 0.3 * motionN, motion, pan, a });
+    const ppl = (a.scene && a.scene.people) || 0;
+    res.push({ t, score: 0.7 * combineScore(a) + 0.3 * motionN + 0.12 * ppl - 0.25 * shake, motion, pan, shake, a });
   }
   res.sort((x, y) => y.score - x.score);
   if (res.length) layout = layoutSig(res[0].a);
@@ -284,7 +291,9 @@ async function scoreFrames(grab, W, H, duration) {
   // Schwenk über die Zeit (in Aufnahme-Reihenfolge): Inhalt bewegt sich je Sekunde um diesen Bildanteil
   const byT = res.slice().sort((x, y) => x.t - y.t);
   const pans = byT.map((r) => ({ t: r.t, x: +(r.pan[0] * 5).toFixed(3), y: +(r.pan[1] * 5).toFixed(3) }));
-  return { pans, ...sceneFields(top && top.scene), ...visFields(top && top.vis), vis: VIS_VER, motion, score: res.length ? res[0].score : 0.3, hash: hash || [0, 0], avg, luma: +luma.toFixed(3), focus: top ? top.focus.map((v, i) => +(0.5 * v + 0.5 * [0.5, 0.45][i]).toFixed(3)) : undefined, layout, highlights: res.map((r) => ({ t: r.t, score: r.score })) };
+  // Wackeln über die Zeit (für die Wahl der Stelle im Schnitt)
+  const shakes = byT.map((r) => ({ t: r.t, j: +r.shake.toFixed(2) }));
+  return { pans, shakes, ...sceneFields(top && top.scene), ...visFields(top && top.vis), vis: VIS_VER, motion, score: res.length ? res[0].score : 0.3, hash: hash || [0, 0], avg, luma: +luma.toFixed(3), focus: top ? top.focus.map((v, i) => +(0.5 * v + 0.5 * [0.5, 0.45][i]).toFixed(3)) : undefined, layout, highlights: res.map((r) => ({ t: r.t, score: r.score })) };
 }
 
 /** Markiert Beinahe-Duplikate (nur das beste Bild einer Serie bleibt aktiv). */

@@ -55,7 +55,10 @@ const res = await p.evaluate(() => {
     const pb = buildPlan({ an: song.an, media: media.map((m) => ({ ...m })), settings: { look: 'auto', pace: 'auto', intro: 'city', outro: 'auto', length: 'auto', songStart: 'auto', seed: 5, title: 'Algarve', format: '9:16', target: 'story', hookId: 'berge0' }, overrides: { texts: [], stickers: [] } });
     const city = pb.overlays.find((o) => o.type === 'city');
     const behind = { first: pb.clips[0].mediaId, place: city && city.place, behind: city && city.behind };
-    return { pairs, adj, behind, sky: { ok: !!line, err, beachSky: !!S.beachA.sky, citySky: !!S.city.sky, forestSky: !!S.forest.sky }, tilt: { tilt3, tiltM2, tilt0 }, band, comp: Object.fromEntries(names.map((n) => [n, S[n].comp])), mood: Object.fromEntries(names.map((n) => [n, S[n].mood])) };
+    // Videos: beste Stelle nach Inhalt (Bewegung + Lachen schlagen ein etwas schärferes Bild; Wackeln zählt weniger), Bildrate
+    const vm = videoMoments({ highlights: [{ t: 2, score: 0.78 }, { t: 6, score: 0.7 }, { t: 9, score: 0.8 }], hits: [[6.2, 0.8]], loud: [[5.9, 0.7]], shakes: [{ t: 2, j: 0 }, { t: 6, j: 0.1 }, { t: 9, j: 0.9 }] });
+    const rates = [24, 30, 60, 120, 240].map((fps) => minRate({ fps }));
+    return { pairs, adj, behind, video: { best: vm[0], rates }, sky: { ok: !!line, err, beachSky: !!S.beachA.sky, citySky: !!S.city.sky, forestSky: !!S.forest.sky }, tilt: { tilt3, tiltM2, tilt0 }, band, comp: Object.fromEntries(names.map((n) => [n, S[n].comp])), mood: Object.fromEntries(names.map((n) => [n, S[n].mood])) };
   })();
 });
 const errs = [];
@@ -74,6 +77,9 @@ console.log('Gleiche Motive direkt hintereinander:', JSON.stringify(res.adj));
 for (const [k, v] of Object.entries(res.adj)) if (v.n > (k.startsWith('streng') ? 2 : 0)) errs.push(`${k}: ${v.n}× gleiches Motiv hintereinander (${v.ex.join(', ')})`);
 console.log('Hinter den Bergen:', JSON.stringify(res.behind));
 if (!res.behind.behind) errs.push('Ortsname nicht hinter die Berge gesetzt');
+console.log('Video:', JSON.stringify(res.video));
+if (!(Math.abs(res.video.best.t - 6) < 0.4)) errs.push('beste Videostelle nicht beim Lachen + Bewegungshöhepunkt: ' + res.video.best.t);
+if (res.video.rates[1] < 0.8 || res.video.rates[2] > 0.5 || res.video.rates[3] > 0.25) errs.push('Zeitlupe nicht nach Bildrate: ' + res.video.rates);
 console.log('Aufbau:', res.comp, 'Stimmung:', res.mood);
 console.log('Fehler:', errs.length ? errs.join(' | ') : 'keine');
 await b.close();

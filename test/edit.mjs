@@ -201,7 +201,7 @@ const wav = readFileSync(`${OUT}/Song.wav`).toString('base64');
   const Z = S1.filter((id) => imgs.includes(id))[1];
   await page.evaluate((Z) => { CineBeat.S.ctx.media.find((m) => m.id === Z).excluded = true; return CineBeat.rebuild(); }, Z);
   await stable();
-  const trY = await page.evaluate((Y) => { const c = CineBeat.S.plan.clips.find((x) => x.mediaId === Y && !x.burst); return c && c.tin && c.tin.type; }, Y);
+  const trY = await page.evaluate((Y) => { const c = CineBeat.S.plan.clips.find((x) => x.mediaId === Y && !x.burst && !x.rush && !x.flash); return c && c.tin && c.tin.type; }, Y);
   if (trY !== 2) fails.push(`App: Übergang nach Schnittänderung nicht mehr bei seiner Aufnahme (${trY})`);
   // c) Einstellung: andere Aufnahme an diese Stelle holen – sie steht davor, nichts fällt weg
   const S2 = await seq();

@@ -121,6 +121,35 @@ function findSongStart(d, sr) {
   return { at, found: true, early: false, snr, prev };
 }
 
+/**
+ * Lautstärkespitzen im Ton eines Videos (Lachen, Jubel, ein Ruf, eine Welle): Momente, die deutlich lauter sind als der
+ * übliche Ton der Aufnahme (gleichmäßiger Wind oder Verkehr heben den Pegel nur insgesamt). [[t, Stärke 0–1], …], höchstens 6.
+ */
+function loudPeaks(buffer) {
+  const sr = buffer.sampleRate, n = buffer.length, hop = Math.max(1, Math.round(sr * 0.1));
+  const chs = Math.min(2, buffer.numberOfChannels), data = [];
+  for (let c = 0; c < chs; c++) data.push(buffer.getChannelData(c));
+  const db = [];
+  for (let a = 0; a + hop <= n; a += hop) {
+    let s = 0;
+    for (const d of data) for (let i = a; i < a + hop; i += 2) s += d[i] * d[i];
+    db.push(10 * Math.log10(s / (hop / 2) / chs + 1e-10));
+  }
+  if (db.length < 10) return [];
+  const sorted = db.slice().sort((x, y) => x - y), med = sorted[db.length >> 1], q90 = sorted[Math.floor(db.length * 0.9)];
+  if (q90 < -50) return [];
+  const thr = Math.max(med + 6, -40);
+  const cand = [];
+  for (let k = 1; k < db.length - 1; k++) {
+    if (db[k] < thr || db[k] < db[k - 1] || db[k] < db[k + 1]) continue;
+    cand.push([+(k * 0.1 + 0.05).toFixed(2), +Math.min(1, (db[k] - thr) / 12 + 0.2).toFixed(2)]);
+  }
+  cand.sort((x, y) => y[1] - x[1]);
+  const out = [];
+  for (const c of cand) if (out.every((o) => Math.abs(o[0] - c[0]) >= 0.8)) out.push(c);
+  return out.slice(0, 6).sort((x, y) => x[0] - y[0]);
+}
+
 async function analyzeAudio(buffer, onProgress) {
   const sr0 = buffer.sampleRate;
   const factor = Math.max(1, Math.round(sr0 / 22050));
