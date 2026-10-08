@@ -65,9 +65,9 @@ function isPortrait(m) { return m.w && m.h && m.h > m.w * 1.15; }
 
 /** Anzahl sinnvoller Einstellungen, die das Material hergibt. */
 /** Zeit, die das Material braucht: Fotos je eine Einstellung, Videos (fast) ihre ganze Länge bis zum Videoplatz-Maximum. */
-function materialTime(list, fr) {
+function materialTime(list, fr, paceF = 1) {
   let t = 0;
-  for (const m of list) t += m.kind === 'video' ? videoPlay(m, fr.vmax) : fr.shot;
+  for (const m of list) t += m.kind === 'video' ? videoPlay(m, fr.vmax) : fr.shot * paceF;
   return t;
 }
 
@@ -231,6 +231,22 @@ const VARIANTS = {
   ausgewogen: { label: 'Ausgewogen', set: {}, seed: 0 },
   energisch: { label: 'Energisch', set: { pace: 'schnell', echo: 'on', mini: 'on', accent: 'kick', drift: 'off', color: 'pop', stack: 'off' }, intro: 'rush', burst: true, seed: 0x3e9b },
 };
+/**
+ * Effekte (`settings.effekte`): „schlicht“ (Standard) = der Film lebt vom Schnitt auf die Musik – keine automatischen
+ * Effekt-Momente (Echo, Stapel, Mini-Rewind, Farbmoment, Zoom-Stöße, Drift, Tiefe, Datumsstempel), harte Schnitte auf den
+ * Schlägen, weiche Blenden nur, wo der Song ruhig wird. „dezent“ = sparsam gesetzte Momente, „kreativ“ = mehr davon.
+ * Was du selbst einschaltest, gilt immer.
+ */
+const effectsOf = (s) => (s.effekte === 'dezent' || s.effekte === 'kreativ' ? s.effekte : 'schlicht');
+function withEffects(s) {
+  if (effectsOf(s) !== 'schlicht' || s.mv === 'on') return s;
+  const o = { ...s };
+  for (const k of ['echo', 'stack', 'mini', 'parallax', 'drift', 'chapKnock', 'accent', 'color']) if (o[k] == null || o[k] === 'auto') o[k] = 'off';
+  // (der Datumsstempel gehört zum Digicam-Look und bleibt dort)
+  if ((o.stamp == null || o.stamp === 'auto') && o.look !== 'digicam') o.stamp = 'off';
+  return o;
+}
+
 function withVariant(s) {
   const v = VARIANTS[s.variant];
   if (!v || s.variant === 'ausgewogen') return s;
@@ -238,8 +254,10 @@ function withVariant(s) {
   for (const [k, val] of Object.entries(v.set)) if (o[k] == null || o[k] === 'auto') o[k] = val;
   if (s.variant === 'ruhig' && o.motionAmt === 'medium') o.motionAmt = 'soft';
   if (s.variant === 'energisch' && o.motionAmt === 'medium') o.motionAmt = 'strong';
-  if (v.intro && o.intro === 'auto') o.intro = v.intro === 'cinema' && !(s.title && s.title.trim() && s.showTitle !== false) ? 'hook' : v.intro;
-  if (v.burst && o.burst === 'off') { o.burst = 'drop'; o.ramp = 'drop'; }
+  // schlicht: die Variante bestimmt Tempo und Bewegung (energisch: Bilderflut im Drop), keine Effekt-Einstiege
+  const simple = effectsOf(s) === 'schlicht';
+  if (v.intro && o.intro === 'auto' && !(simple && v.intro === 'cinema')) o.intro = v.intro === 'cinema' && !(s.title && s.title.trim() && s.showTitle !== false) ? 'hook' : v.intro;
+  if (v.burst && o.burst === 'off') { o.burst = 'drop'; if (!simple) o.ramp = 'drop'; }
   return o;
 }
 
@@ -258,7 +276,7 @@ function withMusicVideo(s) {
 
 function direct(an, media, s, chapters, flight) {
   const notes = [];
-  s = withMusicVideo(withVariant(s));
+  s = withMusicVideo(withVariant(withEffects(s)));
   const rs = { ...s };
   const listAll = allMediaOn(s) && !(chapters && chapters.length) && !flight;
   const list = goodMedia(media, listAll && mengeOf(s) !== 'auto' ? mengeOf(s) : listAll);
@@ -266,7 +284,8 @@ function direct(an, media, s, chapters, flight) {
   const fr = formatRule(s);
   const first = Math.max(0, an.firstSound), last = Math.min(an.duration, an.lastSound + 0.2);
   const songLen = last - first;
-  const need = materialTime(list, fr) + an.beatPeriod * 4;
+  // Tempo bestimmt mit, wie lange jedes Foto steht: ruhig länger, schnell kürzer (der Film wird entsprechend länger/kürzer)
+  const need = materialTime(list, fr, s.pace === 'ruhig' ? 1.3 : s.pace === 'schnell' ? 0.75 : 1) + an.beatPeriod * 4;
   const imgs = list.filter((m) => m.kind === 'image').length, vids = list.length - imgs;
   const sorted = all.length - list.length;
 
@@ -361,7 +380,9 @@ function direct(an, media, s, chapters, flight) {
   }
   if (!vertical) rs.frame = 'full';
   const splitPool = vertical ? land : port;
-  if (s.split === 'auto') rs.split = splitPool >= 5 && rs.frame === 'full' ? 'auto' : 'off';
+  // Querfotos in der Story: „Split-Screen“ = immer paarweise übereinander, „Gedreht“ kommt schon gedreht an (Hochkant)
+  if (s.quer === 'split' && vertical) { rs.frame = 'full'; rs.split = 'more'; }
+  else if (s.split === 'auto') rs.split = splitPool >= 5 && rs.frame === 'full' ? 'auto' : 'off';
   else if (s.split === 'more') rs.split = splitPool >= 3 && rs.frame === 'full' ? 'more' : 'off';
   else rs.split = 'off';
 
@@ -372,7 +393,9 @@ function direct(an, media, s, chapters, flight) {
     // Standard: Aufblende, wenn der Höhepunkt im Ausschnitt genau nach dem kurzen Aufbau kommt
     const peakAt = win.start + revealBeats(an) * an.beatPeriod;
     const fits = autoReveal(an, chapters, flight, fr) && (an.sections || []).some((x) => (x.label === 'drop' || x.label === 'chorus') && Math.abs(x.start - peakAt) < an.beatPeriod * 0.6);
-    if (fits) rs.intro = 'reveal';
+    // schlicht: immer derselbe ruhige Einstieg – euer stärkstes Bild mit dem Ort (im Film eine Titelkarte)
+    if (effectsOf(s) === 'schlicht') rs.intro = chapters && chapters.length ? 'cinema' : fr.kind === 'film' && D >= 25 ? 'cinema' : hasTitle ? 'city' : 'hook';
+    else if (fits) rs.intro = 'reveal';
     else if (chapters && chapters.length) rs.intro = 'cinema';
     else if (fr.kind === 'film') rs.intro = D >= 25 ? 'cinema' : 'type';
     else if (D <= 18) rs.intro = hasTitle ? 'city' : 'hook';
@@ -388,7 +411,7 @@ function direct(an, media, s, chapters, flight) {
   if (s.outro === 'auto') {
     if (fr.kind === 'film' || (chapters && chapters.length)) rs.outro = 'credits';
     else if (D <= 25) rs.outro = 'loop';
-    else rs.outro = pick(['freeze', 'credits', 'loop']);
+    else rs.outro = effectsOf(s) === 'schlicht' ? 'credits' : pick(['freeze', 'credits', 'loop']);
   }
   if (flight && s.outro === 'auto') rs.outro = 'freeze';
   if (rs.outro === 'split' && splitPool < 3) rs.outro = 'credits';
@@ -420,7 +443,7 @@ function direct(an, media, s, chapters, flight) {
   if (s.parallax === 'auto') rs.parallax = flight ? 'off' : 'on';
   if (s.drift === 'auto') rs.drift = rs.pace === 'schnell' ? 'off' : 'on';
   if (s.chapKnock === 'auto') rs.chapKnock = chapters && chapters.length >= 2 && chapters.length <= 8 ? 'on' : 'off';
-  const budget = flight ? 0 : D < 22 ? 1 : D < 45 ? 2 : 3;
+  const budget = flight || effectsOf(s) === 'schlicht' ? 0 : (D < 22 ? 1 : D < 45 ? 2 : 3) + (effectsOf(s) === 'kreativ' ? 1 : 0);
   let used = ['echo', 'stack', 'mini'].filter((k) => s[k] === 'on').length + (s.color && s.color !== 'auto' && s.color !== 'off' ? 1 : 0)
     + (s.midGrid === 'on' ? 1 : 0) + (s.midCount === 'drop' ? 1 : 0) + (s.burst === 'drop' ? 1 : 0);
   if (s.color === 'auto') {
@@ -446,6 +469,7 @@ function direct(an, media, s, chapters, flight) {
   if (s.drift === 'auto' && rs.drift === 'on') auto.push('Drift-Übergänge in ruhigen Teilen');
   if (s.parallax === 'auto' && rs.parallax === 'on') auto.push('leichte Tiefe in den Kamerafahrten');
   if (auto.length) notes.push(`Stil: ${auto.join(', ')}. Bewusst sparsam, damit der Film wie aus einem Guss wirkt.`);
+  else if (effectsOf(s) === 'schlicht' && !flight) notes.push('Schlicht: keine Effekte, der Film lebt vom Schnitt auf die Musik – harte Schnitte auf den Schlägen, weiche Blenden nur, wo der Song ruhig wird, ruhige Kamerafahrten.');
 
   const cm = colorMatch(all);
   if (list.length >= 2) notes.push('Farbe und Licht wie vom Coloristen: jede Szene behält ihre Stimmung, Ausreißer (Weißabgleich, Gegenlicht) sind angeglichen, helle Stellen bleiben erhalten.');

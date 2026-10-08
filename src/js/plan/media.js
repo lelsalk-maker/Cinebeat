@@ -79,13 +79,14 @@ function videoSlots(segs, an, win, vids, all, barDur, startAt, endAt, vmax, ramp
       if (special(g) || g.start < startAt - 0.01 || g.end > endAt + 0.01) continue;
       const lab = labelAt(g.start);
       let j = k, end = g.end, cross = 0;
-      while (end - g.start < want * 0.95 && j + 1 < segs.length - 1 && !special(segs[j + 1]) && segs[j + 1].end - g.start <= want * 1.2) {
+      // (nie über den Einsatz eines Refrains/Drops hinweg: dort ist immer ein Schnitt)
+      while (end - g.start < want * 0.95 && j + 1 < segs.length - 1 && !special(segs[j + 1]) && !atPeak(segs[j + 1].start) && segs[j + 1].end - g.start <= want * 1.2) {
         j++; end = segs[j].end;
         if (labelAt(segs[j].start) !== lab) cross++;
       }
       // eine Einstellung mehr, wenn das näher an der Länge des Videos liegt (es läuft dann leicht verlangsamt ganz)
       const nx = segs[j + 1];
-      if (end - g.start < want * 0.9 && nx && j + 1 < segs.length - 1 && !special(nx) && nx.end - g.start <= Math.min(want * 1.3, videoSpan(v) / 0.8) && nx.end - g.start - want < want - (end - g.start)) {
+      if (end - g.start < want * 0.9 && nx && j + 1 < segs.length - 1 && !special(nx) && !atPeak(nx.start) && nx.end - g.start <= Math.min(want * 1.3, videoSpan(v) / 0.8) && nx.end - g.start - want < want - (end - g.start)) {
         j++; end = nx.end;
         if (labelAt(nx.start) !== lab) cross++;
       }
@@ -175,6 +176,22 @@ function assignStream(clips, idxs, list, byId) {
     recent.push(m.id);
     pos = (pos + 1) % stream.length;
   }
+}
+
+/**
+ * Eigene Reihenfolge (overrides.order, Liste von Aufnahme-IDs – so, wie du den Film beim Verschieben gesehen hast):
+ * diese Aufnahmen stehen genau in dieser Folge; alle übrigen behalten ihren Platz in der Reihe (neue reihen sich
+ * chronologisch ein).
+ */
+function applyOrder(list, order) {
+  if (!order || !order.length) return list;
+  const rank = new Map(order.map((id, k) => [id, k]));
+  const slots = [], items = [];
+  list.forEach((m, k) => { if (rank.has(m.id)) { slots.push(k); items.push(m); } });
+  items.sort((a, b) => rank.get(a.id) - rank.get(b.id));
+  const out = list.slice();
+  slots.forEach((k, j) => { out[k] = items[j]; });
+  return out;
 }
 
 /** Vom Nutzer in der Zeitleiste verschobene Aufnahmen: [{ id, before }] (before: null = ans Ende). */
@@ -460,3 +477,20 @@ function sceneStarts(list) {
   }
   return out;
 }
+
+/**
+ * Querfotos in der Story (9:16) um 90° gedreht zeigen (Himmel rechts – zum Ansehen das Handy drehen): eine gedrehte
+ * Ansicht der Aufnahme (gleiche ID, Maße getauscht, Motivpunkt mitgedreht). Planer und Engine behandeln sie wie ein
+ * Hochkantbild; die Engine dreht beim Laden (`rot90`). Gilt für alle Querfotos („Querfotos: Gedreht“) oder je Foto (m.rot).
+ */
+const ROT_VIEW = new Map();
+function rotView(m) {
+  const old = ROT_VIEW.get(m.id);
+  if (old && old.base === m && old.w === m.h && old.h === m.w) return old;
+  const p = Object.create(m);
+  const rp = (pt) => (pt && pt.length >= 2 ? [+(1 - pt[1]).toFixed(3), +pt[0].toFixed(3), ...(pt.length >= 4 ? [pt[3], pt[2]] : pt.slice(2))] : pt);
+  Object.assign(p, { base: m, rot90: true, w: m.h, h: m.w, focus: rp(m.focus), subject: rp(m.subject), layout: null, horizon: null });
+  ROT_VIEW.set(m.id, p);
+  return p;
+}
+const rotates = (m, st) => m.kind === 'image' && st.format === '9:16' && m.w > m.h * 1.15 && (m.rot === true || (m.rot !== false && st.quer === 'drehen'));

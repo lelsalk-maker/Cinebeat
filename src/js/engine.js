@@ -139,6 +139,22 @@ class Engine {
 
   async getImage(m, maxDimOverride) {
     const maxDim = maxDimOverride || this.imageDim(m);
+    // gedrehte Ansicht eines Querfotos (Story): Original laden, um 90° im Uhrzeigersinn drehen (Himmel rechts)
+    if (m.rot90 && m.base) {
+      const rk = m.id + '@r' + maxDim;
+      if (this.imgCache.has(rk)) return this.imgCache.get(rk);
+      const p = this.getImage(m.base, maxDim).then((src) => {
+        const c = document.createElement('canvas');
+        c.width = src.height; c.height = src.width;
+        const x = c.getContext('2d');
+        x.translate(c.width, 0); x.rotate(Math.PI / 2); x.drawImage(src, 0, 0);
+        return c;
+      });
+      this.imgCache.set(rk, p);
+      const c = await p;
+      if (this.imgCache.get(rk) === p) this.imgCache.set(rk, c);
+      return c;
+    }
     const key = m.id + '@' + maxDim;
     if (this.imgCache.has(key)) {
       const v = this.imgCache.get(key);
@@ -1188,9 +1204,24 @@ class Engine {
     const pop = this.colorPop(t);
     const ov = this.painter.paint(plan, t, this.selectedOverlay);
     if (ov.topDirty) this.r.uploadOverlay('top', this.painter.top);
+    // Schwarzweiß je Aufnahme: „Nie“ nimmt Look-, Moment- und Farbwechsel-Schwarzweiß für dieses Bild zurück, „Immer“
+    // zeigt es schwarzweiß – bei Übergängen anteilig nach Mischung
+    let grade = look.grade, desat = fx.desat, colU = col;
+    const bwOf = (c) => { const m = c && this.media[c.mediaIndex]; return m ? (m.bw === false ? -1 : m.bw === true ? 1 : 0) : 0; };
+    const wa = L && L.a ? bwOf(L.a) : 0, wb = L && L.b && B ? bwOf(L.b) : 0;
+    if (wa || wb) {
+      const keep = (wa < 0 ? 1 - mix : 0) + (wb < 0 ? mix : 0), force = (wa > 0 ? 1 - mix : 0) + (wb > 0 ? mix : 0);
+      if (keep > 0) {
+        // (Schwarzweiß-Looks nehmen auch die Sättigung weg: die kommt für dieses Bild zurück)
+        grade = { ...grade, bw: (grade.bw || 0) * (1 - keep), sat: grade.sat + (Math.max(1, grade.sat) - grade.sat) * keep, vib: (grade.vib || 0) + (Math.max(0.2, grade.vib || 0) - (grade.vib || 0)) * keep };
+        desat *= 1 - keep;
+        if (colU) colU = [colU[0], colU[1] + (1 - colU[1]) * keep, colU[2], colU[3]];
+      }
+      if (force > 0) desat = Math.max(desat, force);
+    }
     this.r.draw({
-      A, B, mix, trans, dir, grade: look.grade, time: t, band: plan.band,
-      flash: fx.flash, black: fx.black, dim: fx.dim, desat: fx.desat, bars: 0, ovTop: ov.top, col, pop, chroma, mirror: fx.mirror || 0,
+      A, B, mix, trans, dir, grade, time: t, band: plan.band,
+      flash: fx.flash, black: fx.black, dim: fx.dim, desat, bars: 0, ovTop: ov.top, col: colU, pop, chroma, mirror: fx.mirror || 0,
     });
   }
 

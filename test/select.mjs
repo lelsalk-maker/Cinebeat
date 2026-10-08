@@ -22,6 +22,9 @@ await page.click('[data-tab="music"]');
 await page.click('#lenChips [data-v="15"]');
 await page.waitForTimeout(600); await idle();
 const st = () => page.evaluate(() => { const S = CineBeat.S; return { dropped: S.plan.capacity.droppedIds.slice(), media: S.ctx.media.map((m) => ({ id: m.id, fav: !!m.fav, ex: !!m.excluded })), seed: S.ctx.rec.settings.seed, clips: S.plan.clips.map((c) => c.mediaId).join(',') }; });
+// (ruhiges Tempo: lange Einstellungen – in 15 s passen dann sicher nicht alle sechs Bilder)
+await page.evaluate(() => { CineBeat.S.ctx.rec.settings.pace = 'ruhig'; return CineBeat.rebuild(); });
+await page.waitForTimeout(400); await idle();
 let s0 = await st();
 console.log('draußen', s0.dropped.length, 'von', s0.media.length);
 if (!s0.dropped.length) fails.push('Testaufbau: nichts draußen');

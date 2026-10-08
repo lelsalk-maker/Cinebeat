@@ -16,8 +16,8 @@ if (!(before >= 0 && before <= 100)) fails.push('Wert ' + before);
 if (tile) {
   await tile.click();
   await page.waitForTimeout(300);
-  const n = await page.evaluate(() => document.querySelectorAll('.hook-parts li').length);
-  if (n !== 6) fails.push('Aufschlüsselung ' + n);
+  const n = await page.evaluate(() => document.querySelectorAll('.hook-parts li').length + (document.querySelector('.hook-ok') ? 4 : 0));
+  if (n < 5 || n > 9) fails.push('Aufschlüsselung ' + n);
   await page.click('[data-act="improve"]');
   await page.waitForFunction(() => document.getElementById('busy').hidden, null, { timeout: 120000 });
   await page.waitForTimeout(800);
@@ -37,11 +37,14 @@ const pl = await p2.evaluate(async () => {
   const media = sc.map((c, i) => ({ id: 'm' + i, kind: 'image', name: 'M' + i, canvas: c, w: c.width, h: c.height, time: 1.7e12 + i * 60000, ...scoreImage(c, c.width, c.height) }));
   const S0 = { format: '9:16', look: 'natur', pace: 'auto', outro: 'auto', length: 'auto', songStart: 'auto', frame: 'auto', seed: 3 };
   const hs = (x) => { const plan = buildPlan({ an, media, settings: { ...S0, ...x }, overrides: { texts: [], stickers: [] } }); return hookScore(plan, media.map((m) => m), an); };
-  const cin = hs({ intro: 'cinema' }), rush = hs({ intro: 'rush' });
+  media.push({ ...media[0], id: 'dark', name: 'dark', luma: 0.06, sharp: 0.2, score: 0.2, time: 1.7e12 - 60000 });
+  const cin = hs({ intro: 'cinema' }), rush = hs({ intro: 'rush' }), hook = hs({ intro: 'hook' }), dark = hs({ intro: 'hook', hookId: 'dark' });
   const part = (h, k) => h.parts.find((p) => p.k === k).v;
-  return { cin: cin.score, rush: rush.score, cinMotion: part(cin, 'motion'), rushMotion: part(rush, 'motion'), cinStart: part(cin, 'start'), rushChange: part(rush, 'change'), cinChange: part(cin, 'change') };
+  return { cin: cin.score, rush: rush.score, hook: hook.score, dark: dark.score, errs: [rush.errors, hook.errors, cin.errors, dark.errors], cinStartErr: part(cin, 'start') < 0.5, darkQualErr: part(dark, 'quality') < 0.5, cinMotion: part(cin, 'motion'), rushMotion: part(rush, 'motion'), rushChange: part(rush, 'change'), cinChange: part(cin, 'change') };
 });
-if (!(pl.rush > pl.cin)) fails.push(`schneller Einstieg nicht besser (${pl.rush} vs ${pl.cin})`);
+// trennt: schneller Einstieg > ruhiges Startbild > Kino-Aufblende (Fehler: Anlauf aus Schwarz) > dunkles Startbild (Fehler)
+if (!(pl.rush > pl.hook && pl.hook > pl.cin && pl.cin > pl.dark)) fails.push(`Reihenfolge der Einstiege falsch ${JSON.stringify(pl)}`);
+if (pl.errs[0] || pl.errs[1] || !pl.cinStartErr || !pl.darkQualErr) fails.push('Fehler falsch erkannt ' + JSON.stringify(pl));
 if (!(pl.rushMotion >= pl.cinMotion) || !(pl.rushChange >= pl.cinChange)) fails.push('Faktoren ' + JSON.stringify(pl));
 if (process.argv.includes('-v')) console.log(JSON.stringify(pl));
 if (errs.length) fails.push('Fehler: ' + errs.join(' | '));

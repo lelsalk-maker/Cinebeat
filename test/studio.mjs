@@ -91,7 +91,7 @@ const fails = [];
   if (!s1.gen || s1.gen.style !== 'nacht' || s1.gen.tempo !== 'schnell' || s1.gen.energy !== 'hype' || !/Hype/.test(s1.name)) fails.push('Beat nicht übernommen: ' + JSON.stringify(s1.gen));
   // Film schneiden (falls der Ort noch im Song-Schritt ist) und prüfen, dass der Ton der eigene Beat ist
   const cut = await page.$('[data-flow="cut"]');
-  if (cut) { await cut.click(); await page.waitForTimeout(500); await idle(); }
+  if (cut) { await cut.click(); await page.click('#wishGo'); await page.waitForTimeout(500); await idle(); }
   await page.waitForFunction(() => CineBeat.S.plan, null, { timeout: 120000 });
   const eng = await page.evaluate(() => CineBeat.engine.audioBuffer === CineBeat.S.ctx.song.buffer);
   if (!eng) fails.push('Vorschau/Export nicht mit dem eigenen Beat');

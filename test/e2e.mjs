@@ -48,7 +48,15 @@ await page.waitForFunction(() => CineBeat.S.ctx.song && CineBeat.S.ctx.song.name
 console.log('Songprofil:', await page.evaluate(() => document.querySelector('#flowStage .fs-advice').textContent.replace(/\s+/g, ' ').trim() + ' | ' + document.querySelector('#flowStage .fs-text').textContent.replace(/\s+/g, ' ').trim()));
 await page.screenshot({ path: `${OUT}/e2e_advice.png` });
 await page.click('#flowStage [data-flow="cut"]');
+// vor dem Schnitt: deine Wünsche (Wirkung, Effekte, Schwarzweiß, Länge, Auswahl); „Ganzer Film“ schwarzweiß muss im Film ankommen
+await page.waitForSelector('#wishGo');
+const wish = await page.evaluate(() => [...document.querySelectorAll('#sheetBody [data-wish]')].map((f) => f.dataset.wish + '=' + f.querySelector('[aria-checked="true"]').dataset.v).join(' '));
+console.log('Wünsche:', wish);
+if (!/variant=ausgewogen/.test(wish) || !/effekte=schlicht/.test(wish) || !/bw=kein/.test(wish) || !/length=/.test(wish) || !/allMedia=on/.test(wish)) errs.push('Wunsch-Abfrage unvollständig: ' + wish);
+await page.click('#sheetBody [data-wish="bw"] [data-v="ganz"]');
+await page.click('#wishGo');
 await page.waitForFunction(() => CineBeat.S.plan && document.getElementById('busy').hidden && document.getElementById('flowStage').hidden, null, { timeout: 120000 });
+if (await page.evaluate(() => CineBeat.S.plan.look !== 'noir')) errs.push('Wunsch „Schwarzweiß: ganzer Film“ nicht umgesetzt');
 await page.waitForTimeout(1500);
 console.log('Plan Porto:', await page.evaluate(() => { const p = CineBeat.S.plan; return { D: p.duration.toFixed(2), win: p.win.start.toFixed(2), intro: p.intro, outro: p.outro, look: p.look, frame: p.frame, clips: p.clips.map((c) => `${c.start.toFixed(1)}:${CineBeat.S.ctx.media.find((m) => m.id === c.mediaId)?.name}`).join(' '), ig: document.getElementById('igLine').textContent }; }));
 await page.screenshot({ path: `${OUT}/e2e_porto.png` });
@@ -61,6 +69,7 @@ await page.waitForFunction(() => CineBeat.S.ctx && CineBeat.S.ctx.kind === 'best
 await page.click('#flowStage [data-flow="demo"]');
 await page.waitForFunction(() => document.getElementById('busy').hidden && document.querySelector('#flowStage [data-flow="cut"]'), null, { timeout: 120000 });
 await page.click('#flowStage [data-flow="cut"]');
+await page.click('#wishGo');
 await page.waitForFunction(() => CineBeat.S.ctx && CineBeat.S.ctx.kind === 'bestof' && CineBeat.S.plan && document.getElementById('busy').hidden, null, { timeout: 120000 });
 await page.waitForTimeout(1000);
 console.log('Gesamtfilm:', await page.evaluate(() => { const p = CineBeat.S.plan; return { D: p.duration.toFixed(1), chapters: CineBeat.S.ctx.chapters.map((c) => c.title + '(' + c.media.length + ')').join(', '), chapterStarts: p.clips.filter((c) => c.chapter).map((c) => c.chapter + '@' + c.start.toFixed(1)).join(' '), clips: p.visibleClips, intro: p.intro, outro: p.outro, format: p.format, notes: p.notes }; }));

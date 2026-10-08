@@ -24,14 +24,19 @@ function buildPlan(opts) {
     return best;
   }
   // Alle Aufnahmen: reicht es nicht, verdichtet die Regie stufenweise – dichtere Schnitte und mehr Split-Screens,
-  // dann Foto-Serien in den Refrains/Drops und gemeinsam laufende Videos, zuletzt längere Foto-Serien
-  if (!allMediaOn(best.resolved)) return best;
+  // dann Foto-Serien in den Refrains/Drops und gemeinsam laufende Videos, zuletzt längere Foto-Serien.
+  // Ebenso, wenn eine von dir festgelegte Videolänge sonst nicht hineinpasst (z. B. das letzte Video am Songende):
+  // dann stehen die Fotos etwas kürzer – höchstens bis zur Stufe mit dichteren Schnitten und Split-Screens
+  const all = allMediaOn(best.resolved);
+  if (!all && !best._m.vShort) return best;
+  const drop = (x) => (all ? x._m.dropped : 0);
   // fehlt sehr viel, gleich auf einer höheren Stufe beginnen (spart Rechenzeit auf dem Handy)
   const nAll = best.capacity.images + best.capacity.videos;
-  const start = best._m.dropped > nAll * 0.4 ? 3 : best._m.dropped > nAll * 0.2 ? 2 : 1;
-  for (let lv = start; lv <= 4 && best._m.dropped; lv++) {
-    const p = searchPlan({ ...opts, _level: lv });
-    if (p._m.dropped < best._m.dropped || (p._m.dropped === best._m.dropped && p._m.repeats < best._m.repeats)) best = p;
+  const start = drop(best) > nAll * 0.4 ? 3 : drop(best) > nAll * 0.2 ? 2 : 1;
+  const maxLv = drop(best) ? 4 : 2;
+  for (let lv = start; lv <= maxLv && (drop(best) || best._m.vShort); lv++) {
+    const p = searchPlan({ ...opts, _level: lv, _need: drop(best) });
+    if (drop(p) < drop(best) || (drop(p) === drop(best) && (p._m.vShort < best._m.vShort || (p._m.vShort === best._m.vShort && p._m.repeats < best._m.repeats)))) best = p;
   }
   return best;
 }

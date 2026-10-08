@@ -3,7 +3,7 @@
  * Schnittpunkte per dynamischer Programmierung auf Beats, Takten, Phrasen,
  * Abschnittswechseln und Akzenten. Zieldauer je Einstellung folgt dem Songteil.
  */
-function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0, taps = []) {
+function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0, taps = [], vary = 0, simple = false) {
   const D = win.end - win.start;
   const beatDur = an.beatPeriod;
   const bars = an.barStart || [];
@@ -40,7 +40,8 @@ function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0
   // Mindestlänge je Einstellung (Format); nur die Akzent-Schnitte auf den ersten Beats des Drops dürfen kürzer sein
   const beatMin = Math.max(0.34, beatDur * 0.98);
   const minLen = Math.max(beatMin, minShot);
-  const maxLen = (pace === 'ruhig' ? 7.5 : 6) * Math.max(1, Math.min(1.6, lengthScale));
+  // (bei wenig Material für eine feste Länge darf ein Bild länger stehen, bevor sich etwas wiederholt)
+  const maxLen = (pace === 'ruhig' ? 7.5 : 6) * Math.max(1, Math.min(lengthScale > 1.6 ? 2.6 : 1.6, lengthScale));
   const pf = PACES[pace] * lengthScale * (shotBase || 1);
   const tgt = (t) => {
     const abs = win.start + t;
@@ -52,12 +53,18 @@ function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0
     const bi = beatIdx(abs);
     const e = an.energy ? an.energy[bi] || 0.5 : 0.5, voc = an.vocal ? an.vocal[bi] || 0 : 0;
     v *= (1.12 - 0.24 * e) * (1 + 0.12 * voc);
+    // „Neu schneiden“: je Phrase (vier Takte) etwas dichter oder ruhiger – ein anderer Rhythmus, gleicher Songcharakter
+    if (vary) {
+      const ph = Math.floor(Math.max(0, abs - (bars[0] || 0)) / (beatDur * 16));
+      let h = (vary ^ Math.imul(ph + 1, 2654435761)) >>> 0; h = Math.imul(h ^ (h >>> 15), 2246822519) >>> 0;
+      v *= 0.75 + ((h >>> 8) / 16777216) * 0.55;
+    }
     if (sec.label === 'build') {
       const prog = Math.max(0, Math.min(1, (abs - sec.start) / Math.max(0.1, sec.end - sec.start)));
       v *= 1.4 - prog * 0.9;
     }
-    // Einsatz des Drops: zwei Schnitte genau auf den ersten Beats, danach wieder ruhiger
-    if (sec.label === 'drop' && abs - sec.start < beatDur * 2.1) return Math.max(beatMin, beatDur * (pace === 'ruhig' ? 2 : 1));
+    // Einsatz des Drops: zwei Schnitte genau auf den ersten Beats, danach wieder ruhiger (schlicht: nur der eine Schnitt)
+    if (!simple && sec.label === 'drop' && abs - sec.start < beatDur * 2.1) return Math.max(beatMin, beatDur * (pace === 'ruhig' ? 2 : 1));
     return Math.max(minLen, Math.min(maxLen, v));
   };
   const n = pts.length;

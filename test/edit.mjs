@@ -170,6 +170,7 @@ const wav = readFileSync(`${OUT}/Song.wav`).toString('base64');
   await page.setInputFiles('#fileMusic', `${OUT}/Song.wav`);
   await page.waitForFunction(() => CineBeat.S.ctx.song && document.getElementById('busy').hidden && document.querySelector('#flowStage [data-flow="cut"]'), null, { timeout: 120000 });
   await page.click('#flowStage [data-flow="cut"]');
+  await page.click('#wishGo');
   const stable = () => page.waitForFunction(() => { const p = CineBeat.S.plan; if (!p || !document.getElementById('busy').hidden) return false; if (window.__lp !== p) { window.__lp = p; window.__lpT = performance.now(); } return performance.now() - window.__lpT > 1500; }, null, { timeout: 120000, polling: 150 });
   await stable();
   const seq = () => page.evaluate(() => { const s = []; for (const c of CineBeat.S.plan.clips) { if (c.loop || c.burst || ['rush', 'recap', 'leader', 'rew', 'tease', 'reveal'].includes(c.role)) continue; for (const id of c.split ? c.split.ids : c.stack ? c.stack.ids : [c.mediaId]) if (id && !s.includes(id)) s.push(id); } return s; });

@@ -36,7 +36,7 @@ function arrangeBlocks(clips, { byId, ovOf = () => null, moved: userMoved = new 
   const free = (c) => c && !special(c) && !own(c) && c.role !== 'hook' && c.role !== 'chapter' && !!img(c.mediaId) && !echoed.has(c.mediaId) && !userMoved.has(c.mediaId);
 
   const idx = clips.map((c, k) => k).filter((k) => free(clips[k]));
-  if (idx.length < 3) return { moved: 0, blocks: 0 };
+  if (idx.length < (vary ? 2 : 3)) return { moved: 0, blocks: 0 };
   const durs = idx.map((k) => clips[k].end - clips[k].start);
   const avgDur = durs.reduce((a, b) => a + b, 0) / durs.length;
   const scores = idx.map((k) => img(clips[k].mediaId).score || 0.5);

@@ -73,6 +73,7 @@ await page.click('[data-tab="music"]');
 await page.setInputFiles('#fileMusic', `${OUT}/Song.wav`);
 await page.waitForFunction(() => CineBeat.S.ctx.song && document.getElementById('busy').hidden && document.querySelector('#flowStage [data-flow="cut"]'), null, { timeout: 120000 });
 await page.click('#flowStage [data-flow="cut"]');
+await page.click('#wishGo');
 await page.waitForFunction(() => CineBeat.S.plan && document.getElementById('busy').hidden && document.getElementById('flowStage').hidden, null, { timeout: 300000 });
 const missing = await page.evaluate(() => {
   const ids = new Set(CineBeat.S.plan.clips.flatMap((c) => (c.split ? c.split.ids : c.stack ? c.stack.ids : [c.mediaId])));

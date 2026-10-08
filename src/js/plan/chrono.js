@@ -14,6 +14,8 @@ function layoutChrono(ctx, segs0, queue, bias) {
   const snapB = (t) => { let m = t, d = Infinity; for (const b of bRel) { const x = Math.abs(b - t); if (x < d) { d = x; m = b; } } return d < beatDur * 0.35 ? m : t; };
   const peakCuts = (an.sections || []).filter((x, k, arr) => isPeakSec(x) && !(arr[k - 1] && isPeakSec(arr[k - 1]))).map((x) => snapB(x.start - win.start));
   const isDropCut = (t) => peakCuts.some((p) => Math.abs(p - t) < 0.03);
+  const secCuts = (an.sections || []).map((x) => snapB(x.start - win.start));
+  const isSecCut = (t) => secCuts.some((p) => Math.abs(p - t) < 0.03);
   const sg = segs0.map((g) => ({ ...g }));
   const q = queue.slice();
   let qi = 0;
@@ -90,6 +92,11 @@ function layoutChrono(ctx, segs0, queue, bias) {
       const n = q.slice(qi, qi + need).findIndex((m) => m.kind !== 'image');
       if (n < 0 && q.length - qi >= need + 1) { const ids = []; for (let j = 0; j < need; j++) ids.push(takeImage().id); g.gridIds = ids; continue; }
       continue; // zu wenig Fotos am Stück: das Raster zeigt Vorschau-Kacheln (wie der Einstieg) und nimmt keine Aufnahme
+    }
+    // ein Video beginnt nie auf einem halben Schlag: liegt das Serienstück dazwischen, verlängert es das Stück davor
+    if (videoNext && g.burst && i > 0 && !bRel.some((x) => Math.abs(x - g.start) < 0.02)) {
+      const pv = sg[i - 1];
+      if (pv && (pv.burst || normal(pv)) && (pv.mediaId || pv.splitIds) && !pv.vslot) { pv.end = g.end; sg.splice(i, 1); i--; continue; }
     }
     if (videoNext && (g.burst || g.stackSeg || g.gridMid)) { delete g.burst; delete g.stackSeg; delete g.gridMid; }
     if (!head) { const m = repeatImg(); if (m) { g.mediaId = m.id; g.repeat = true; } continue; }
@@ -238,6 +245,30 @@ function layoutChrono(ctx, segs0, queue, bias) {
           const bb = bRel.filter((x) => x >= pv.start + beatDur * 2 - 0.02 && x < g.start - 0.05).reduce((a, x) => (a == null || Math.abs(g.start - x - need) < Math.abs(g.start - a - need) ? x : a), null);
           if (bb != null) { pv.end = bb; g.start = bb; }
         }
+        // reicht auch das nicht (z. B. am Filmende): die Fotos davor rücken auf ihren Schlägen zusammen – jedes behält
+        // mindestens zwei Schläge; Abschnittswechsel, Szenenanfänge und Tipps bleiben, wo sie sind
+        if (end - g.start < userL - tol && !g.tap && g.w < 10) {
+          const bi = (t) => { let k = -1, d = 0.03; for (let x = 0; x < bRel.length; x++) { const e = Math.abs(bRel[x] - t); if (e < d) { d = e; k = x; } } return k; };
+          const chain = [];
+          for (let k = i - 1; k > startI && chain.length < 10; k--) {
+            const x = sg[k];
+            if (!x.mediaId || x.vslot || x.splitIds || !normal(x) || bi(x.start) < 0 || bi(x.end) < 0) break;
+            chain.push(x);
+            // (dieses Foto gibt nur hinten ab, sein Anfang bleibt)
+            if (x.tap || x.w >= 10 || x.sceneStart || isSecCut(x.start)) break;
+          }
+          const room2 = (x) => Math.max(0, bi(x.end) - bi(x.start) - 2);
+          let r = Math.min(Math.ceil((userL - tol - (end - g.start)) / beatDur), chain.reduce((a, x) => a + room2(x), 0));
+          const g0 = bi(g.start);
+          if (r > 0 && g0 - r >= 0) {
+            g.start = bRel[g0 - r];
+            for (const x of chain) {
+              if (!r) break;
+              const give = Math.min(r, room2(x)), e0 = bi(x.end), s0 = bi(x.start);
+              x.end = bRel[e0 - r]; r -= give; x.start = bRel[s0 - r];
+            }
+          }
+        }
         if (end > target + tol) {
           const cut = nearB(g.start + Math.min(userL * 0.8, userL - beatDur * 0.4), end - beatDur * 0.9);
           if (cut != null && Math.abs(cut - target) < Math.abs(end - target)) { sg.splice(j + 1, 0, { start: cut, end, w: 1 }); end = cut; }
@@ -251,10 +282,12 @@ function layoutChrono(ctx, segs0, queue, bias) {
     // Split-Screen: aufeinanderfolgende Fotos zusammen – als Stilmittel im Refrain oder weil sonst Fotos fehlen würden
     const need = allOn ? remaining(i) : 0;
     const beatsIn = len / beatDur;
-    const styleSplit = s.split !== 'off' && peak && sinceSplit >= (s.split === 'more' ? 3 : 5) && beatsIn >= 2.8;
+    const styleSplit = s.split !== 'off' && effectsOf(s) !== 'schlicht' && peak && sinceSplit >= (s.split === 'more' ? 3 : 5) && beatsIn >= 2.8;
+    // „Querfotos: Split-Screen“ (Story): ein Querfoto steht nie allein, sondern mit seinen querformatigen Nachbarn
+    const querSplit = s.quer === 'split' && fitSplit(head) && fitSplit(q[qi + 1]) && beatsIn >= 1.8;
     // Split-Screens zuerst in Refrain und Drop; in ruhigen Teilen erst, wenn es sonst nicht passt
     const needSplit = s.split !== 'off' && need > 0.5 && beatsIn >= (level >= 2 ? 0.9 : 1.8) && (peak || level >= 2);
-    if (styleSplit || needSplit) {
+    if (styleSplit || needSplit || querSplit) {
       const k = needSplit ? Math.min(splitN, Math.max(2, Math.ceil(need) + 1)) : splitN;
       const ids = [];
       for (let j = qi; j < q.length && ids.length < Math.min(k, Math.max(2, Math.floor(beatsIn + 0.2))); j++) {

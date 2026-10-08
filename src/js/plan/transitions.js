@@ -1,9 +1,14 @@
 /* Planer · Wahl der Übergänge aus Songaufbau und Bildbeziehung */
 /** Kino-Übergänge: meist harte Schnitte, gezielte Blenden an Abschnittsgrenzen. */
 function chooseTransition(ctx, rng) {
-  const { labelA, labelB, sectionChange, weight, peak, pace, beatDur, lenA, lenB, stopEnd } = ctx;
+  const { labelA, labelB, sectionChange, weight, peak, pace, beatDur, lenA, lenB, stopEnd, simple } = ctx;
   let type = TR.CUT, beats = 0, punch = false;
-  if (stopEnd) punch = true;
+  if (simple) {
+    // schlicht: harter Schnitt auf dem Schlag; weich nur, wo der Song ruhig wird (Break, Outro) oder in ruhigen Teilen
+    // auf einer Phrase
+    if (sectionChange && (labelB === 'break' || labelB === 'outro')) { type = TR.DISSOLVE; beats = 1.5; }
+    else if (!peak && !stopEnd && weight >= 5 && (pace === 'ruhig' || labelA === 'break' || labelA === 'intro' || labelA === 'outro')) { type = TR.DISSOLVE; beats = 1; }
+  } else if (stopEnd) punch = true;
   else if (sectionChange) {
     if (labelB === 'drop') { if (labelA === 'break' || labelA === 'build') punch = true; else { type = TR.ZOOM; beats = 0.5; } }
     else if (labelB === 'chorus') { type = rng() < 0.6 ? TR.WHIP : TR.ZOOM; beats = 0.5; }

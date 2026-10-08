@@ -183,8 +183,11 @@ async function bestCut(opts, n = 8, onProgress) {
 
 /**
  * Hook-Prüfung: Stoppt jemand beim Scrollen? Kein Geschmacksurteil, sondern die Mechanik der ersten 1,5 s, die im Feed
- * über Weiterwischen entscheidet: sofort Bewegung, früh eine Veränderung, ein starkes Motiv, Menschen, Musik ohne
- * Anlauf, kein langsames Einblenden. Liefert { score 0–100, parts: [{k, label, v 0–1, tip}] }.
+ * über Weiterwischen entscheidet. Zwei Arten von Befunden:
+ *  - Fehler (kind 'fehler'): Anlauf aus Schwarz, Stillstand (weder Bewegung noch Schnitt), unscharfes/zu dunkles erstes
+ *    Bild, Song beginnt in der Stille – jeder kostet 25 Punkte und gehört behoben.
+ *  - Hinweise (kind 'hinweis'): Bewegung, früher Schnitt, stärkstes Motiv, Menschen, Musik – machen den Einstieg stärker.
+ * Liefert { score 0–100, parts: [{k, label, v 0–1, w, tip, kind}], errors }.
  */
 function hookScore(plan, media, an) {
   const W = 1.5;
@@ -193,46 +196,58 @@ function hookScore(plan, media, an) {
   const mOf = (c) => media[c.mediaIndex];
   const cl = (x) => Math.max(0, Math.min(1, x));
   const parts = [];
-  const add = (k, label, v, w, tip) => parts.push({ k, label, v: cl(v), w, tip });
-  // 1. Bewegung ab dem ersten Bild: Kamerafahrt je Sekunde oder bewegtes Video
+  const add = (k, label, v, w, tip, kind = 'hinweis') => parts.push({ k, label, v: cl(v), w, tip, kind });
   const c0 = early[0] || clips[0];
   const m0 = c0 && mOf(c0);
+  const wall = c0 && c0.split && c0.split.orient === 'wall' ? c0.split : null;
+  // Bewegung ab dem ersten Bild: Kamerafahrt je Sekunde oder bewegtes Video
   let mv = 0;
   if (c0 && c0.motion) {
     const d = Math.max(0.3, c0.visEnd - c0.visStart), a = c0.motion.from, b = c0.motion.to;
-    // sanfte Kamerafahrt zählt wenig, deutliche Bewegung viel (Zoom-Anteil und Weg je Sekunde)
     mv = (Math.abs(b.s - a.s) * 4 + Math.hypot(b.x - a.x, b.y - a.y) * 0.8) / d / 0.45;
   }
   if (m0 && m0.kind === 'video') mv = Math.max(mv, (m0.motion || 0) / 0.04);
-  if (plan.intro === 'rush' || plan.intro === 'knockout') mv = Math.max(mv, 1);
-  // Kino-Rollladen: jedes Feld setzt mit einem Zoom ein und fährt im Ausschnitt weiter, Videos laufen
-  const wall = c0 && c0.split && c0.split.orient === 'wall' ? c0.split : null;
-  if (wall) mv = Math.max(mv, 1);
-  add('motion', 'Bewegung ab dem ersten Bild', mv, 0.2, 'Stillstand in der ersten Sekunde wird weggewischt: ein Video oder eine schnelle Bilderfolge vorn hilft.');
-  // 2. frühe Veränderung: ein Schnitt in den ersten 1,5 s zeigt „hier passiert etwas“
-  // (im Kino-Rollladen ist jedes neu erscheinende Feld eine Veränderung wie ein Schnitt)
+  if (plan.intro === 'rush' || plan.intro === 'knockout' || wall) mv = Math.max(mv, 1);
+  // frühe Veränderung: Schnitte in den ersten 1,5 s (im Kino-Rollladen zählt jedes neu erscheinende Feld)
   const cuts = clips.filter((c) => c.start > 0.05 && c.start < W).length + (wall ? wall.reveal.filter((r) => r > 0.05 && r < W).length : 0);
-  add('change', 'Früher Schnitt', cuts >= 2 ? 1 : cuts === 1 ? 0.8 : 0.15, 0.2, 'Der erste Schnitt kommt spät: eine schnelle Bilderfolge oder ein kürzeres erstes Bild.');
-  // 3. stärkstes Motiv vorn (verglichen mit dem, was der Film sonst zeigt)
-  const used = clips.map(mOf).filter(Boolean).map((m) => m.score || 0).sort((a, b) => a - b);
-  const q = (p) => used.length ? used[Math.min(used.length - 1, Math.floor(p * used.length))] : 0.5;
-  const top = Math.max(0, ...early.map(mOf).filter(Boolean).map((m) => m.score || 0));
-  add('strong', 'Starkes Motiv vorn', (top - q(0.5)) / Math.max(0.02, q(0.92) - q(0.5)), 0.2, 'Vorn steht nicht euer bestes Bild: das stärkste als Startbild nehmen.');
-  // 4. Menschen: Gesichter halten den Blick
-  const ppl = Math.max(0, ...clips.filter((c) => c.visStart < 2).map(mOf).filter(Boolean).map((m) => usScore(m)));
-  add('people', 'Menschen im Bild', 0.3 + ppl * 0.7, 0.15, 'In den ersten 2 s ist niemand zu sehen: ein Bild von euch vorn bindet stärker.');
-  // 5. Musik trägt sofort: Energie der ersten Schläge gegenüber dem Song
+  // Musik: Energie der ersten Schläge gegenüber dem Song
   const en = Array.from(an.energy || []), bt = Array.from(an.beats || []);
   const med = en.length ? en.slice().sort((a, b) => a - b)[en.length >> 1] : 0.5;
   const firstE = bt.map((b, i) => [b, en[i] || 0]).filter(([b]) => b >= plan.win.start - 0.05 && b < plan.win.start + W).map(([, e]) => e);
-  const eAvg = firstE.length ? firstE.reduce((a, b) => a + b, 0) / firstE.length : med;
-  add('music', 'Musik trägt sofort', ((eAvg / Math.max(0.05, med) - 0.6) / 0.6), 0.15, 'Der Song beginnt leise: „Ab Refrain“ oder „Kurz davor“ als Songstart.');
-  // 6. kein langsamer Anlauf aus Schwarz
-  const black = (plan.fx || []).some((f) => (f.type === 'black' || f.type === 'dim') && f.start < 0.3 && f.end > 0.45);
+  const eRel = (firstE.length ? firstE.reduce((a, b) => a + b, 0) / firstE.length : med) / Math.max(0.05, med);
+
+  // ---- Fehler ----
+  // (ein abgedunkeltes Bild unter dem Titel ist kein Schwarz – nur echtes Schwarz bzw. fast schwarz zählt)
+  const black = (plan.fx || []).some((f) => (f.type === 'black' || (f.type === 'dim' && (f.amp == null || f.amp >= 0.75))) && f.start < 0.3 && f.end > 0.45);
   const slow = plan.intro === 'cinema' || (plan.win.fadeIn || 0) > 0.3;
-  add('start', 'Kein Anlauf aus Schwarz', black ? 0 : slow ? 0.4 : 1, 0.1, 'Der Film blendet langsam auf: einen Einstieg ohne Schwarzbild wählen.');
-  const score = Math.round(100 * parts.reduce((a, p) => a + p.v * p.w, 0) / parts.reduce((a, p) => a + p.w, 0));
-  return { score, parts };
+  add('start', 'Kein Anlauf aus Schwarz', black || slow ? 0 : 1, 0, 'Der Film beginnt mit Schwarz oder einer langsamen Aufblende: einen Einstieg ohne Schwarzbild wählen (z. B. Startbild mit Titel).', 'fehler');
+  // (eine ruhige Kamerafahrt ist kein Stillstand – Fehler ist nur: kaum Bewegung und kein Schnitt)
+  add('still', 'Sofort etwas los', mv >= 0.1 || cuts >= 1 ? 1 : 0, 0, 'In den ersten 1,5 s bewegt sich nichts und es gibt keinen Schnitt: ein Video oder einen früheren Schnitt vorn.', 'fehler');
+  // erstes Bild, das man wirklich sieht (mindestens 0,4 s; Blitzbilder einer Bilderflut zählen nicht)
+  const seen0 = early.find((c) => c.end - Math.max(0, c.start) >= 0.4 && mOf(c));
+  const m1 = seen0 && mOf(seen0);
+  const poor = m1 && m1.kind === 'image' && ((m1.sharp != null && m1.sharp < 0.3) || (m1.luma != null && m1.luma < 0.15));
+  add('quality', 'Erstes Bild scharf und hell genug', poor ? 0 : 1, 0, 'Das erste Bild ist unscharf oder sehr dunkel: ein anderes Startbild wählen.', 'fehler');
+  const silent = eRel < 0.35 || (an.firstSound != null && an.firstSound > plan.win.start + 0.3);
+  add('silence', 'Musik von Anfang an', silent ? 0 : 1, 0, 'Der Song beginnt in der Stille oder sehr leise: als Songstart „Ab Refrain“ oder „Kurz davor“ wählen.', 'fehler');
+
+  // ---- Hinweise ----
+  add('motion', 'Bewegung ab dem ersten Bild', mv, 0.25, 'Ein Video oder eine deutliche Kamerafahrt vorn hält den Blick noch stärker.');
+  add('change', 'Früher Schnitt', cuts >= 2 ? 1 : cuts === 1 ? 0.8 : 0.3, 0.2, 'Ein zweiter Schnitt in der ersten Sekunde (z. B. Bilderflut-Einstieg) macht neugierig.');
+  const used = clips.map(mOf).filter(Boolean).map((m) => m.score || 0).sort((a, b) => a - b);
+  const q = (p) => (used.length ? used[Math.min(used.length - 1, Math.floor(p * used.length))] : 0.5);
+  const top = Math.max(0, ...early.map(mOf).filter(Boolean).map((m) => m.score || 0));
+  add('strong', 'Starkes Motiv vorn', (top - q(0.5)) / Math.max(0.02, q(0.92) - q(0.5)), 0.25, 'Vorn steht nicht euer bestes Bild: das stärkste als Startbild nehmen.');
+  // Menschen: erkannt (Gesichter/Haut im Bild) oder von dir als „Wir“ markiert
+  const ppl = Math.max(0, ...clips.filter((c) => c.visStart < 2).map(mOf).filter(Boolean).map((m) => Math.max(usScore(m), m.faces ? 1 : 0, Math.min(1, (m.people || 0) * 1.5))));
+  add('people', 'Menschen im Bild', 0.4 + ppl * 0.6, 0.15, 'Ein Bild mit Menschen in den ersten 2 s bindet noch stärker.');
+  add('music', 'Musik trägt sofort', (eRel - 0.6) / 0.6, 0.15, 'Der Song ist am Anfang eher leise: „Ab Refrain“ als Songstart setzt sofort ein.');
+
+  const hints = parts.filter((p) => p.kind === 'hinweis');
+  const errors = parts.filter((p) => p.kind === 'fehler' && p.v < 0.5);
+  const base = 100 * hints.reduce((a, p) => a + p.v * p.w, 0) / hints.reduce((a, p) => a + p.w, 0);
+  const score = Math.max(0, Math.round(base - errors.length * 25));
+  return { score, parts, errors: errors.length };
 }
 
 /**
@@ -242,14 +257,15 @@ function hookScore(plan, media, an) {
 async function improveHook(opts, onProgress) {
   const s0 = opts.settings;
   const base = buildPlan(opts);
-  const h0 = hookScore(base, opts.media, opts.an).score, q0 = planQuality(base, opts.media);
+  const hs0 = hookScore(base, opts.media, opts.an), h0 = hs0.score, q0 = planQuality(base, opts.media);
   const imgs = opts.media.filter((m) => m.kind === 'image' && !m.bad && !m.excluded);
   const byScore = imgs.slice().sort((a, b) => (b.score || 0) - (a.score || 0));
   const bestUs = imgs.filter((m) => isUs(m)).sort((a, b) => (b.score || 0) - (a.score || 0))[0];
   const hooks = [s0.hookId || null, byScore[0] && byScore[0].id, bestUs && bestUs.id].filter((v, i, a) => a.indexOf(v) === i);
   const intros = [s0.intro || 'auto', 'rush', 'hook', 'knockout'].filter((v, i, a) => a.indexOf(v) === i);
   const starts = [s0.songStart == null ? 'auto' : s0.songStart, 'hook', 'prehook'].filter((v, i, a) => a.indexOf(v) === i);
-  let best = { h: h0, settings: null, hookId: s0.hookId || null };
+  // zuerst Fehler beheben, dann den Stopp-Wert heben
+  let best = { h: h0, e: hs0.errors, settings: null, hookId: s0.hookId || null };
   const total = intros.length * starts.length * hooks.length;
   let k = 0;
   for (const intro of intros) for (const songStart of starts) for (const hookId of hooks) {
@@ -258,13 +274,13 @@ async function improveHook(opts, onProgress) {
     const settings = { ...s0, intro, songStart, hookId };
     let plan;
     try { plan = buildPlan({ ...opts, settings }); } catch (e) { continue; }
-    const h = hookScore(plan, opts.media, opts.an).score;
-    if (h <= best.h + 2) continue;
+    const hs = hookScore(plan, opts.media, opts.an), h = hs.score;
+    if (hs.errors > best.e || (hs.errors === best.e && h <= best.h + 2)) continue;
     // der Rest des Films darf nicht leiden
     if (planQuality(plan, opts.media) < q0 - Math.max(0.5, Math.abs(q0) * 0.08)) continue;
-    best = { h, settings: { intro, songStart }, hookId };
+    best = { h, e: hs.errors, settings: { intro, songStart }, hookId };
   }
-  return { from: h0, to: best.h, settings: best.settings, hookId: best.hookId };
+  return { from: h0, to: best.h, errorsFrom: hs0.errors, errorsTo: best.e, settings: best.settings, hookId: best.hookId };
 }
 
 /**

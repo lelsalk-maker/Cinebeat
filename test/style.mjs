@@ -55,18 +55,23 @@ const res = await p.evaluate(async (b64) => {
   if (!drifts.length || drifts.some((c) => !isCalmLabel(c.label))) fails.push('Drift');
   if (pa.capacity.repeats) fails.push('Doppelungen mit Stil-Mitteln');
   if (!pa.accent || !pa.accent.snare || pa.parallax !== 1) fails.push('Schlagzeug/Parallax');
-  // 4. Auto-Stil: sparsam, abgestimmt
-  const auto = plan({});
+  // 4. Auto-Stil: „Schlicht“ (Standard) ganz ohne Effekt-Momente und Zoom-Stöße; „Dezent“ sparsam, abgestimmt
+  const simple = plan({});
+  const rs0 = simple.resolved;
+  const m0 = ['echo', 'stack', 'mini'].filter((k) => rs0[k] === 'on').length + (rs0.color !== 'off' ? 1 : 0) + (rs0.accent !== 'off' ? 1 : 0) + (rs0.drift === 'on' ? 1 : 0) + (rs0.parallax === 'on' ? 1 : 0);
+  out.simple = { moments: m0, punches: simple.fx.filter((f) => f.type === 'punch').length, trans: [...new Set(simple.clips.map((c) => c.tin && c.tin.type))].join(',') };
+  if (m0 || out.simple.punches || simple.clips.some((c) => c.tin && ![TR.CUT, TR.DISSOLVE, TR.LUMA, TR.DIP].includes(c.tin.type))) fails.push('Schlicht nicht schlicht ' + JSON.stringify(out.simple));
+  const auto = plan({ effekte: 'dezent' });
   const r = auto.resolved;
   out.auto = { color: r.color, echo: r.echo, stack: r.stack, mini: r.mini, drift: r.drift, parallax: r.parallax, accent: r.accent, note: auto.notes.find((n) => /^Stil:/.test(n)) };
   const moments = ['echo', 'stack', 'mini'].filter((k) => r[k] === 'on').length + (r.color !== 'off' ? 1 : 0);
   if (moments < 1 || moments > 3) fails.push('Auto-Stil: ' + moments + ' Momente');
-  const shortA = buildPlan({ an, media: media.slice(0, 8), settings: { ...S0, length: 15, target: 'story' }, overrides: { texts: [], stickers: [] } }).resolved;
+  const shortA = buildPlan({ an, media: media.slice(0, 8), settings: { ...S0, effekte: 'dezent', length: 15, target: 'story' }, overrides: { texts: [], stickers: [] } }).resolved;
   const mShort = ['echo', 'stack', 'mini'].filter((k) => shortA[k] === 'on').length + (shortA.color !== 'off' ? 1 : 0);
   if (mShort > 1) fails.push('kurzer Film überladen');
   // 5. Kapitel: Zoom durch den Namen jedes Ortes
   const chapters = [{ title: 'Porto', media: media.slice(0, 8) }, { title: 'Lissabon', media: media.slice(8, 16) }, { title: 'Algarve', media: media.slice(16) }];
-  const pc = buildPlan({ an, media, chapters, settings: { ...S0, format: '16:9', intro: 'cinema', chapKnock: 'auto', title: 'Portugal' }, overrides: { texts: [], stickers: [] } });
+  const pc = buildPlan({ an, media, chapters, settings: { ...S0, effekte: 'dezent', format: '16:9', intro: 'cinema', chapKnock: 'auto', title: 'Portugal' }, overrides: { texts: [], stickers: [] } });
   const kn = pc.overlays.filter((o) => o.type === 'knockout');
   out.chapters = kn.map((o) => `${o.text}@${o.start.toFixed(1)} zoom ${o.zoomStart.toFixed(1)}-${o.end.toFixed(1)}`);
   if (kn.length !== 2) fails.push('Kapitel-Knockout ' + kn.length);
