@@ -37,7 +37,8 @@ await b.close();
     const beats = Array.from({ length: 72 }, (_, i) => i * 0.5), bars = beats.filter((_, i) => i % 4 === 0);
     const base = { bpm: 120, beatPeriod: 0.5, beats: Float64Array.from(beats), barStart: Float64Array.from(bars), phrasePhase: 0, energy: beats.map(() => 0.5), sections: [{ start: 0, end: 16, label: 'verse' }, { start: 16, end: 36, label: 'chorus' }], vocal: beats.map(() => 0.6) };
     const lines = [[2, 5.5], [6.5, 10], [12, 15.5], [16.5, 20], [22, 25.5], [26.5, 30]];
-    const inside = (segs) => segs.slice(1).filter((g) => g.start < 16 && lines.some(([a, e]) => g.start > a + 0.2 && g.start < e - 0.15)).length;
+    // (auf der Eins eines Takts darf geschnitten werden; dazwischen nicht)
+    const inside = (segs) => segs.slice(1).filter((g) => g.start < 16 && Math.abs(g.start / 2 - Math.round(g.start / 2)) > 0.01 && lines.some(([a, e]) => g.start > a + 0.2 && g.start < e - 0.15)).length;
     const win = { start: 0, end: 34 };
     const without = planCuts(base, win, 'mittel', 1, 1);
     const withL = planCuts({ ...base, vocalLines: lines }, win, 'mittel', 1, 1);

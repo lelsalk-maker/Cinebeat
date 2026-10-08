@@ -43,7 +43,8 @@ function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0
   // mitten in einer Gesangszeile (nicht an ihrem Anfang oder Ende) schneidet ein Schnitt ins Wort
   for (const p of pts) {
     const abs = win.start + p.t;
-    if (!p.forced && lines.some(([a, e]) => abs > a + beatDur * 0.4 && abs < e - beatDur * 0.3)) p.inLine = true;
+    // (auf einer Eins darf geschnitten werden – dort atmet auch der Gesang meist; zwischen den Zählzeiten nicht)
+    if (!p.forced && !barSet.has(Math.round(abs * 1000)) && lines.some(([a, e]) => abs > a + beatDur * 0.4 && abs < e - beatDur * 0.3)) p.inLine = true;
   }
 
   // Mindestlänge je Einstellung (Format); nur die Akzent-Schnitte auf den ersten Beats des Drops dürfen kürzer sein
@@ -95,7 +96,7 @@ function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0
       let c = 4 * ((len - g) / g) ** 2 - 0.32 * pts[j].w * Math.min(1, len / g);
       // mitten in einer Gesangszeile: in ruhigen Teilen deutlich teurer (dort hört man jedes Wort), im Refrain/Drop
       // darf der Schnitt auf dem Schlag bleiben, wenn das Tempo es verlangt
-      if (pts[j].inLine) { const lj = sectionAt(an, win.start + pts[j].t + 0.01).label; c += lj === 'drop' || lj === 'chorus' || lj === 'build' ? 1.2 : 4; }
+      if (pts[j].inLine) { const lj = sectionAt(an, win.start + pts[j].t + 0.01).label; c += lj === 'drop' || lj === 'chorus' || lj === 'build' ? 0.8 : 2; }
       // Songdynamik: ruhige Teile (Intro, Strophe, Break, Outro) behalten auch bei viel Material längere Einstellungen
       const lab = sectionAt(an, win.start + pts[i].t + 0.01).label;
       const lo = g < minLen ? beatMin : calmMin && (lab === 'intro' || lab === 'verse' || lab === 'break' || lab === 'outro') ? Math.max(minLen, calmMin) : minLen;

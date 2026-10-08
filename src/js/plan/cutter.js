@@ -119,20 +119,23 @@ function separateTwins(clips, ctx) {
   const clashAt = (k, m) => [k - 1, k + 1].some((j) => { const n = at(j); return n && sameMotif(n, m); });
   // streng nach Uhrzeit: höchstens eine halbe Stunde Aufnahmezeit tauschen (die Folge bleibt erkennbar chronologisch)
   const near = (a, b) => (blocks === 'moment' ? true : blocks ? dayBlock(a) === dayBlock(b) : Math.abs((a.time || 0) - (b.time || 0)) <= 30 * 60 * 1000);
+  const orient = (m) => (m.w && m.h ? (m.w > m.h * 1.1 ? 1 : m.h > m.w * 1.1 ? -1 : 0) : 0);
   let fixedN = 0;
   for (let i = 1; i < clips.length; i++) {
     const a = at(i - 1), b = at(i);
     if (!a || !b || !sameMotif(a, b)) continue;
     // lieber die hintere Aufnahme verschieben, sonst die vordere
-    for (const k of [i, i - 1]) {
-      if (fixed(k)) continue;
+    let done = false;
+    // erst mit einer Aufnahme gleicher Ausrichtung tauschen (Kamerafahrt und Tempo bleiben gleich), sonst mit jeder
+    for (const sameO of [true, false]) for (const k of [i, i - 1]) {
+      if (done || fixed(k)) continue;
       const m = img(clips[k]);
-      let done = false;
       for (let d = 1; d <= 6 && !done; d++) {
         for (const j of [k + d, k - d]) {
           if (j < 0 || j > last || Math.abs(j - k) < 2 || fixed(j)) continue;
           const n = img(clips[j]);
           if (!n || !near(m, n) || isUs(m) !== isUs(n) || !keepsHero(k, m, n) || !keepsHero(j, n, m)) continue;
+          if (sameO && orient(m) !== orient(n)) continue;
           // nach dem Tausch: n an Platz k ohne gleiches Motiv daneben, m an Platz j ebenso
           const save = clips[k].mediaId;
           clips[k].mediaId = n.id; clips[j].mediaId = m.id;
@@ -140,7 +143,6 @@ function separateTwins(clips, ctx) {
           clips[k].mediaId = save; clips[j].mediaId = n.id;
         }
       }
-      if (done) break;
     }
   }
   return fixedN;

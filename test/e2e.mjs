@@ -52,7 +52,7 @@ await page.click('#flowStage [data-flow="cut"]');
 await page.waitForSelector('#wishGo');
 const wish = await page.evaluate(() => [...document.querySelectorAll('#sheetBody [data-wish]')].map((f) => f.dataset.wish + '=' + f.querySelector('[aria-checked="true"]').dataset.v).join(' '));
 console.log('Wünsche:', wish);
-if (!/variant=ausgewogen/.test(wish) || !/effekte=schlicht/.test(wish) || !/bw=kein/.test(wish) || !/length=/.test(wish) || !/allMedia=on/.test(wish)) errs.push('Wunsch-Abfrage unvollständig: ' + wish);
+if (!/variant=ausgewogen/.test(wish) || !/effekte=schlicht/.test(wish) || !/bw=kein/.test(wish) || !/length=/.test(wish) || !/allMedia=off/.test(wish)) errs.push('Wunsch-Abfrage unvollständig: ' + wish);
 await page.click('#sheetBody [data-wish="bw"] [data-v="ganz"]');
 await page.click('#wishGo');
 await page.waitForFunction(() => CineBeat.S.plan && document.getElementById('busy').hidden && document.getElementById('flowStage').hidden, null, { timeout: 120000 });

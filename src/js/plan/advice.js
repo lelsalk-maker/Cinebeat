@@ -412,6 +412,7 @@ function filmCheck(plan, media, an, hook) {
   for (const c of plan.clips.slice(1)) {
     const abs = c.start + w0, lab = c.label;
     if (lab === 'drop' || lab === 'chorus' || lab === 'build' || c.flash || c.rush || c.burst) continue;
+    if (Array.from(an.barStart || []).some((b) => Math.abs(b - abs) < 0.04)) continue;
     if (lines.some(([a, e]) => abs > a + bd * 0.4 && abs < e - bd * 0.3)) inWord++;
   }
   out.push({ key: 'gesang', ok: inWord <= 1, label: inWord > 1 ? `${inWord} Schnitte mitten in Gesangszeilen` : lines.length ? 'Schnitte am Ende der Gesangszeilen' : 'Schnitte auf Takt und Phrase', detail: 'In ruhigen Teilen schneidet der Film nie mitten ins Wort.' });

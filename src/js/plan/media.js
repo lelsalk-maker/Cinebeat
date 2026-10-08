@@ -408,6 +408,8 @@ function imageMotion(rng, m, outAspect, visDur, role, prevDir, hint, tempo = 1) 
 function levelHorizon(mo, m, outAspect) {
   const deg = m.tilt || 0;
   if (!deg || Math.abs(deg) > 5 || m.rot90) return;
+  // nur bei einer Fahrt, die dabei ihr Tempo behält (kein langer Schwenk, der dafür kürzer werden müsste)
+  if (Math.abs((mo.to.x || 0) - (mo.from.x || 0)) > 0.6 || Math.abs((mo.to.y || 0) - (mo.from.y || 0)) > 0.6) return;
   const th = (Math.abs(deg) * Math.PI) / 180, c = Math.cos(th), sn = Math.sin(th);
   const srcA = m.w && m.h ? m.w / m.h : outAspect;
   // Ausschnitt bei s = 1 als Anteil der Bildbreite/-höhe; gedrehter Umriss in Bildanteilen

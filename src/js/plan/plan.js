@@ -1096,6 +1096,8 @@ function planOnce(opts) {
       const c = clips[i];
       for (const id of c.split ? c.split.ids : [c.mediaId]) if (id && !ids.includes(id) && byId.has(id)) ids.push(id);
     }
+    // (stehen davor nur schnelle Folgen ohne feste Aufnahme, kommen die übrigen Bilder des Films dazu)
+    if (ids.length < 3) for (const m of goodMedia(usable, gAll)) if (m.kind === 'image' && !ids.includes(m.id) && ids.length < 6) ids.push(m.id);
     if (ids.length >= 3) { lastC.strip = { ids }; lastC.mediaId = ids[0]; }
   }
 

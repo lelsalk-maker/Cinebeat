@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "test": "node test/run.mjs"
+    "test": "node test/run.mjs",
+    "realset": "node test/realset.mjs"
   }
 }

@@ -6,7 +6,7 @@
  * ============================================================ */
 
 /** Stand der Bildanalyse: Aufnahmen mit älterem Stand werden im Hintergrund nachanalysiert. */
-const VIS_VER = 2;
+const VIS_VER = 3;
 
 const vHex2 = (v) => { const x = Math.max(0, Math.min(255, Math.round(v))); return (x < 16 ? '0' : '') + x.toString(16); };
 const vUnhex = (s) => { const o = new Uint8Array(s.length >> 1); for (let i = 0; i < o.length; i++) o[i] = parseInt(s.substr(i * 2, 2), 16); return o; };
@@ -102,7 +102,15 @@ function visionMetrics(data, g, w, h, focus, scene) {
   const fx = focus[0], fy = focus[1];
   const third = Math.min(Math.abs(fx - 1 / 3), Math.abs(fx - 2 / 3), Math.abs(fx - 0.5) * 1.4) + Math.min(Math.abs(fy - 1 / 3), Math.abs(fy - 2 / 3), Math.abs(fy - 0.5) * 1.4);
   let comp = 0.5 + 0.25 * (1 - Math.min(1, third / 0.3));
-  const tilt = horizonTilt(g, w, h, scene && scene.horizon);
+  let tilt = horizonTilt(g, w, h, scene && scene.horizon);
+  // gerade richten nur bei einem Wasserhorizont (Meer, See): unter der Linie kühles, ruhiges Wasser. Ein schräger
+  // Hang, eine Düne oder ein Dach ist gewollt schräg und bleibt, wie es ist.
+  if (tilt.conf > 0 && scene && scene.horizon != null) {
+    const y0 = Math.min(h - 1, Math.floor((scene.horizon + 0.04) * h)), y1 = Math.min(h, Math.floor((scene.horizon + 0.16) * h));
+    let rs = 0, bs = 0, cnt = 0;
+    for (let y = y0; y < y1; y++) for (let x = 0; x < w; x++) { const i = (y * w + x) * 4; rs += data[i]; bs += data[i + 2]; cnt++; }
+    if (!cnt || bs / cnt < rs / cnt + 6) tilt = { deg: 0, conf: 0 };
+  }
   if (scene && scene.horizon != null) {
     const hz = scene.horizon;
     comp += 0.12 * (1 - Math.min(1, Math.min(Math.abs(hz - 1 / 3), Math.abs(hz - 2 / 3)) / 0.12)) - (Math.abs(hz - 0.5) < 0.05 ? 0.06 : 0);
@@ -115,7 +123,7 @@ function visionMetrics(data, g, w, h, focus, scene) {
   if (calmCells < 4 && detail > 0.6) comp -= 0.12;
   comp = Math.max(0, Math.min(1, comp));
 
-  return { sig, calm: { d: calmD, l: calmL }, mood: [+valence.toFixed(2), +arousal.toFixed(2)], comp: +comp.toFixed(3), tilt: tilt.conf > 0.55 && Math.abs(tilt.deg) >= 0.6 && Math.abs(tilt.deg) <= 8 ? +tilt.deg.toFixed(2) : 0, detail: +detail.toFixed(2) };
+  return { sig, calm: { d: calmD, l: calmL }, mood: [+valence.toFixed(2), +arousal.toFixed(2)], comp: +comp.toFixed(3), tilt: tilt.conf > 0.7 && Math.abs(tilt.deg) >= 0.8 && Math.abs(tilt.deg) <= 5 ? +tilt.deg.toFixed(2) : 0, detail: +detail.toFixed(2) };
 }
 
 /**
@@ -147,7 +155,11 @@ function horizonTilt(g, w, h, horizon) {
   const ys = pts.map((p) => p[1] - m * p[0]).sort((a, b) => a - b), c0 = ys[ys.length >> 1];
   const inl = pts.filter((p) => Math.abs(p[1] - (m * p[0] + c0)) < 1.6 / h).length;
   const deg = (Math.atan2(m * h, w) * 180) / Math.PI;
-  return { deg, conf: inl / pts.length };
+  // echter Horizont (Meer, Ebene): über die ganze Breite gleich kräftige Kante – ein schräger Hang oder Grat
+  // wechselt seine Stärke und zählt nicht
+  const str = pts.map((p) => p[2]).sort((a, b) => a - b);
+  const even = str[Math.floor(str.length * 0.2)] / Math.max(1, str[Math.floor(str.length * 0.8)]);
+  return { deg, conf: (inl / pts.length) * (even > 0.55 ? 1 : 0.5) };
 }
 
 /**
@@ -234,7 +246,7 @@ function motifSim(a, b) {
   if (a.sig && b.sig && a.sig.length === b.sig.length) {
     const key = a.sig < b.sig ? a.sig + b.sig : b.sig + a.sig;
     const hit = motifSim.cache.get(key);
-    if (hit != null) return hit;
+    if (hit != null) return hit.v;
     const p = vUnhex(a.sig), q = vUnhex(b.sig);
     // Farbverteilung (Schnittmenge)
     let inter = 0, sa = 0, sb = 0;
@@ -261,7 +273,7 @@ function motifSim(a, b) {
     const simT = Math.max(0, 1 - dT / 18 / 60) * (1 - Math.min(0.5, Math.abs(p[81] - q[81]) / 255));
     const v = +(0.36 * simH + 0.4 * simS + 0.24 * simT).toFixed(3);
     if (motifSim.cache.size > 20000) motifSim.cache.clear();
-    motifSim.cache.set(key, v);
+    motifSim.cache.set(key, { v, h: simH });
     return v;
   }
   if (a.hash && b.hash && a.avg && b.avg) {
@@ -277,7 +289,9 @@ const SAME_MOTIF = 0.56;
 const sameMotif = (a, b) => {
   if (!a || !b) return false;
   if (a.id === b.id || a.dupOf === b.id || b.dupOf === a.id) return true;
-  if (a.sig && b.sig) return motifSim(a, b) >= SAME_MOTIF;
+  // gleicher Aufbau in ganz anderen Farben ist kein gleiches Motiv, sondern ein Match-Cut-Kandidat: die Farbverteilung
+  // muss ebenfalls passen
+  if (a.sig && b.sig) { const v = motifSim(a, b), c = motifSim.cache.get(a.sig < b.sig ? a.sig + b.sig : b.sig + a.sig); return v >= SAME_MOTIF && (!c || c.h >= 0.55); }
   // ältere Aufnahmen ohne Fingerabdruck: Differenzhash und Durchschnittsfarbe
   return !!(a.hash && b.hash && a.avg && b.avg && hamming(a.hash, b.hash) < 12 && Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) < 30);
 };
