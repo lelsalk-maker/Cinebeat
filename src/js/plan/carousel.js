@@ -17,7 +17,7 @@ function planCarousel({ an, media, count }) {
   const score = (m) => (m.score || 0.5) + (m.fav ? 0.25 : 0) + usScore(m) * 0.2;
   const colorD = (a, b) => (a.avg && b.avg ? Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) : 99);
   // zu ähnlich für zwei Slides: Beinahe-Doppel oder gleicher Aufbau im selben Tagesblock
-  const tooClose = (a, b) => a.dupOf === b.id || b.dupOf === a.id || (a.hash && b.hash && hamming(a.hash, b.hash) < 12 && colorD(a, b) < 30) || (dayBlock(a) === dayBlock(b) && layoutSim(a.layout, b.layout) > 0.85 && colorD(a, b) < 40);
+  const tooClose = (a, b) => sameMotif(a, b) || (a.hash && b.hash && hamming(a.hash, b.hash) < 12 && colorD(a, b) < 30) || (dayBlock(a) === dayBlock(b) && layoutSim(a.layout, b.layout) > 0.85 && colorD(a, b) < 40);
 
   // Anzahl: mit der Menge des Materials wachsend, 6–10
   const total = Math.max(1, Math.min(pool.length, count || Math.max(CAROUSEL.min, Math.min(CAROUSEL.max, Math.round(4 + Math.sqrt(pool.length) * 0.9)))));

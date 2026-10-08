@@ -251,6 +251,12 @@ class OverlayPainter {
       const geo = this.geometry(plan);
       for (const o of active) {
         ctx.save();
+        // Bildverständnis: Titel an der ruhigsten Stelle; dunkle Schrift auf hellem, ruhigem Grund, sonst helle –
+        // wo nötig mit weicher Abdunklung dahinter (Kontrast ≥ 4,5 : 1)
+        const inkSave = this.ink;
+        this.darkInk = !!(o.place && o.place.ink === 'dark');
+        if (this.darkInk) this.ink = '#151515';
+        if (o.place && o.place.scrim > 0.05) this.drawScrim(ctx, o, t, geo);
         if (o.type === 'titlecard') this.drawTitleCard(ctx, o, t, geo);
         else if (o.type === 'endcard') this.drawEndCard(ctx, o, t, geo);
         else if (o.type === 'lower') this.drawLower(ctx, o, t, geo);
@@ -269,6 +275,7 @@ class OverlayPainter {
         else if (o.type === 'datestamp') this.drawDateStamp(ctx, o, t, geo);
         else if (o.type === 'usertext') this.drawUserText(ctx, o, t, geo, o.id === selectedId);
         else if (o.type === 'sticker') this.drawSticker(ctx, o, t, geo, o.id === selectedId);
+        this.ink = inkSave; this.darkInk = false;
         ctx.restore();
       }
       this.lastKey = key;
@@ -393,8 +400,19 @@ class OverlayPainter {
     return { W, H, by, bh, base, vertical, lowerY, cx: W / 2, cy: by + bh / 2, margin: W * (vertical ? 0.08 : 0.06) };
   }
 
+  /** Weiche Abdunklung hinter einem platzierten Titel (Band über die volle Breite, oben und unten verlaufend). */
+  drawScrim(ctx, o, t, g) {
+    const a = smooth(cl01((t - o.start) / 0.4)) * smooth(cl01((o.end - t) / 0.4)) * o.place.scrim * 0.6;
+    if (a <= 0.005) return;
+    const yc = g.by + g.bh * o.place.y, h = g.bh * (o.type === 'city' ? 0.26 : 0.2);
+    const gr = ctx.createLinearGradient(0, yc - h / 2, 0, yc + h / 2);
+    gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(0.35, `rgba(0,0,0,${a.toFixed(3)})`); gr.addColorStop(0.65, `rgba(0,0,0,${a.toFixed(3)})`); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = gr;
+    ctx.fillRect(0, yc - h / 2, g.W, h);
+  }
+
   shadow(ctx, size) {
-    ctx.shadowColor = 'rgba(0,0,0,0.45)';
+    ctx.shadowColor = this.darkInk ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.45)';
     ctx.shadowBlur = size * 0.35;
   }
 
@@ -456,14 +474,21 @@ class OverlayPainter {
     ctx.fillStyle = this.ink;
     this.shadow(ctx, size * 0.6);
     ctx.textBaseline = 'alphabetic';
-    const y = g.cy + size * 0.3;
+    const y = (o.place ? g.by + g.bh * o.place.y : g.cy) + size * 0.3;
     const track = tr + 0.03 * easeOutCubic(cl01((t - o.start) / 3));
     this.maskTitle(ctx, title, g.cx, y, size, track, 'center', times, exitT, t, (sz) => this.font('title', sz));
     const sp = easeOutCubic(cl01((t - times[words]) / 0.5)) * (1 - out);
     const ss = g.base * 0.024;
-    // Datum und Koordinaten blenden an ihrer Stelle ein (kein Nachrutschen), Kilometer ruhig darunter
-    this.drawLabel(ctx, o.sub, g.cx, y + ss * 2.8, ss, 'center', sp, 0.4);
-    this.drawGeoLine(ctx, o, t, g.cx, y + ss * (o.sub ? 5 : 2.8), g.base * 0.022, 'center', sp, true);
+    // Datum und Koordinaten blenden an ihrer Stelle ein (kein Nachrutschen), Kilometer ruhig darunter.
+    // Steht der Name hinter den Bergen, stehen sie darüber im Himmel (unten läge der Vordergrund davor).
+    if (o.behind) {
+      const top = y - size * 0.95;
+      this.drawLabel(ctx, o.sub, g.cx, top - ss * 1.2, ss, 'center', sp, 0.4);
+      this.drawGeoLine(ctx, o, t, g.cx, top - ss * (o.sub ? 3.4 : 1.2), g.base * 0.022, 'center', sp, false);
+    } else {
+      this.drawLabel(ctx, o.sub, g.cx, y + ss * 2.8, ss, 'center', sp, 0.4);
+      this.drawGeoLine(ctx, o, t, g.cx, y + ss * (o.sub ? 5 : 2.8), g.base * 0.022, 'center', sp, true);
+    }
   }
 
 
@@ -915,7 +940,7 @@ class OverlayPainter {
     const size = fitSize(ctx, title, (sz) => this.font('title', sz), g.base * 0.088, g.W - g.margin * 2, tr);
     const x = center ? g.cx : g.margin;
     const align = center ? 'center' : 'left';
-    const y = g.lowerY;
+    const y = o.place && !(g.bh < g.H * 0.9) ? g.by + g.bh * o.place.y + size * 0.35 : g.lowerY;
     const words = Math.max(1, title.split(/\s+/).length);
     const times = this.beatTimes(o, words + 1);
     const exitT = this.beatExit(o);
@@ -1074,7 +1099,7 @@ class OverlayPainter {
     const title = this.caseTitle(o.text);
     const tr = this.titleTrack(0.06);
     const size = fitSize(ctx, title, (sz) => this.font('title', sz), g.base * 0.07, g.W - g.margin * 2, tr);
-    const x = g.margin, y = g.lowerY;
+    const x = g.margin, y = o.place && !(g.bh < g.H * 0.9) ? g.by + g.bh * o.place.y + size * 0.35 : g.lowerY;
     const words = Math.max(1, title.split(/\s+/).length);
     const times = this.beatTimes(o, words + 1);
     const exitT = this.beatExit(o);

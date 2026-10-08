@@ -92,7 +92,7 @@ function arrangeBlocks(clips, { byId, ovOf = () => null, moved: userMoved = new 
     const sim = layoutSim(a.layout, b.layout);
     // Beinahe-Doppel: gleicher Aufbau UND gleiche Farbe (gleicher Aufbau in anderer Farbe ist ein Match-Cut)
     const colorD = a.avg && b.avg ? Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) : 99;
-    const dup = a.dupOf === b.id || b.dupOf === a.id || (a.hash && b.hash && hamming(a.hash, b.hash) < 12 && colorD < 30);
+    const dup = sameMotif(a, b) || (a.hash && b.hash && hamming(a.hash, b.hash) < 12 && colorD < 30);
     if (dup) p -= 0.6;
     // Match-Cut (Übergangswahl ab 0,78): unsichtbarer Schnitt, Kamerafahrt läuft weiter – nur bildfüllend möglich
     // (ein gerahmtes Querfoto im Hochformat hat keinen Ausschnitt, an den die Bewegung anschließen könnte)

@@ -1124,7 +1124,7 @@ body.comparing .mini, body.comparing .mini-bar { display: none !important; }
 <script>
 (function () {
 'use strict';
-const SCORE_WORKER_SRC = "'use strict';\n/* ============================================================\n * Bildbewertung: Schärfe, Belichtung, Farbigkeit, Duplikate,\n * spannendste Stelle in Videos\n * ============================================================ */\n\nconst SCORE_SIZE = 160;\nlet scoreCanvas = null;\n\nfunction scoreCtx(w, h) {\n  if (!scoreCanvas) scoreCanvas = typeof document !== 'undefined' ? document.createElement('canvas') : new OffscreenCanvas(w, h);\n  scoreCanvas.width = w;\n  scoreCanvas.height = h;\n  return scoreCanvas.getContext('2d', { willReadFrequently: true });\n}\n\n/** Grauwerte + Farbe in kleiner Auflösung */\nfunction samplePixels(src, sw, sh) {\n  const s = SCORE_SIZE / Math.max(sw, sh);\n  const w = Math.max(8, Math.round(sw * s)), h = Math.max(8, Math.round(sh * s));\n  const ctx = scoreCtx(w, h);\n  ctx.drawImage(src, 0, 0, w, h);\n  return { w, h, data: ctx.getImageData(0, 0, w, h).data };\n}\n\nfunction imageMetrics(px) {\n  const { w, h, data } = px;\n  const n = w * h;\n  const g = new Float32Array(n);\n  let sumL = 0, clip = 0, mrg = 0, myb = 0, qrg = 0, qyb = 0;\n  for (let i = 0; i < n; i++) {\n    const r = data[i * 4], gg = data[i * 4 + 1], b = data[i * 4 + 2];\n    const l = 0.2126 * r + 0.7152 * gg + 0.0722 * b;\n    g[i] = l;\n    sumL += l;\n    if (l < 6 || l > 250) clip++;\n    const rg = r - gg, yb = 0.5 * (r + gg) - b;\n    mrg += rg; myb += yb; qrg += rg * rg; qyb += yb * yb;\n  }\n  mrg /= n; myb /= n;\n  const srg = Math.sqrt(Math.max(0, qrg / n - mrg * mrg)), syb = Math.sqrt(Math.max(0, qyb / n - myb * myb));\n  const colorful = Math.sqrt(srg * srg + syb * syb) + 0.3 * Math.sqrt(mrg * mrg + myb * myb);\n  // Laplace-Varianz (Schärfe)\n  let lm = 0, lq = 0, lc = 0;\n  for (let y = 1; y < h - 1; y++) {\n    for (let x = 1; x < w - 1; x++) {\n      const i = y * w + x;\n      const v = 4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w];\n      lm += v; lq += v * v; lc++;\n    }\n  }\n  lm /= Math.max(1, lc);\n  // Bildschwerpunkt (einfache Saliency): Kanten + Farbabweichung, leicht zur Mitte gewichtet\n  let fxs = 0, fys = 0, fw = 0;\n  for (let y = 2; y < h - 2; y += 1) {\n    for (let x = 2; x < w - 2; x += 1) {\n      const i = y * w + x;\n      const lap = Math.abs(4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w]);\n      const r = data[i * 4], gg = data[i * 4 + 1], b = data[i * 4 + 2];\n      const sat = Math.max(r, gg, b) - Math.min(r, gg, b);\n      const cx = x / w - 0.5, cy = y / h - 0.45;\n      const center = Math.exp(-(cx * cx + cy * cy) / 0.18);\n      const wgt = (lap + 0.35 * sat) * (0.35 + center);\n      fxs += wgt * (x / w); fys += wgt * (y / h); fw += wgt;\n    }\n  }\n  let focus = fw > 0 ? [fxs / fw, fys / fw] : [0.5, 0.45];\n  const scene = sceneMetrics(data, g, w, h, focus);\n  // Menschen sind das Motiv: der Schwerpunkt rückt zur Haut-Region (Gesicht/Person)\n  if (scene.people > 0.25) focus = [0.4 * focus[0] + 0.6 * scene.skin[0], 0.4 * focus[1] + 0.6 * scene.skin[1]];\n  const lapVar = Math.max(0, lq / Math.max(1, lc) - lm * lm);\n  const meanL = sumL / n / 255;\n  const sharpN = Math.max(0, Math.min(1, (Math.log10(lapVar + 1) - 1.2) / 1.6));\n  const expoN = Math.max(0, 1 - Math.abs(meanL - 0.48) * 1.8 - (clip / n) * 2.5);\n  const colorN = Math.max(0, Math.min(1, colorful / 85));\n  let ar = 0, ag = 0, ab = 0;\n  for (let i = 0; i < n; i++) { ar += data[i * 4]; ag += data[i * 4 + 1]; ab += data[i * 4 + 2]; }\n  return { sharp: sharpN, expo: expoN, color: colorN, luma: meanL, focus, scene, gray: g, w, h, avg: [Math.round(ar / n), Math.round(ag / n), Math.round(ab / n)] };\n}\n\n/** 64-Bit-Differenzhash (9x8) als zwei 32-Bit-Zahlen */\nfunction dHash(src, sw, sh) {\n  const ctx = scoreCtx(9, 8);\n  ctx.drawImage(src, 0, 0, sw, sh, 0, 0, 9, 8);\n  const d = ctx.getImageData(0, 0, 9, 8).data;\n  let hi = 0, lo = 0, bit = 0;\n  for (let y = 0; y < 8; y++) {\n    for (let x = 0; x < 8; x++) {\n      const i = (y * 9 + x) * 4, j = i + 4;\n      const a = d[i] + d[i + 1] + d[i + 2], b = d[j] + d[j + 1] + d[j + 2];\n      const v = a > b ? 1 : 0;\n      if (bit < 32) hi = (hi << 1) | v; else lo = (lo << 1) | v;\n      bit++;\n    }\n  }\n  return [hi >>> 0, lo >>> 0];\n}\n\nfunction hamming(a, b) {\n  let x = (a[0] ^ b[0]) >>> 0, y = (a[1] ^ b[1]) >>> 0, c = 0;\n  while (x) { x &= x - 1; c++; }\n  while (y) { y &= y - 1; c++; }\n  return c;\n}\n\n/**\n * Bildinhalt ohne KI-Modell, lokal und schnell (auf 160 px):\n * Horizont (stärkste durchgehende waagerechte Kante), Himmelsanteil, Haut-Regionen (Menschen)\n * und der Motivbereich (gewichtete Ausdehnung der auffälligen Bildteile).\n */\nfunction sceneMetrics(data, g, w, h, focus) {\n  // Horizont: Zeile mit der stärksten, über die Breite gleichmäßigen Helligkeitskante\n  const rowGrad = new Float32Array(h);\n  for (let y = 2; y < h; y++) {\n    let sgn = 0, sum = 0;\n    for (let x = 0; x < w; x++) { const d = g[y * w + x] - g[(y - 2) * w + x]; sum += Math.abs(d); sgn += d; }\n    rowGrad[y] = (sum / w) * (0.4 + 0.6 * Math.min(1, Math.abs(sgn) / Math.max(1, sum)));\n  }\n  let hy = -1, hv = 0;\n  const sorted = Array.from(rowGrad).sort((a, b) => a - b), med = sorted[Math.floor(h / 2)] || 1;\n  for (let y = Math.floor(h * 0.18); y < Math.floor(h * 0.82); y++) {\n    const v = (rowGrad[y - 1] + rowGrad[y] * 2 + rowGrad[y + 1]) / 4;\n    if (v > hv) { hv = v; hy = y; }\n  }\n  const horizon = hv > med * 2.2 && hv > 6 ? +(hy / h).toFixed(3) : null;\n  // Himmel: helle, blaue oder sehr gleichmäßige Flächen im oberen Bilddrittel\n  let sky = 0, skinN = 0, sx = 0, sy = 0;\n  const top = Math.floor(h * 0.4);\n  for (let y = 0; y < h; y++) {\n    for (let x = 0; x < w; x++) {\n      const i = (y * w + x) * 4, r = data[i], gg = data[i + 1], b = data[i + 2];\n      if (y < top && ((b > r + 12 && b > gg - 10 && b > 90) || (r > 205 && gg > 205 && b > 205))) sky++;\n      // Haut (YCbCr-Bereich), unabhängig vom Hautton\n      const cb = 128 - 0.1687 * r - 0.3313 * gg + 0.5 * b, cr = 128 + 0.5 * r - 0.4187 * gg - 0.0813 * b, yy = 0.299 * r + 0.587 * gg + 0.114 * b;\n      if (yy > 45 && cb > 77 && cb < 127 && cr > 135 && cr < 175) { skinN++; sx += x; sy += y; }\n    }\n  }\n  const skinFrac = skinN / (w * h);\n  // Menschen: zusammenhängende Haut in mittlerem Umfang (nicht Sand, nicht Holz: dann ist sie meist großflächig)\n  const people = skinFrac > 0.008 && skinFrac < 0.3 ? Math.min(1, skinFrac * 18) : 0;\n  const skin = skinN ? [sx / skinN / w, sy / skinN / h] : focus;\n  // Motivbereich: um den Schwerpunkt, so weit, dass die auffälligen Teile hineinpassen\n  let vx = 0, vy = 0, wv = 0;\n  for (let y = 2; y < h - 2; y += 2) {\n    for (let x = 2; x < w - 2; x += 2) {\n      const i = y * w + x;\n      const lap = Math.abs(4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w]);\n      if (lap < 18) continue;\n      const dx = x / w - focus[0], dy = y / h - focus[1];\n      vx += lap * dx * dx; vy += lap * dy * dy; wv += lap;\n    }\n  }\n  const sw = wv ? Math.min(0.9, Math.max(0.2, 2.4 * Math.sqrt(vx / wv))) : 0.5, sh = wv ? Math.min(0.9, Math.max(0.2, 2.4 * Math.sqrt(vy / wv))) : 0.5;\n  // Freistellung: Detailreichtum im Motivbereich gegenüber dem Rest (hoch bei Nahaufnahmen mit unscharfem Hintergrund)\n  let eIn = 0, nIn = 0, eOut = 0, nOut = 0;\n  const bx0 = focus[0] - sw / 2, bx1 = focus[0] + sw / 2, by0 = focus[1] - sh / 2, by1 = focus[1] + sh / 2;\n  for (let y = 2; y < h - 2; y += 2) {\n    for (let x = 2; x < w - 2; x += 2) {\n      const i = y * w + x;\n      const lap = Math.abs(4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w]);\n      const u = x / w, v = y / h;\n      if (u > bx0 && u < bx1 && v > by0 && v < by1) { eIn += lap; nIn++; } else { eOut += lap; nOut++; }\n    }\n  }\n  const iso = nIn && nOut ? +Math.min(9, (eIn / nIn + 0.5) / (eOut / nOut + 0.5)).toFixed(2) : 1;\n  return { horizon, sky: +(sky / (w * top)).toFixed(3), people: +people.toFixed(2), skin: skin.map((v) => +v.toFixed(3)), skinFrac: +skinFrac.toFixed(3), iso, subject: [+focus[0].toFixed(3), +focus[1].toFixed(3), +sw.toFixed(3), +sh.toFixed(3)] };\n}\n\n/**\n * Kameraschwenk zwischen zwei Graubildern (Block-Matching über die Bildmitte, ±5 px auf 160 px).\n * Liefert die Verschiebung des Inhalts als Anteil der Bildbreite/-höhe.\n */\nfunction panShift(a, b, w, h) {\n  let best = [0, 0], bs = Infinity;\n  const R = 5, x0 = Math.floor(w * 0.2), x1 = Math.floor(w * 0.8), y0 = Math.floor(h * 0.2), y1 = Math.floor(h * 0.8);\n  for (let dy = -R; dy <= R; dy++) {\n    for (let dx = -R; dx <= R; dx++) {\n      let sad = 0;\n      for (let y = y0; y < y1; y += 2) for (let x = x0; x < x1; x += 2) sad += Math.abs(a[y * w + x] - b[(y + dy) * w + x + dx]);\n      if (sad < bs) { bs = sad; best = [dx, dy]; }\n    }\n  }\n  return [best[0] / w, best[1] / h];\n}\n\nfunction combineScore(m) {\n  return 0.42 * m.sharp + 0.3 * m.expo + 0.28 * m.color;\n}\n\nfunction scoreImage(src, sw, sh) {\n  const m = imageMetrics(samplePixels(src, sw, sh));\n  return { score: combineScore(m), sharp: m.sharp, expo: m.expo, color: m.color, avg: m.avg, luma: +m.luma.toFixed(3), focus: m.focus.map((v) => +v.toFixed(3)), hash: dHash(src, sw, sh), layout: layoutSig(m), ...sceneFields(m.scene) };\n}\n\n/** Motiv-Felder für die Aufnahme (werden mit gespeichert). */\nfunction sceneFields(sc) {\n  return sc ? { horizon: sc.horizon, sky: sc.sky, people: sc.people, subject: sc.subject, iso: sc.iso, skinFrac: sc.skinFrac } : {};\n}\n\n/**\n * Bildaufbau als 6 × 6 Helligkeitsraster (0–15, normiert) plus Kantenrichtung.\n * Grundlage für Match-Cuts: ähnlich aufgebaute Bilder schneiden unsichtbar ineinander.\n */\nfunction layoutSig(m) {\n  const { gray: g, w, h } = m;\n  const N = 6, cells = new Float32Array(N * N), cnt = new Float32Array(N * N);\n  let gx = 0, gy = 0;\n  for (let y = 1; y < h - 1; y++) {\n    for (let x = 1; x < w - 1; x++) {\n      const i = y * w + x;\n      const k = Math.min(N - 1, Math.floor((y / h) * N)) * N + Math.min(N - 1, Math.floor((x / w) * N));\n      cells[k] += g[i]; cnt[k]++;\n      gx += Math.abs(g[i + 1] - g[i - 1]); gy += Math.abs(g[i + w] - g[i - w]);\n    }\n  }\n  let lo = 255, hi = 0;\n  for (let k = 0; k < cells.length; k++) { cells[k] /= Math.max(1, cnt[k]); lo = Math.min(lo, cells[k]); hi = Math.max(hi, cells[k]); }\n  const span = Math.max(12, hi - lo);\n  let str = '';\n  for (let k = 0; k < cells.length; k++) str += Math.round(((cells[k] - lo) / span) * 15).toString(16);\n  // Anteil waagrechter Strukturen (Horizont, Straßen) gegenüber senkrechten (Häuser, Bäume)\n  const dir = gx + gy > 0 ? +(gy / (gx + gy)).toFixed(2) : 0.5;\n  return { g: str, dir };\n}\n\n/** Ähnlichkeit zweier Bildaufbauten (0 … 1). */\nfunction layoutSim(a, b) {\n  if (!a || !b || !a.g || !b.g || a.g.length !== b.g.length) return 0;\n  let d = 0;\n  for (let i = 0; i < a.g.length; i++) d += Math.abs(parseInt(a.g[i], 16) - parseInt(b.g[i], 16));\n  const grid = 1 - d / (a.g.length * 7.5);\n  return Math.max(0, grid - Math.abs(a.dir - b.dir) * 0.8);\n}\n\n/**\n * Tastet ein Video an mehreren Stellen ab und bewertet Bildqualität und Bewegung.\n * Liefert {score, hash, highlights:[{t, score}]} (Zeit = Mitte der besten Stelle).\n */\nasync function scoreVideo(v, duration) {\n  const grab = async (t) => { await seekVideo(v, t); return v.readyState >= 2 ? v : null; };\n  return scoreFrames(grab, v.videoWidth, v.videoHeight, duration);\n}\n\n/** Bewertet ein Video über grab(t) → Bildquelle (Videoelement oder dekodiertes Bild). */\nasync function scoreFrames(grab, W, H, duration) {\n  const K = Math.max(3, Math.min(8, Math.round(duration / 1.5)));\n  const pts = [];\n  for (let k = 0; k < K; k++) pts.push(Math.min(duration - 0.3, ((k + 0.5) / K) * duration));\n  const res = [];\n  let hash = null, avg = null, luma = 0.45, layout = null;\n  for (const t of pts) {\n    if (!(t >= 0)) continue;\n    let src = await grab(t);\n    if (!src) continue;\n    const a = imageMetrics(samplePixels(src, W, H));\n    if (!hash) { hash = dHash(src, W, H); avg = a.avg; luma = a.luma; }\n    src = await grab(Math.min(duration - 0.05, t + 0.2));\n    let motion = 0, pan = [0, 0];\n    if (src) {\n      const g2 = imageMetrics(samplePixels(src, W, H)).gray;\n      let s = 0;\n      for (let i = 0; i < g2.length; i++) s += Math.abs(g2[i] - a.gray[i]);\n      motion = s / g2.length / 255;\n      // Kameraschwenk (Inhalt wandert um pan je 0,2 s): Richtung für Anschlüsse an Fotos und Übergänge\n      pan = panShift(a.gray, g2, a.w, a.h);\n    }\n    // Moderate Bewegung ist spannend, extremes Wackeln nicht\n    const motionN = Math.max(0, Math.min(1, motion / 0.06)) * (motion > 0.2 ? 0.5 : 1);\n    res.push({ t, score: 0.7 * combineScore(a) + 0.3 * motionN, motion, pan, a });\n  }\n  res.sort((x, y) => y.score - x.score);\n  if (res.length) layout = layoutSig(res[0].a);\n  const top = res[0] && res[0].a;\n  // Bewegung im Video (Durchschnitt): entscheidet, ob es eher in ruhige Songteile oder in den Drop passt\n  const motion = res.length ? +(res.reduce((a, r) => a + r.motion, 0) / res.length).toFixed(4) : 0;\n  // Schwenk über die Zeit (in Aufnahme-Reihenfolge): Inhalt bewegt sich je Sekunde um diesen Bildanteil\n  const byT = res.slice().sort((x, y) => x.t - y.t);\n  const pans = byT.map((r) => ({ t: r.t, x: +(r.pan[0] * 5).toFixed(3), y: +(r.pan[1] * 5).toFixed(3) }));\n  return { pans, ...sceneFields(top && top.scene), motion, score: res.length ? res[0].score : 0.3, hash: hash || [0, 0], avg, luma: +luma.toFixed(3), focus: top ? top.focus.map((v, i) => +(0.5 * v + 0.5 * [0.5, 0.45][i]).toFixed(3)) : undefined, layout, highlights: res.map((r) => ({ t: r.t, score: r.score })) };\n}\n\n/** Markiert Beinahe-Duplikate (nur das beste Bild einer Serie bleibt aktiv). */\nfunction markDuplicates(items) {\n  // nur Fotos: zwei Videos derselben Szene sind verschiedene Momente (Bewegung, Ton) und bleiben beide im Film\n  for (const m of items) if (m.kind === 'video') { m.dupOf = null; m.dupD = m.dupDt = undefined; }\n  const list = items.filter((m) => m.hash && !m.bad && m.kind !== 'video');\n  for (const m of list) { m.dupOf = null; m.dupD = m.dupDt = undefined; }\n  const sorted = list.slice().sort((a, b) => (b.score || 0) - (a.score || 0));\n  const kept = [];\n  for (const m of sorted) {\n    const sameColor = (a, b) => !a.avg || !b.avg || Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) < 40;\n    const twin = kept.find((k) => k.kind === m.kind && hamming(k.hash, m.hash) <= 6 && sameColor(k, m) && Math.abs((k.time || 0) - (m.time || 0)) < 10 * 60 * 1000);\n    if (twin) { m.dupOf = twin.id; m.dupD = hamming(twin.hash, m.hash); m.dupDt = Math.abs((twin.time || 0) - (m.time || 0)); } else kept.push(m);\n  }\n}\n\n/**\n * Bewegungskurve eines Videos (hz Werte je Sekunde, 0–255) und Aktionsmomente daraus: Stellen, an denen Bewegung\n * plötzlich einsetzt oder sich sprunghaft ändert (Sprung, Welle, Wurf, Schwenk-Stopp). Wie Onsets im Ton –\n * die Planung legt sie auf starke Schläge. grab(t) liefert ein kleines Bild (ab 0 aufsteigend, für den Dekoder günstig).\n */\nasync function actionCurve(grab, W, H, duration, hz = 8) {\n  const n = Math.max(0, Math.floor(duration * hz));\n  if (n < 4) return null;\n  const S = 48, sc = S / Math.max(W, H);\n  const w = Math.max(8, Math.round(W * sc)), h = Math.max(8, Math.round(H * sc));\n  const v = new Array(n).fill(0);\n  let prev = null;\n  for (let k = 0; k < n; k++) {\n    const src = await grab(k / hz);\n    if (!src) break;\n    const ctx = scoreCtx(w, h);\n    ctx.drawImage(src, 0, 0, w, h);\n    const d = ctx.getImageData(0, 0, w, h).data;\n    const g = new Float32Array(w * h);\n    for (let i = 0; i < g.length; i++) g[i] = 0.2126 * d[i * 4] + 0.7152 * d[i * 4 + 1] + 0.0722 * d[i * 4 + 2];\n    if (prev) { let s = 0; for (let i = 0; i < g.length; i++) s += Math.abs(g[i] - prev[i]); v[k] = Math.min(255, Math.round((s / g.length / 255 / 0.12) * 255)); }\n    prev = g;\n  }\n  if (n > 1) v[0] = v[1];\n  const hits = motionHits(v, hz);\n  // auf das Einzelbild genau: im Fenster vor dem groben Treffer das Bild suchen, ab dem die Bewegung sichtbar einsetzt\n  // (Fenster aufsteigend, damit der Dekoder nur vorwärts läuft)\n  const step = 1 / 30;\n  for (const hit of hits) {\n    const t0 = Math.max(0, hit[0] - 2 / hz), t1 = Math.min(duration - 0.02, hit[0] + 0.5 / hz);\n    let pg = null, bestD = 0;\n    const ds = [];\n    for (let t = t0; t <= t1 + 1e-6; t += step) {\n      const src = await grab(t);\n      if (!src) break;\n      const ctx = scoreCtx(w, h);\n      ctx.drawImage(src, 0, 0, w, h);\n      const d = ctx.getImageData(0, 0, w, h).data;\n      const g = new Float32Array(w * h);\n      for (let i = 0; i < g.length; i++) g[i] = 0.2126 * d[i * 4] + 0.7152 * d[i * 4 + 1] + 0.0722 * d[i * 4 + 2];\n      if (pg) { let sd = 0; for (let i = 0; i < g.length; i++) sd += Math.abs(g[i] - pg[i]); ds.push([t, sd]); bestD = Math.max(bestD, sd); }\n      pg = g;\n    }\n    const on = ds.find(([, sd]) => sd >= bestD * 0.5);\n    if (on) hit[0] = +on[0].toFixed(3);\n  }\n  return { hz, v, hits };\n}\n\n/** Aktionsmomente aus der Bewegungskurve: [[t, Stärke 0–1], …], mindestens 0,45 s auseinander. */\nfunction motionHits(v, hz) {\n  const n = v.length;\n  if (n < 5) return [];\n  const s = v.map((x, i) => (v[Math.max(0, i - 1)] + 2 * x + v[Math.min(n - 1, i + 1)]) / 4);\n  const d = s.map((x, i) => (i ? Math.max(0, x - s[i - 1]) : 0));\n  const med = (a) => { const b = a.slice().sort((x, y) => x - y); return b[b.length >> 1]; };\n  const md = med(d), mad = med(d.map((x) => Math.abs(x - md))) || 1, ms = med(s);\n  const thr = Math.max(6, md + 3 * mad);\n  const cand = [];\n  for (let i = 1; i < n - 1; i++) {\n    if (d[i] < thr || d[i] < d[i - 1] || d[i] < d[i + 1] || s[i + 1] < ms * 1.15) continue;\n    cand.push([i / hz, Math.min(1, d[i] / (thr * 3))]);\n  }\n  cand.sort((a, b) => b[1] - a[1]);\n  const out = [];\n  for (const c of cand) if (out.every((o) => Math.abs(o[0] - c[0]) >= 0.45)) out.push(c);\n  return out.slice(0, 24).sort((a, b) => a[0] - b[0]).map(([t, st]) => [+t.toFixed(3), +st.toFixed(2)]);\n}\n\n/* Hintergrund-Thread fürs Einlesen: Foto klein dekodieren, bewerten (score.js) und Vorschaubild erzeugen.\n * Wird von build.mjs zusammen mit score.js als eigener Code eingebettet (SCORE_WORKER_SRC). */\nself.onmessage = async (e) => {\n  const { id, file, w, h, max } = e.data;\n  try {\n    const sc = Math.min(1, max / Math.max(w, h));\n    const bw = Math.max(1, Math.round(w * sc)), bh = Math.max(1, Math.round(h * sc));\n    let bmp;\n    try { bmp = await createImageBitmap(file, { resizeWidth: bw, resizeQuality: 'high', imageOrientation: 'from-image' }); } catch (err) {\n      if (!(err && err.name === 'TypeError')) throw err;\n      bmp = await createImageBitmap(file, { resizeWidth: bw, resizeQuality: 'high' });\n    }\n    // dreht dieser Browser hier nicht nach EXIF, übernimmt der sichere Weg im Hauptthread\n    if (Math.abs(bmp.height - bh) > Math.max(2, bh * 0.01)) { bmp.close(); self.postMessage({ id, fallback: true }); return; }\n    const res = scoreImage(bmp, bmp.width, bmp.height);\n    const size = 160, c = new OffscreenCanvas(size, size), x = c.getContext('2d');\n    const s = Math.max(size / bmp.width, size / bmp.height);\n    x.drawImage(bmp, (size - bmp.width * s) / 2, (size - bmp.height * s) / 2, bmp.width * s, bmp.height * s);\n    const thumb = new FileReaderSync().readAsDataURL(await c.convertToBlob({ type: 'image/jpeg', quality: 0.75 }));\n    self.postMessage({ id, res, thumb, bmp }, [bmp]);\n  } catch (err) {\n    self.postMessage({ id, error: String((err && err.message) || err) });\n  }\n};\n";
+const SCORE_WORKER_SRC = "'use strict';\n/* ============================================================\n * Bildbewertung: Schärfe, Belichtung, Farbigkeit, Duplikate,\n * spannendste Stelle in Videos\n * ============================================================ */\n\nconst SCORE_SIZE = 160;\nlet scoreCanvas = null;\n\nfunction scoreCtx(w, h) {\n  if (!scoreCanvas) scoreCanvas = typeof document !== 'undefined' ? document.createElement('canvas') : new OffscreenCanvas(w, h);\n  scoreCanvas.width = w;\n  scoreCanvas.height = h;\n  return scoreCanvas.getContext('2d', { willReadFrequently: true });\n}\n\n/** Grauwerte + Farbe in kleiner Auflösung */\nfunction samplePixels(src, sw, sh) {\n  const s = SCORE_SIZE / Math.max(sw, sh);\n  const w = Math.max(8, Math.round(sw * s)), h = Math.max(8, Math.round(sh * s));\n  const ctx = scoreCtx(w, h);\n  ctx.drawImage(src, 0, 0, w, h);\n  return { w, h, data: ctx.getImageData(0, 0, w, h).data };\n}\n\nfunction imageMetrics(px) {\n  const { w, h, data } = px;\n  const n = w * h;\n  const g = new Float32Array(n);\n  let sumL = 0, clip = 0, mrg = 0, myb = 0, qrg = 0, qyb = 0;\n  for (let i = 0; i < n; i++) {\n    const r = data[i * 4], gg = data[i * 4 + 1], b = data[i * 4 + 2];\n    const l = 0.2126 * r + 0.7152 * gg + 0.0722 * b;\n    g[i] = l;\n    sumL += l;\n    if (l < 6 || l > 250) clip++;\n    const rg = r - gg, yb = 0.5 * (r + gg) - b;\n    mrg += rg; myb += yb; qrg += rg * rg; qyb += yb * yb;\n  }\n  mrg /= n; myb /= n;\n  const srg = Math.sqrt(Math.max(0, qrg / n - mrg * mrg)), syb = Math.sqrt(Math.max(0, qyb / n - myb * myb));\n  const colorful = Math.sqrt(srg * srg + syb * syb) + 0.3 * Math.sqrt(mrg * mrg + myb * myb);\n  // Laplace-Varianz (Schärfe)\n  let lm = 0, lq = 0, lc = 0;\n  for (let y = 1; y < h - 1; y++) {\n    for (let x = 1; x < w - 1; x++) {\n      const i = y * w + x;\n      const v = 4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w];\n      lm += v; lq += v * v; lc++;\n    }\n  }\n  lm /= Math.max(1, lc);\n  // Bildschwerpunkt (einfache Saliency): Kanten + Farbabweichung, leicht zur Mitte gewichtet\n  let fxs = 0, fys = 0, fw = 0;\n  for (let y = 2; y < h - 2; y += 1) {\n    for (let x = 2; x < w - 2; x += 1) {\n      const i = y * w + x;\n      const lap = Math.abs(4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w]);\n      const r = data[i * 4], gg = data[i * 4 + 1], b = data[i * 4 + 2];\n      const sat = Math.max(r, gg, b) - Math.min(r, gg, b);\n      const cx = x / w - 0.5, cy = y / h - 0.45;\n      const center = Math.exp(-(cx * cx + cy * cy) / 0.18);\n      const wgt = (lap + 0.35 * sat) * (0.35 + center);\n      fxs += wgt * (x / w); fys += wgt * (y / h); fw += wgt;\n    }\n  }\n  let focus = fw > 0 ? [fxs / fw, fys / fw] : [0.5, 0.45];\n  const scene = sceneMetrics(data, g, w, h, focus);\n  // Menschen sind das Motiv: der Schwerpunkt rückt zur Haut-Region (Gesicht/Person)\n  if (scene.people > 0.25) focus = [0.4 * focus[0] + 0.6 * scene.skin[0], 0.4 * focus[1] + 0.6 * scene.skin[1]];\n  const lapVar = Math.max(0, lq / Math.max(1, lc) - lm * lm);\n  const meanL = sumL / n / 255;\n  const sharpN = Math.max(0, Math.min(1, (Math.log10(lapVar + 1) - 1.2) / 1.6));\n  const expoN = Math.max(0, 1 - Math.abs(meanL - 0.48) * 1.8 - (clip / n) * 2.5);\n  const colorN = Math.max(0, Math.min(1, colorful / 85));\n  let ar = 0, ag = 0, ab = 0;\n  for (let i = 0; i < n; i++) { ar += data[i * 4]; ag += data[i * 4 + 1]; ab += data[i * 4 + 2]; }\n  const vis = visionMetrics(data, g, w, h, focus, scene);\n  return { sharp: sharpN, expo: expoN, color: colorN, luma: meanL, focus, scene, vis, comp: vis.comp, gray: g, w, h, avg: [Math.round(ar / n), Math.round(ag / n), Math.round(ab / n)] };\n}\n\n/** 64-Bit-Differenzhash (9x8) als zwei 32-Bit-Zahlen */\nfunction dHash(src, sw, sh) {\n  const ctx = scoreCtx(9, 8);\n  ctx.drawImage(src, 0, 0, sw, sh, 0, 0, 9, 8);\n  const d = ctx.getImageData(0, 0, 9, 8).data;\n  let hi = 0, lo = 0, bit = 0;\n  for (let y = 0; y < 8; y++) {\n    for (let x = 0; x < 8; x++) {\n      const i = (y * 9 + x) * 4, j = i + 4;\n      const a = d[i] + d[i + 1] + d[i + 2], b = d[j] + d[j + 1] + d[j + 2];\n      const v = a > b ? 1 : 0;\n      if (bit < 32) hi = (hi << 1) | v; else lo = (lo << 1) | v;\n      bit++;\n    }\n  }\n  return [hi >>> 0, lo >>> 0];\n}\n\nfunction hamming(a, b) {\n  let x = (a[0] ^ b[0]) >>> 0, y = (a[1] ^ b[1]) >>> 0, c = 0;\n  while (x) { x &= x - 1; c++; }\n  while (y) { y &= y - 1; c++; }\n  return c;\n}\n\n/**\n * Bildinhalt ohne KI-Modell, lokal und schnell (auf 160 px):\n * Horizont (stärkste durchgehende waagerechte Kante), Himmelsanteil, Haut-Regionen (Menschen)\n * und der Motivbereich (gewichtete Ausdehnung der auffälligen Bildteile).\n */\nfunction sceneMetrics(data, g, w, h, focus) {\n  // Horizont: Zeile mit der stärksten, über die Breite gleichmäßigen Helligkeitskante\n  const rowGrad = new Float32Array(h);\n  for (let y = 2; y < h; y++) {\n    let sgn = 0, sum = 0;\n    for (let x = 0; x < w; x++) { const d = g[y * w + x] - g[(y - 2) * w + x]; sum += Math.abs(d); sgn += d; }\n    rowGrad[y] = (sum / w) * (0.4 + 0.6 * Math.min(1, Math.abs(sgn) / Math.max(1, sum)));\n  }\n  let hy = -1, hv = 0;\n  const sorted = Array.from(rowGrad).sort((a, b) => a - b), med = sorted[Math.floor(h / 2)] || 1;\n  for (let y = Math.floor(h * 0.18); y < Math.floor(h * 0.82); y++) {\n    const v = (rowGrad[y - 1] + rowGrad[y] * 2 + rowGrad[y + 1]) / 4;\n    if (v > hv) { hv = v; hy = y; }\n  }\n  const horizon = hv > med * 2.2 && hv > 6 ? +(hy / h).toFixed(3) : null;\n  // Himmel: helle, blaue oder sehr gleichmäßige Flächen im oberen Bilddrittel\n  let sky = 0, skinN = 0, sx = 0, sy = 0;\n  const top = Math.floor(h * 0.4);\n  for (let y = 0; y < h; y++) {\n    for (let x = 0; x < w; x++) {\n      const i = (y * w + x) * 4, r = data[i], gg = data[i + 1], b = data[i + 2];\n      if (y < top && ((b > r + 12 && b > gg - 10 && b > 90) || (r > 205 && gg > 205 && b > 205))) sky++;\n      // Haut (YCbCr-Bereich), unabhängig vom Hautton\n      const cb = 128 - 0.1687 * r - 0.3313 * gg + 0.5 * b, cr = 128 + 0.5 * r - 0.4187 * gg - 0.0813 * b, yy = 0.299 * r + 0.587 * gg + 0.114 * b;\n      if (yy > 45 && cb > 77 && cb < 127 && cr > 135 && cr < 175) { skinN++; sx += x; sy += y; }\n    }\n  }\n  const skinFrac = skinN / (w * h);\n  // Menschen: zusammenhängende Haut in mittlerem Umfang (nicht Sand, nicht Holz: dann ist sie meist großflächig)\n  const people = skinFrac > 0.008 && skinFrac < 0.3 ? Math.min(1, skinFrac * 18) : 0;\n  const skin = skinN ? [sx / skinN / w, sy / skinN / h] : focus;\n  // Motivbereich: um den Schwerpunkt, so weit, dass die auffälligen Teile hineinpassen\n  let vx = 0, vy = 0, wv = 0;\n  for (let y = 2; y < h - 2; y += 2) {\n    for (let x = 2; x < w - 2; x += 2) {\n      const i = y * w + x;\n      const lap = Math.abs(4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w]);\n      if (lap < 18) continue;\n      const dx = x / w - focus[0], dy = y / h - focus[1];\n      vx += lap * dx * dx; vy += lap * dy * dy; wv += lap;\n    }\n  }\n  const sw = wv ? Math.min(0.9, Math.max(0.2, 2.4 * Math.sqrt(vx / wv))) : 0.5, sh = wv ? Math.min(0.9, Math.max(0.2, 2.4 * Math.sqrt(vy / wv))) : 0.5;\n  // Freistellung: Detailreichtum im Motivbereich gegenüber dem Rest (hoch bei Nahaufnahmen mit unscharfem Hintergrund)\n  let eIn = 0, nIn = 0, eOut = 0, nOut = 0;\n  const bx0 = focus[0] - sw / 2, bx1 = focus[0] + sw / 2, by0 = focus[1] - sh / 2, by1 = focus[1] + sh / 2;\n  for (let y = 2; y < h - 2; y += 2) {\n    for (let x = 2; x < w - 2; x += 2) {\n      const i = y * w + x;\n      const lap = Math.abs(4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w]);\n      const u = x / w, v = y / h;\n      if (u > bx0 && u < bx1 && v > by0 && v < by1) { eIn += lap; nIn++; } else { eOut += lap; nOut++; }\n    }\n  }\n  const iso = nIn && nOut ? +Math.min(9, (eIn / nIn + 0.5) / (eOut / nOut + 0.5)).toFixed(2) : 1;\n  return { horizon, sky: +(sky / (w * top)).toFixed(3), people: +people.toFixed(2), skin: skin.map((v) => +v.toFixed(3)), skinFrac: +skinFrac.toFixed(3), iso, subject: [+focus[0].toFixed(3), +focus[1].toFixed(3), +sw.toFixed(3), +sh.toFixed(3)] };\n}\n\n/**\n * Kameraschwenk zwischen zwei Graubildern (Block-Matching über die Bildmitte, ±5 px auf 160 px).\n * Liefert die Verschiebung des Inhalts als Anteil der Bildbreite/-höhe.\n */\nfunction panShift(a, b, w, h) {\n  let best = [0, 0], bs = Infinity;\n  const R = 5, x0 = Math.floor(w * 0.2), x1 = Math.floor(w * 0.8), y0 = Math.floor(h * 0.2), y1 = Math.floor(h * 0.8);\n  for (let dy = -R; dy <= R; dy++) {\n    for (let dx = -R; dx <= R; dx++) {\n      let sad = 0;\n      for (let y = y0; y < y1; y += 2) for (let x = x0; x < x1; x += 2) sad += Math.abs(a[y * w + x] - b[(y + dy) * w + x + dx]);\n      if (sad < bs) { bs = sad; best = [dx, dy]; }\n    }\n  }\n  return [best[0] / w, best[1] / h];\n}\n\n/** Gesamtwert eines Bilds: Technik (Schärfe, Belichtung, Farbe) und Bildaufbau (vision.js). */\nfunction combineScore(m) {\n  return m.comp != null ? 0.34 * m.sharp + 0.24 * m.expo + 0.2 * m.color + 0.22 * m.comp : 0.42 * m.sharp + 0.3 * m.expo + 0.28 * m.color;\n}\n\nfunction scoreImage(src, sw, sh) {\n  const m = imageMetrics(samplePixels(src, sw, sh));\n  let sky = null;\n  try { sky = skyProfile(src, sw, sh); } catch (e) { sky = null; }\n  return { score: combineScore(m), sharp: m.sharp, expo: m.expo, color: m.color, avg: m.avg, luma: +m.luma.toFixed(3), focus: m.focus.map((v) => +v.toFixed(3)), hash: dHash(src, sw, sh), layout: layoutSig(m), ...sceneFields(m.scene), ...visFields(m.vis), sky, vis: VIS_VER };\n}\n\n/** Felder des Bildverständnisses (vision.js) für die Aufnahme. */\nfunction visFields(v) {\n  return v ? { sig: v.sig, calm: v.calm, mood: v.mood, comp: v.comp, tilt: v.tilt, detail: v.detail } : {};\n}\n\n/** Motiv-Felder für die Aufnahme (werden mit gespeichert). */\nfunction sceneFields(sc) {\n  return sc ? { horizon: sc.horizon, sky: sc.sky, people: sc.people, subject: sc.subject, iso: sc.iso, skinFrac: sc.skinFrac } : {};\n}\n\n/**\n * Bildaufbau als 6 × 6 Helligkeitsraster (0–15, normiert) plus Kantenrichtung.\n * Grundlage für Match-Cuts: ähnlich aufgebaute Bilder schneiden unsichtbar ineinander.\n */\nfunction layoutSig(m) {\n  const { gray: g, w, h } = m;\n  const N = 6, cells = new Float32Array(N * N), cnt = new Float32Array(N * N);\n  let gx = 0, gy = 0;\n  for (let y = 1; y < h - 1; y++) {\n    for (let x = 1; x < w - 1; x++) {\n      const i = y * w + x;\n      const k = Math.min(N - 1, Math.floor((y / h) * N)) * N + Math.min(N - 1, Math.floor((x / w) * N));\n      cells[k] += g[i]; cnt[k]++;\n      gx += Math.abs(g[i + 1] - g[i - 1]); gy += Math.abs(g[i + w] - g[i - w]);\n    }\n  }\n  let lo = 255, hi = 0;\n  for (let k = 0; k < cells.length; k++) { cells[k] /= Math.max(1, cnt[k]); lo = Math.min(lo, cells[k]); hi = Math.max(hi, cells[k]); }\n  const span = Math.max(12, hi - lo);\n  let str = '';\n  for (let k = 0; k < cells.length; k++) str += Math.round(((cells[k] - lo) / span) * 15).toString(16);\n  // Anteil waagrechter Strukturen (Horizont, Straßen) gegenüber senkrechten (Häuser, Bäume)\n  const dir = gx + gy > 0 ? +(gy / (gx + gy)).toFixed(2) : 0.5;\n  return { g: str, dir };\n}\n\n/** Ähnlichkeit zweier Bildaufbauten (0 … 1). */\nfunction layoutSim(a, b) {\n  if (!a || !b || !a.g || !b.g || a.g.length !== b.g.length) return 0;\n  let d = 0;\n  for (let i = 0; i < a.g.length; i++) d += Math.abs(parseInt(a.g[i], 16) - parseInt(b.g[i], 16));\n  const grid = 1 - d / (a.g.length * 7.5);\n  return Math.max(0, grid - Math.abs(a.dir - b.dir) * 0.8);\n}\n\n/**\n * Tastet ein Video an mehreren Stellen ab und bewertet Bildqualität und Bewegung.\n * Liefert {score, hash, highlights:[{t, score}]} (Zeit = Mitte der besten Stelle).\n */\nasync function scoreVideo(v, duration) {\n  const grab = async (t) => { await seekVideo(v, t); return v.readyState >= 2 ? v : null; };\n  return scoreFrames(grab, v.videoWidth, v.videoHeight, duration);\n}\n\n/** Bewertet ein Video über grab(t) → Bildquelle (Videoelement oder dekodiertes Bild). */\nasync function scoreFrames(grab, W, H, duration) {\n  const K = Math.max(3, Math.min(8, Math.round(duration / 1.5)));\n  const pts = [];\n  for (let k = 0; k < K; k++) pts.push(Math.min(duration - 0.3, ((k + 0.5) / K) * duration));\n  const res = [];\n  let hash = null, avg = null, luma = 0.45, layout = null;\n  for (const t of pts) {\n    if (!(t >= 0)) continue;\n    let src = await grab(t);\n    if (!src) continue;\n    const a = imageMetrics(samplePixels(src, W, H));\n    if (!hash) { hash = dHash(src, W, H); avg = a.avg; luma = a.luma; }\n    src = await grab(Math.min(duration - 0.05, t + 0.2));\n    let motion = 0, pan = [0, 0];\n    if (src) {\n      const g2 = imageMetrics(samplePixels(src, W, H)).gray;\n      let s = 0;\n      for (let i = 0; i < g2.length; i++) s += Math.abs(g2[i] - a.gray[i]);\n      motion = s / g2.length / 255;\n      // Kameraschwenk (Inhalt wandert um pan je 0,2 s): Richtung für Anschlüsse an Fotos und Übergänge\n      pan = panShift(a.gray, g2, a.w, a.h);\n    }\n    // Moderate Bewegung ist spannend, extremes Wackeln nicht\n    const motionN = Math.max(0, Math.min(1, motion / 0.06)) * (motion > 0.2 ? 0.5 : 1);\n    res.push({ t, score: 0.7 * combineScore(a) + 0.3 * motionN, motion, pan, a });\n  }\n  res.sort((x, y) => y.score - x.score);\n  if (res.length) layout = layoutSig(res[0].a);\n  const top = res[0] && res[0].a;\n  // Bewegung im Video (Durchschnitt): entscheidet, ob es eher in ruhige Songteile oder in den Drop passt\n  const motion = res.length ? +(res.reduce((a, r) => a + r.motion, 0) / res.length).toFixed(4) : 0;\n  // Schwenk über die Zeit (in Aufnahme-Reihenfolge): Inhalt bewegt sich je Sekunde um diesen Bildanteil\n  const byT = res.slice().sort((x, y) => x.t - y.t);\n  const pans = byT.map((r) => ({ t: r.t, x: +(r.pan[0] * 5).toFixed(3), y: +(r.pan[1] * 5).toFixed(3) }));\n  return { pans, ...sceneFields(top && top.scene), ...visFields(top && top.vis), vis: VIS_VER, motion, score: res.length ? res[0].score : 0.3, hash: hash || [0, 0], avg, luma: +luma.toFixed(3), focus: top ? top.focus.map((v, i) => +(0.5 * v + 0.5 * [0.5, 0.45][i]).toFixed(3)) : undefined, layout, highlights: res.map((r) => ({ t: r.t, score: r.score })) };\n}\n\n/** Markiert Beinahe-Duplikate (nur das beste Bild einer Serie bleibt aktiv). */\nfunction markDuplicates(items) {\n  // nur Fotos: zwei Videos derselben Szene sind verschiedene Momente (Bewegung, Ton) und bleiben beide im Film\n  for (const m of items) if (m.kind === 'video') { m.dupOf = null; m.dupD = m.dupDt = undefined; }\n  const list = items.filter((m) => m.hash && !m.bad && m.kind !== 'video');\n  for (const m of list) { m.dupOf = null; m.dupD = m.dupDt = undefined; }\n  const sorted = list.slice().sort((a, b) => (b.score || 0) - (a.score || 0));\n  const kept = [];\n  for (const m of sorted) {\n    const sameColor = (a, b) => !a.avg || !b.avg || Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) < 40;\n    const twin = kept.find((k) => k.kind === m.kind && hamming(k.hash, m.hash) <= 6 && sameColor(k, m) && Math.abs((k.time || 0) - (m.time || 0)) < 10 * 60 * 1000);\n    if (twin) { m.dupOf = twin.id; m.dupD = hamming(twin.hash, m.hash); m.dupDt = Math.abs((twin.time || 0) - (m.time || 0)); } else kept.push(m);\n  }\n}\n\n/**\n * Bewegungskurve eines Videos (hz Werte je Sekunde, 0–255) und Aktionsmomente daraus: Stellen, an denen Bewegung\n * plötzlich einsetzt oder sich sprunghaft ändert (Sprung, Welle, Wurf, Schwenk-Stopp). Wie Onsets im Ton –\n * die Planung legt sie auf starke Schläge. grab(t) liefert ein kleines Bild (ab 0 aufsteigend, für den Dekoder günstig).\n */\nasync function actionCurve(grab, W, H, duration, hz = 8) {\n  const n = Math.max(0, Math.floor(duration * hz));\n  if (n < 4) return null;\n  const S = 48, sc = S / Math.max(W, H);\n  const w = Math.max(8, Math.round(W * sc)), h = Math.max(8, Math.round(H * sc));\n  const v = new Array(n).fill(0);\n  let prev = null;\n  for (let k = 0; k < n; k++) {\n    const src = await grab(k / hz);\n    if (!src) break;\n    const ctx = scoreCtx(w, h);\n    ctx.drawImage(src, 0, 0, w, h);\n    const d = ctx.getImageData(0, 0, w, h).data;\n    const g = new Float32Array(w * h);\n    for (let i = 0; i < g.length; i++) g[i] = 0.2126 * d[i * 4] + 0.7152 * d[i * 4 + 1] + 0.0722 * d[i * 4 + 2];\n    if (prev) { let s = 0; for (let i = 0; i < g.length; i++) s += Math.abs(g[i] - prev[i]); v[k] = Math.min(255, Math.round((s / g.length / 255 / 0.12) * 255)); }\n    prev = g;\n  }\n  if (n > 1) v[0] = v[1];\n  const hits = motionHits(v, hz);\n  // auf das Einzelbild genau: im Fenster vor dem groben Treffer das Bild suchen, ab dem die Bewegung sichtbar einsetzt\n  // (Fenster aufsteigend, damit der Dekoder nur vorwärts läuft)\n  const step = 1 / 30;\n  for (const hit of hits) {\n    const t0 = Math.max(0, hit[0] - 2 / hz), t1 = Math.min(duration - 0.02, hit[0] + 0.5 / hz);\n    let pg = null, bestD = 0;\n    const ds = [];\n    for (let t = t0; t <= t1 + 1e-6; t += step) {\n      const src = await grab(t);\n      if (!src) break;\n      const ctx = scoreCtx(w, h);\n      ctx.drawImage(src, 0, 0, w, h);\n      const d = ctx.getImageData(0, 0, w, h).data;\n      const g = new Float32Array(w * h);\n      for (let i = 0; i < g.length; i++) g[i] = 0.2126 * d[i * 4] + 0.7152 * d[i * 4 + 1] + 0.0722 * d[i * 4 + 2];\n      if (pg) { let sd = 0; for (let i = 0; i < g.length; i++) sd += Math.abs(g[i] - pg[i]); ds.push([t, sd]); bestD = Math.max(bestD, sd); }\n      pg = g;\n    }\n    const on = ds.find(([, sd]) => sd >= bestD * 0.5);\n    if (on) hit[0] = +on[0].toFixed(3);\n  }\n  return { hz, v, hits };\n}\n\n/** Aktionsmomente aus der Bewegungskurve: [[t, Stärke 0–1], …], mindestens 0,45 s auseinander. */\nfunction motionHits(v, hz) {\n  const n = v.length;\n  if (n < 5) return [];\n  const s = v.map((x, i) => (v[Math.max(0, i - 1)] + 2 * x + v[Math.min(n - 1, i + 1)]) / 4);\n  const d = s.map((x, i) => (i ? Math.max(0, x - s[i - 1]) : 0));\n  const med = (a) => { const b = a.slice().sort((x, y) => x - y); return b[b.length >> 1]; };\n  const md = med(d), mad = med(d.map((x) => Math.abs(x - md))) || 1, ms = med(s);\n  const thr = Math.max(6, md + 3 * mad);\n  const cand = [];\n  for (let i = 1; i < n - 1; i++) {\n    if (d[i] < thr || d[i] < d[i - 1] || d[i] < d[i + 1] || s[i + 1] < ms * 1.15) continue;\n    cand.push([i / hz, Math.min(1, d[i] / (thr * 3))]);\n  }\n  cand.sort((a, b) => b[1] - a[1]);\n  const out = [];\n  for (const c of cand) if (out.every((o) => Math.abs(o[0] - c[0]) >= 0.45)) out.push(c);\n  return out.slice(0, 24).sort((a, b) => a[0] - b[0]).map(([t, st]) => [+t.toFixed(3), +st.toFixed(2)]);\n}\n\n/* ============================================================\n * Bildverständnis – lokal, ohne Netz und ohne Modelldatei:\n * Motiv-Fingerabdruck (Ähnlichkeit), ruhige Zonen und Helligkeit (Titel),\n * Bildstimmung, Bildaufbau, Horizont-Neigung, Himmelslinie (Ortsname hinter Bergen).\n * Läuft im Einlese-Thread zusammen mit score.js. Ein späteres KI-Modell liefert dieselben Felder.\n * ============================================================ */\n\n/** Stand der Bildanalyse: Aufnahmen mit älterem Stand werden im Hintergrund nachanalysiert. */\nconst VIS_VER = 1;\n\nconst vHex2 = (v) => { const x = Math.max(0, Math.min(255, Math.round(v))); return (x < 16 ? '0' : '') + x.toString(16); };\nconst vUnhex = (s) => { const o = new Uint8Array(s.length >> 1); for (let i = 0; i < o.length; i++) o[i] = parseInt(s.substr(i * 2, 2), 16); return o; };\nconst vHex1 = (v) => Math.max(0, Math.min(15, Math.round(v))).toString(16);\n\n/**\n * Merkmale auf dem kleinen Bewertungsbild (data RGBA, g = Helligkeit 0–255, w × h).\n * focus = Bildschwerpunkt, scene = sceneMetrics (Horizont, Himmel, Haut, Motiv).\n */\nfunction visionMetrics(data, g, w, h, focus, scene) {\n  const n = w * h;\n  // --- Motiv-Fingerabdruck ---\n  // 1. Farbverteilung: 12 Farbtöne (nach Sättigung gewichtet) + 3 Graustufen für blasse Pixel\n  const hist = new Float32Array(15);\n  // 2. Bildaufbau: 4 × 4 Felder mit mittlerer Helligkeit und Gegenfarben (rot–grün, gelb–blau)\n  const G = 4, cell = new Float32Array(G * G * 3), cc = new Float32Array(G * G);\n  // 3. Struktur: Kantenrichtungen (6) in drei Bildhöhen, gewichtet nach Kantenstärke\n  const ori = new Float32Array(18);\n  let warm = 0, satS = 0;\n  const lumH = new Uint32Array(32);\n  for (let y = 0; y < h; y++) {\n    for (let x = 0; x < w; x++) {\n      const i = y * w + x, r = data[i * 4], gg = data[i * 4 + 1], b = data[i * 4 + 2];\n      const mx = Math.max(r, gg, b), mn = Math.min(r, gg, b), sat = mx > 0 ? (mx - mn) / mx : 0, v = mx / 255;\n      if (sat > 0.14 && v > 0.12) {\n        let hu = 0;\n        const d = mx - mn;\n        if (mx === r) hu = ((gg - b) / d) % 6; else if (mx === gg) hu = (b - r) / d + 2; else hu = (r - gg) / d + 4;\n        hu = (hu + 6) % 6;\n        hist[Math.min(11, Math.floor(hu * 2))] += sat;\n      } else hist[12 + Math.min(2, Math.floor((g[i] / 256) * 3))] += 0.5;\n      const k = Math.min(G - 1, Math.floor((y / h) * G)) * G + Math.min(G - 1, Math.floor((x / w) * G));\n      cell[k * 3] += g[i] / 255; cell[k * 3 + 1] += (r - gg) / 255; cell[k * 3 + 2] += ((r + gg) / 2 - b) / 255; cc[k]++;\n      warm += (r - b) / 255; satS += sat;\n      lumH[Math.min(31, g[i] >> 3)]++;\n      if (x > 0 && y > 0 && x < w - 1 && y < h - 1) {\n        const gx = g[i + 1] - g[i - 1], gy = g[i + w] - g[i - w], mag = Math.abs(gx) + Math.abs(gy);\n        if (mag > 24) {\n          const a = Math.atan2(gy, gx);\n          const bin = Math.floor((((a + Math.PI) % Math.PI) / Math.PI) * 6) % 6;\n          ori[Math.min(2, Math.floor((y / h) * 3)) * 6 + bin] += mag;\n        }\n      }\n    }\n  }\n  let hs = 0; for (const v of hist) hs += v;\n  let os = 0; for (const v of ori) os += v;\n  let sig = '';\n  for (const v of hist) sig += vHex2((v / Math.max(1e-6, hs)) * 255);\n  for (let k = 0; k < G * G; k++) {\n    const c = Math.max(1, cc[k]);\n    sig += vHex2((cell[k * 3] / c) * 255) + vHex2((cell[k * 3 + 1] / c + 0.5) * 255) + vHex2((cell[k * 3 + 2] / c + 0.5) * 255);\n  }\n  for (const v of ori) sig += vHex2((v / Math.max(1e-6, os)) * 255 * 3);\n  // Kantendichte als Ganzes (Wald, Stadt ≠ Himmel, Meer)\n  sig += vHex2(Math.min(1, os / n / 40) * 255);\n\n  // --- ruhige Zonen: 8 × 8 Felder mit Detail (Laplace) und Helligkeit ---\n  // (auf leicht weichgezeichnetem Bild: Sensorrauschen zählt nicht als Unruhe, Strukturen schon)\n  const gs = new Float32Array(n);\n  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {\n    const i = y * w + x;\n    gs[i] = (g[i - w - 1] + g[i - w] + g[i - w + 1] + g[i - 1] + g[i] + g[i + 1] + g[i + w - 1] + g[i + w] + g[i + w + 1]) / 9;\n  }\n  const C = 8, det = new Float32Array(C * C), lum = new Float32Array(C * C), cnt = new Float32Array(C * C);\n  for (let y = 2; y < h - 2; y++) {\n    for (let x = 2; x < w - 2; x++) {\n      const i = y * w + x, k = Math.min(C - 1, Math.floor((y / h) * C)) * C + Math.min(C - 1, Math.floor((x / w) * C));\n      det[k] += Math.abs(4 * gs[i] - gs[i - 1] - gs[i + 1] - gs[i - w] - gs[i + w]) * 2.5;\n      lum[k] += g[i]; cnt[k]++;\n    }\n  }\n  let calmD = '', calmL = '', detSum = 0;\n  for (let k = 0; k < C * C; k++) {\n    const d = det[k] / Math.max(1, cnt[k]);\n    detSum += d;\n    // 0 = spiegelglatt (Himmel, Wasser, Wand), 15 = sehr unruhig (Laub, Menge, Schrift)\n    calmD += vHex1(Math.sqrt(Math.min(1, d / 40)) * 15);\n    calmL += vHex1((lum[k] / Math.max(1, cnt[k]) / 255) * 15);\n  }\n  const detail = Math.min(1, detSum / (C * C) / 22);\n\n  // --- Bildstimmung: Valenz (hell, warm, farbig = froh) und Erregung (Kontrast, Farbe, Details = lebhaft) ---\n  const pct = (p) => { let acc = 0; const lim = n * p; for (let k = 0; k < 32; k++) { acc += lumH[k]; if (acc >= lim) return (k + 0.5) / 32; } return 1; };\n  const contrast = Math.max(0, Math.min(1, (pct(0.95) - pct(0.05)) / 0.8));\n  let ml = 0; for (let i = 0; i < n; i++) ml += g[i];\n  const bright = ml / n / 255, warmth = Math.max(0, Math.min(1, warm / n * 2.2 + 0.5)), sat = Math.min(1, satS / n * 2);\n  const valence = Math.max(0, Math.min(1, 0.4 * warmth + 0.35 * Math.min(1, bright * 1.6) + 0.25 * sat));\n  const arousal = Math.max(0, Math.min(1, 0.4 * contrast + 0.35 * sat + 0.25 * detail));\n\n  // --- Bildaufbau (0–1): Motiv auf Drittel oder Mitte, Horizont auf Drittel und gerade, Freistellung,\n  //     Tonwertumfang, Ordnung statt Durcheinander ---\n  const fx = focus[0], fy = focus[1];\n  const third = Math.min(Math.abs(fx - 1 / 3), Math.abs(fx - 2 / 3), Math.abs(fx - 0.5) * 1.4) + Math.min(Math.abs(fy - 1 / 3), Math.abs(fy - 2 / 3), Math.abs(fy - 0.5) * 1.4);\n  let comp = 0.5 + 0.25 * (1 - Math.min(1, third / 0.3));\n  const tilt = horizonTilt(g, w, h, scene && scene.horizon);\n  if (scene && scene.horizon != null) {\n    const hz = scene.horizon;\n    comp += 0.12 * (1 - Math.min(1, Math.min(Math.abs(hz - 1 / 3), Math.abs(hz - 2 / 3)) / 0.12)) - (Math.abs(hz - 0.5) < 0.05 ? 0.06 : 0);\n    if (tilt.conf > 0.5) comp -= Math.min(0.2, Math.abs(tilt.deg) * 0.05);\n  }\n  if (scene && scene.iso != null) comp += Math.max(-0.05, Math.min(0.15, (scene.iso - 1.3) * 0.1));\n  comp += 0.12 * (contrast - 0.5);\n  // Durcheinander: überall viel Detail ohne ruhige Fläche\n  let calmCells = 0; for (let k = 0; k < C * C; k++) if (det[k] / Math.max(1, cnt[k]) < 9) calmCells++;\n  if (calmCells < 4 && detail > 0.6) comp -= 0.12;\n  comp = Math.max(0, Math.min(1, comp));\n\n  return { sig, calm: { d: calmD, l: calmL }, mood: [+valence.toFixed(2), +arousal.toFixed(2)], comp: +comp.toFixed(3), tilt: tilt.conf > 0.55 && Math.abs(tilt.deg) >= 0.6 && Math.abs(tilt.deg) <= 8 ? +tilt.deg.toFixed(2) : 0, detail: +detail.toFixed(2) };\n}\n\n/**\n * Neigung des Horizonts in Grad (positiv = rechts tiefer). In 12 Spalten die stärkste waagerechte Kante nahe dem\n * erkannten Horizont suchen, Gerade robust anpassen; conf = wie gut die Punkte auf einer Geraden liegen.\n */\nfunction horizonTilt(g, w, h, horizon) {\n  if (horizon == null) return { deg: 0, conf: 0 };\n  const S = 12, pts = [];\n  const y0 = Math.max(2, Math.floor((horizon - 0.18) * h)), y1 = Math.min(h - 2, Math.ceil((horizon + 0.18) * h));\n  for (let s = 0; s < S; s++) {\n    const xa = Math.floor((s / S) * w) + 1, xb = Math.floor(((s + 1) / S) * w) - 1;\n    let by = -1, bv = 0;\n    for (let y = y0; y < y1; y++) {\n      let v = 0;\n      for (let x = xa; x < xb; x++) v += Math.abs(g[(y + 1) * w + x] - g[(y - 1) * w + x]);\n      v /= Math.max(1, xb - xa);\n      if (v > bv) { bv = v; by = y; }\n    }\n    if (by >= 0 && bv > 10) pts.push([((xa + xb) / 2) / w, by / h, bv]);\n  }\n  if (pts.length < 7) return { deg: 0, conf: 0 };\n  // Theil-Sen: Median aller Steigungen (unempfindlich gegen Boote, Bäume, Menschen am Horizont)\n  const sl = [];\n  for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) if (pts[j][0] - pts[i][0] > 0.15) sl.push((pts[j][1] - pts[i][1]) / (pts[j][0] - pts[i][0]));\n  if (sl.length < 6) return { deg: 0, conf: 0 };\n  sl.sort((a, b) => a - b);\n  const m = sl[sl.length >> 1];\n  const ys = pts.map((p) => p[1] - m * p[0]).sort((a, b) => a - b), c0 = ys[ys.length >> 1];\n  const inl = pts.filter((p) => Math.abs(p[1] - (m * p[0] + c0)) < 1.6 / h).length;\n  const deg = (Math.atan2(m * h, w) * 180) / Math.PI;\n  return { deg, conf: inl / pts.length };\n}\n\n/**\n * Himmelslinie: für jede Spalte, bis wohin von oben Himmel reicht (0–1 der Bildhöhe), auf ~240 Spalten.\n * Himmel = von oben zusammenhängend, glatt und im Farbbereich des oberen Rands (Blau, Grau, Weiß, Abendrot).\n * Nur wenn die Linie eindeutig ist (klare Kante, darunter deutlich anderes Bild) – sonst null.\n * Grundlage für „Ortsname hinter den Bergen“: was unter der Linie liegt, wird über den Titel gelegt.\n */\nfunction skyProfile(src, sw, sh) {\n  const W = Math.min(240, Math.round(sw)), H = Math.max(8, Math.round((sh / sw) * W));\n  if (H < 40 || W < 60) return null;\n  const ctx = scoreCtx(W, H);\n  ctx.drawImage(src, 0, 0, W, H);\n  const d = ctx.getImageData(0, 0, W, H).data;\n  const L = new Float32Array(W * H), A = new Float32Array(W * H), B = new Float32Array(W * H);\n  for (let i = 0; i < W * H; i++) {\n    const r = d[i * 4], g = d[i * 4 + 1], b = d[i * 4 + 2];\n    L[i] = 0.2126 * r + 0.7152 * g + 0.0722 * b; A[i] = r - g; B[i] = (r + g) / 2 - b;\n  }\n  // Himmelsfarbe aus dem oberen Rand (oberste 6 %): Mittelwert und Streuung\n  const top = Math.max(2, Math.round(H * 0.06));\n  let sL = 0, sA = 0, sB = 0, qL = 0, nT = 0, rough = 0;\n  for (let y = 0; y < top; y++) for (let x = 1; x < W - 1; x++) {\n    const i = y * W + x; sL += L[i]; sA += A[i]; sB += B[i]; qL += L[i] * L[i]; nT++;\n    rough += Math.abs(L[i + 1] - L[i - 1]);\n  }\n  const mL = sL / nT, mA = sA / nT, mB = sB / nT, vL = Math.sqrt(Math.max(0, qL / nT - mL * mL));\n  // Himmel ist hell genug, eher kühl oder neutral (Abendrot erlaubt), oben glatt\n  if (mL < 70 || rough / nT > 9 || vL > 38) return null;\n  // je Spalte von oben nach unten: Himmel geht weiter, solange sich die Farbe nur allmählich ändert (Verläufe,\n  // Abendrot) und die Fläche glatt bleibt; die Linie ist der erste Sprung – an ihr muss eine echte Kante liegen\n  const prof = new Float32Array(W), edge = new Uint8Array(W);\n  const cd = (i, j) => Math.abs(L[i] - L[j]) + 1.2 * Math.abs(A[i] - A[j]) + 1.2 * Math.abs(B[i] - B[j]);\n  for (let x = 0; x < W; x++) {\n    let y = 1, miss = 0, stop = H;\n    let rL = L[x], rA = A[x], rB = B[x];\n    for (; y < H; y++) {\n      const i = y * W + x;\n      const gx = x > 0 && x < W - 1 ? Math.abs(L[i + 1] - L[i - 1]) : 0;\n      const step = Math.abs(L[i] - rL) + 1.2 * Math.abs(A[i] - rA) + 1.2 * Math.abs(B[i] - rB);\n      if (step < 16 && gx < 14) { miss = 0; rL = rL * 0.6 + L[i] * 0.4; rA = rA * 0.6 + A[i] * 0.4; rB = rB * 0.6 + B[i] * 0.4; }\n      else if (++miss >= 2) { stop = y - 1; break; }\n    }\n    prof[x] = Math.min(H, stop) / H;\n    // echte Kante: drei Pixel darüber und darunter deutlich verschieden\n    const yy = Math.min(H - 4, Math.max(3, stop));\n    edge[x] = stop < H && cd((yy - 3) * W + x, (yy + 2) * W + x) > 28 ? 1 : 0;\n  }\n  let edges = 0; for (let x = 0; x < W; x++) edges += edge[x];\n  if (edges < W * 0.85) return null;\n  // glätten (Median über 5 Spalten) gegen einzelne Ausreißer (Vögel, Leitungen)\n  const sm = new Float32Array(W);\n  for (let x = 0; x < W; x++) { const win = []; for (let k = -2; k <= 2; k++) win.push(prof[Math.max(0, Math.min(W - 1, x + k))]); win.sort((a, b) => a - b); sm[x] = win[2]; }\n  // Eindeutigkeit: unter der Linie deutlich anderes Bild (dunkler/strukturierter), Linie nicht am Bildrand,\n  // Himmel nimmt einen guten Teil ein\n  let below = 0, nb = 0, mean = 0, mn = 1, mx = 0;\n  for (let x = 0; x < W; x++) {\n    mean += sm[x]; mn = Math.min(mn, sm[x]); mx = Math.max(mx, sm[x]);\n    const y = Math.min(H - 1, Math.round(sm[x] * H) + 3);\n    if (y < H) { const i = y * W + x; below += Math.abs(L[i] - mL) + Math.abs(A[i] - mA) * 0.8 + Math.abs(B[i] - mB) * 0.8; nb++; }\n  }\n  mean /= W;\n  const contrast = below / Math.max(1, nb);\n  if (mean < 0.15 || mean > 0.8 || mx > 0.97 || contrast < 20) return null;\n  // Spalten, die bis ganz unten Himmel wären, sind unsicher (Lücke im Motiv): dann lieber keine Linie\n  let full = 0; for (let x = 0; x < W; x++) if (sm[x] > 0.95) full++;\n  if (full > W * 0.05) return null;\n  let s = '';\n  for (let x = 0; x < W; x++) s += vHex2(sm[x] * 255);\n  return { p: s, top: +mn.toFixed(3), mean: +mean.toFixed(3), bottom: +mx.toFixed(3), rise: +(mx - mn).toFixed(3) };\n}\n\n/** Himmelslinie als Zahlen 0–1 (Spalten von links). */\nfunction skyLine(sky) { if (!sky || !sky.p) return null; const u = vUnhex(sky.p); return Array.from(u, (v) => v / 255); }\n\n/**\n * Ähnlichkeit zweier Aufnahmen (0 … 1) aus dem Motiv-Fingerabdruck: Farbverteilung, Bildaufbau mit Farben\n * und Struktur. Zwei Strände, zweimal derselbe Platz, zwei Fotos derselben Serie liegen hoch.\n * Ohne Fingerabdruck (ältere Aufnahmen): aus Differenzhash und Durchschnittsfarbe geschätzt.\n */\nfunction motifSim(a, b) {\n  if (!a || !b) return 0;\n  if (a.id && a.id === b.id) return 1;\n  if (a.sig && b.sig && a.sig.length === b.sig.length) {\n    const key = a.sig < b.sig ? a.sig + b.sig : b.sig + a.sig;\n    const hit = motifSim.cache.get(key);\n    if (hit != null) return hit;\n    const p = vUnhex(a.sig), q = vUnhex(b.sig);\n    // Farbverteilung (Schnittmenge)\n    let inter = 0, sa = 0, sb = 0;\n    for (let i = 0; i < 15; i++) { inter += Math.min(p[i], q[i]); sa += p[i]; sb += q[i]; }\n    const simH = inter / Math.max(1, Math.min(sa, sb));\n    // Aufbau: Helligkeit und Gegenfarben je Feld und je Bildzeile (Zeilen: unempfindlich gegen seitliches Verschieben,\n    // entscheidend bei Landschaften – Himmel/Meer/Sand); Helligkeit relativ zum Bildmittel (Belichtung egal)\n    let mLp = 0, mLq = 0;\n    for (let k = 0; k < 16; k++) { mLp += p[15 + k * 3]; mLq += q[15 + k * 3]; }\n    const off = (mLp - mLq) / 16 * 0.8;\n    let dC = 0;\n    const rowP = new Float32Array(12), rowQ = new Float32Array(12);\n    for (let k = 0; k < 16; k++) {\n      const o = 15 + k * 3, r = (k >> 2) * 3;\n      dC += Math.abs(p[o] - q[o] - off) + 1.4 * Math.abs(p[o + 1] - q[o + 1]) + 1.4 * Math.abs(p[o + 2] - q[o + 2]);\n      for (let c = 0; c < 3; c++) { rowP[r + c] += p[o + c] / 4; rowQ[r + c] += q[o + c] / 4; }\n    }\n    let dR = 0;\n    for (let r = 0; r < 4; r++) dR += Math.abs(rowP[r * 3] - rowQ[r * 3] - off) + 1.4 * Math.abs(rowP[r * 3 + 1] - rowQ[r * 3 + 1]) + 1.4 * Math.abs(rowP[r * 3 + 2] - rowQ[r * 3 + 2]);\n    const simS = 0.6 * Math.max(0, 1 - dR / 4 / 170) + 0.4 * Math.max(0, 1 - dC / 16 / 210);\n    // Struktur: Kantenrichtungen in drei Höhen und Kantendichte\n    let dT = 0;\n    for (let i = 63; i < 81; i++) dT += Math.abs(p[i] - q[i]);\n    const simT = Math.max(0, 1 - dT / 18 / 60) * (1 - Math.min(0.5, Math.abs(p[81] - q[81]) / 255));\n    const v = +(0.36 * simH + 0.4 * simS + 0.24 * simT).toFixed(3);\n    if (motifSim.cache.size > 20000) motifSim.cache.clear();\n    motifSim.cache.set(key, v);\n    return v;\n  }\n  if (a.hash && b.hash && a.avg && b.avg) {\n    const cd = Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]);\n    return Math.max(0, Math.min(1, 1 - hamming(a.hash, b.hash) / 40 - cd / 220));\n  }\n  return 0;\n}\nmotifSim.cache = new Map();\n\n/** Gleiches Motiv (gleicher Strand, gleicher Platz, gleiche Serie): nie direkt hintereinander. */\nconst SAME_MOTIF = 0.56;\nconst sameMotif = (a, b) => {\n  if (!a || !b) return false;\n  if (a.id === b.id || a.dupOf === b.id || b.dupOf === a.id) return true;\n  if (a.sig && b.sig) return motifSim(a, b) >= SAME_MOTIF;\n  // ältere Aufnahmen ohne Fingerabdruck: Differenzhash und Durchschnittsfarbe\n  return !!(a.hash && b.hash && a.avg && b.avg && hamming(a.hash, b.hash) < 12 && Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) < 30);\n};\n\n/**\n * Wie gut trägt ein waagerechtes Band (Mitte yc, Höhe h, 80 % breit) im sichtbaren Ausschnitt view = [x0, y0, x1, y1]\n * (Anteile des Bilds) einen Titel? Detail, Helligkeit, Gleichmäßigkeit → Schriftfarbe und nötige Abdunklung.\n * dim = Abdunklung, die der Einstieg ohnehin über das Bild legt. Liefert { sc, ink, scrim, calm, contrast } oder null.\n */\nfunction bandStats(m, view, yc, h = 0.18, dim = 0) {\n  if (!m || !m.calm || !m.calm.d) return null;\n  const C = 8, D = m.calm.d, Lg = m.calm.l;\n  const v = view || [0, 0, 1, 1];\n  const ya = v[1] + (yc - h / 2) * (v[3] - v[1]), yb = v[1] + (yc + h / 2) * (v[3] - v[1]);\n  const xa = v[0] + 0.1 * (v[2] - v[0]), xb = v[0] + 0.9 * (v[2] - v[0]);\n  let dS = 0, lS = 0, lQ = 0, wS = 0;\n  for (let cy = 0; cy < C; cy++) {\n    const oy = Math.max(0, Math.min(yb, (cy + 1) / C) - Math.max(ya, cy / C));\n    if (oy <= 0) continue;\n    for (let cx = 0; cx < C; cx++) {\n      const ox = Math.max(0, Math.min(xb, (cx + 1) / C) - Math.max(xa, cx / C));\n      if (ox <= 0) continue;\n      const wgt = ox * oy, k = cy * C + cx, dd = parseInt(D[k], 16) / 15, ll = (parseInt(Lg[k], 16) / 15) * (1 - dim);\n      dS += dd * wgt; lS += ll * wgt; lQ += ll * ll * wgt; wS += wgt;\n    }\n  }\n  if (!wS) return null;\n  const det = dS / wS, lum = lS / wS, lvar = Math.sqrt(Math.max(0, lQ / wS - lum * lum));\n  // Kontrast wie WCAG: helle Schrift (mit Schatten) gegen dunkle Schrift\n  const Lb = Math.pow(lum, 2.2), cW = 1.05 / (Lb + 0.05), cD = (Lb + 0.05) / 0.05;\n  const ink = cD > cW * 1.6 && det < 0.45 ? 'dark' : 'light';\n  const cr = ink === 'light' ? cW : cD;\n  // nötige Abdunklung hinter heller Schrift, damit sie sicher lesbar ist (≥ 4,5 : 1 auch über Details)\n  const scrim = ink === 'light' ? Math.max(0, Math.min(0.6, (4.5 - cW) / 9 + det * 0.3 + lvar * 0.5)) : 0;\n  const sc = (1 - det) * 0.55 + (1 - Math.min(1, lvar * 3)) * 0.2 + Math.min(1, cr / 7) * 0.25;\n  return { sc, ink, scrim: +scrim.toFixed(2), calm: +(1 - det).toFixed(2), contrast: +cr.toFixed(1) };\n}\n\n/** Ruhigstes Band aus bands (Mitten 0–1 im Ausschnitt); prefer zieht zur gewohnten Stelle. */\nfunction calmBand(m, view, opts = {}) {\n  const bands = opts.bands || [0.2, 0.33, 0.5, 0.66, 0.8];\n  let best = null;\n  for (const yc of bands) {\n    const st = bandStats(m, view, yc, opts.h, opts.dim || 0);\n    if (!st) continue;\n    const sc = st.sc - (opts.prefer != null ? Math.abs(yc - opts.prefer) * 0.35 : 0);\n    if (!best || sc > best.score) best = { y: yc, ...st, score: sc };\n  }\n  return best;\n}\n\n/* Hintergrund-Thread fürs Einlesen: Foto klein dekodieren, bewerten (score.js) und Vorschaubild erzeugen.\n * Wird von build.mjs zusammen mit score.js als eigener Code eingebettet (SCORE_WORKER_SRC). */\nself.onmessage = async (e) => {\n  const { id, file, w, h, max } = e.data;\n  try {\n    const sc = Math.min(1, max / Math.max(w, h));\n    const bw = Math.max(1, Math.round(w * sc)), bh = Math.max(1, Math.round(h * sc));\n    let bmp;\n    try { bmp = await createImageBitmap(file, { resizeWidth: bw, resizeQuality: 'high', imageOrientation: 'from-image' }); } catch (err) {\n      if (!(err && err.name === 'TypeError')) throw err;\n      bmp = await createImageBitmap(file, { resizeWidth: bw, resizeQuality: 'high' });\n    }\n    // dreht dieser Browser hier nicht nach EXIF, übernimmt der sichere Weg im Hauptthread\n    if (Math.abs(bmp.height - bh) > Math.max(2, bh * 0.01)) { bmp.close(); self.postMessage({ id, fallback: true }); return; }\n    const res = scoreImage(bmp, bmp.width, bmp.height);\n    const size = 160, c = new OffscreenCanvas(size, size), x = c.getContext('2d');\n    const s = Math.max(size / bmp.width, size / bmp.height);\n    x.drawImage(bmp, (size - bmp.width * s) / 2, (size - bmp.height * s) / 2, bmp.width * s, bmp.height * s);\n    const thumb = new FileReaderSync().readAsDataURL(await c.convertToBlob({ type: 'image/jpeg', quality: 0.75 }));\n    self.postMessage({ id, res, thumb, bmp }, [bmp]);\n  } catch (err) {\n    self.postMessage({ id, error: String((err && err.message) || err) });\n  }\n};\n";
 /* ============================================================
  * Medien-Ein-/Ausgabe: Bilder dekodieren, Video-Elemente, WebM-Fix
  * ============================================================ */
@@ -3005,7 +3005,8 @@ function imageMetrics(px) {
   const colorN = Math.max(0, Math.min(1, colorful / 85));
   let ar = 0, ag = 0, ab = 0;
   for (let i = 0; i < n; i++) { ar += data[i * 4]; ag += data[i * 4 + 1]; ab += data[i * 4 + 2]; }
-  return { sharp: sharpN, expo: expoN, color: colorN, luma: meanL, focus, scene, gray: g, w, h, avg: [Math.round(ar / n), Math.round(ag / n), Math.round(ab / n)] };
+  const vis = visionMetrics(data, g, w, h, focus, scene);
+  return { sharp: sharpN, expo: expoN, color: colorN, luma: meanL, focus, scene, vis, comp: vis.comp, gray: g, w, h, avg: [Math.round(ar / n), Math.round(ag / n), Math.round(ab / n)] };
 }
 
 /** 64-Bit-Differenzhash (9x8) als zwei 32-Bit-Zahlen */
@@ -3113,13 +3114,21 @@ function panShift(a, b, w, h) {
   return [best[0] / w, best[1] / h];
 }
 
+/** Gesamtwert eines Bilds: Technik (Schärfe, Belichtung, Farbe) und Bildaufbau (vision.js). */
 function combineScore(m) {
-  return 0.42 * m.sharp + 0.3 * m.expo + 0.28 * m.color;
+  return m.comp != null ? 0.34 * m.sharp + 0.24 * m.expo + 0.2 * m.color + 0.22 * m.comp : 0.42 * m.sharp + 0.3 * m.expo + 0.28 * m.color;
 }
 
 function scoreImage(src, sw, sh) {
   const m = imageMetrics(samplePixels(src, sw, sh));
-  return { score: combineScore(m), sharp: m.sharp, expo: m.expo, color: m.color, avg: m.avg, luma: +m.luma.toFixed(3), focus: m.focus.map((v) => +v.toFixed(3)), hash: dHash(src, sw, sh), layout: layoutSig(m), ...sceneFields(m.scene) };
+  let sky = null;
+  try { sky = skyProfile(src, sw, sh); } catch (e) { sky = null; }
+  return { score: combineScore(m), sharp: m.sharp, expo: m.expo, color: m.color, avg: m.avg, luma: +m.luma.toFixed(3), focus: m.focus.map((v) => +v.toFixed(3)), hash: dHash(src, sw, sh), layout: layoutSig(m), ...sceneFields(m.scene), ...visFields(m.vis), sky, vis: VIS_VER };
+}
+
+/** Felder des Bildverständnisses (vision.js) für die Aufnahme. */
+function visFields(v) {
+  return v ? { sig: v.sig, calm: v.calm, mood: v.mood, comp: v.comp, tilt: v.tilt, detail: v.detail } : {};
 }
 
 /** Motiv-Felder für die Aufnahme (werden mit gespeichert). */
@@ -3206,7 +3215,7 @@ async function scoreFrames(grab, W, H, duration) {
   // Schwenk über die Zeit (in Aufnahme-Reihenfolge): Inhalt bewegt sich je Sekunde um diesen Bildanteil
   const byT = res.slice().sort((x, y) => x.t - y.t);
   const pans = byT.map((r) => ({ t: r.t, x: +(r.pan[0] * 5).toFixed(3), y: +(r.pan[1] * 5).toFixed(3) }));
-  return { pans, ...sceneFields(top && top.scene), motion, score: res.length ? res[0].score : 0.3, hash: hash || [0, 0], avg, luma: +luma.toFixed(3), focus: top ? top.focus.map((v, i) => +(0.5 * v + 0.5 * [0.5, 0.45][i]).toFixed(3)) : undefined, layout, highlights: res.map((r) => ({ t: r.t, score: r.score })) };
+  return { pans, ...sceneFields(top && top.scene), ...visFields(top && top.vis), vis: VIS_VER, motion, score: res.length ? res[0].score : 0.3, hash: hash || [0, 0], avg, luma: +luma.toFixed(3), focus: top ? top.focus.map((v, i) => +(0.5 * v + 0.5 * [0.5, 0.45][i]).toFixed(3)) : undefined, layout, highlights: res.map((r) => ({ t: r.t, score: r.score })) };
 }
 
 /** Markiert Beinahe-Duplikate (nur das beste Bild einer Serie bleibt aktiv). */
@@ -3291,6 +3300,337 @@ function motionHits(v, hz) {
   const out = [];
   for (const c of cand) if (out.every((o) => Math.abs(o[0] - c[0]) >= 0.45)) out.push(c);
   return out.slice(0, 24).sort((a, b) => a[0] - b[0]).map(([t, st]) => [+t.toFixed(3), +st.toFixed(2)]);
+}
+
+/* ============================================================
+ * Bildverständnis – lokal, ohne Netz und ohne Modelldatei:
+ * Motiv-Fingerabdruck (Ähnlichkeit), ruhige Zonen und Helligkeit (Titel),
+ * Bildstimmung, Bildaufbau, Horizont-Neigung, Himmelslinie (Ortsname hinter Bergen).
+ * Läuft im Einlese-Thread zusammen mit score.js. Ein späteres KI-Modell liefert dieselben Felder.
+ * ============================================================ */
+
+/** Stand der Bildanalyse: Aufnahmen mit älterem Stand werden im Hintergrund nachanalysiert. */
+const VIS_VER = 1;
+
+const vHex2 = (v) => { const x = Math.max(0, Math.min(255, Math.round(v))); return (x < 16 ? '0' : '') + x.toString(16); };
+const vUnhex = (s) => { const o = new Uint8Array(s.length >> 1); for (let i = 0; i < o.length; i++) o[i] = parseInt(s.substr(i * 2, 2), 16); return o; };
+const vHex1 = (v) => Math.max(0, Math.min(15, Math.round(v))).toString(16);
+
+/**
+ * Merkmale auf dem kleinen Bewertungsbild (data RGBA, g = Helligkeit 0–255, w × h).
+ * focus = Bildschwerpunkt, scene = sceneMetrics (Horizont, Himmel, Haut, Motiv).
+ */
+function visionMetrics(data, g, w, h, focus, scene) {
+  const n = w * h;
+  // --- Motiv-Fingerabdruck ---
+  // 1. Farbverteilung: 12 Farbtöne (nach Sättigung gewichtet) + 3 Graustufen für blasse Pixel
+  const hist = new Float32Array(15);
+  // 2. Bildaufbau: 4 × 4 Felder mit mittlerer Helligkeit und Gegenfarben (rot–grün, gelb–blau)
+  const G = 4, cell = new Float32Array(G * G * 3), cc = new Float32Array(G * G);
+  // 3. Struktur: Kantenrichtungen (6) in drei Bildhöhen, gewichtet nach Kantenstärke
+  const ori = new Float32Array(18);
+  let warm = 0, satS = 0;
+  const lumH = new Uint32Array(32);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x, r = data[i * 4], gg = data[i * 4 + 1], b = data[i * 4 + 2];
+      const mx = Math.max(r, gg, b), mn = Math.min(r, gg, b), sat = mx > 0 ? (mx - mn) / mx : 0, v = mx / 255;
+      if (sat > 0.14 && v > 0.12) {
+        let hu = 0;
+        const d = mx - mn;
+        if (mx === r) hu = ((gg - b) / d) % 6; else if (mx === gg) hu = (b - r) / d + 2; else hu = (r - gg) / d + 4;
+        hu = (hu + 6) % 6;
+        hist[Math.min(11, Math.floor(hu * 2))] += sat;
+      } else hist[12 + Math.min(2, Math.floor((g[i] / 256) * 3))] += 0.5;
+      const k = Math.min(G - 1, Math.floor((y / h) * G)) * G + Math.min(G - 1, Math.floor((x / w) * G));
+      cell[k * 3] += g[i] / 255; cell[k * 3 + 1] += (r - gg) / 255; cell[k * 3 + 2] += ((r + gg) / 2 - b) / 255; cc[k]++;
+      warm += (r - b) / 255; satS += sat;
+      lumH[Math.min(31, g[i] >> 3)]++;
+      if (x > 0 && y > 0 && x < w - 1 && y < h - 1) {
+        const gx = g[i + 1] - g[i - 1], gy = g[i + w] - g[i - w], mag = Math.abs(gx) + Math.abs(gy);
+        if (mag > 24) {
+          const a = Math.atan2(gy, gx);
+          const bin = Math.floor((((a + Math.PI) % Math.PI) / Math.PI) * 6) % 6;
+          ori[Math.min(2, Math.floor((y / h) * 3)) * 6 + bin] += mag;
+        }
+      }
+    }
+  }
+  let hs = 0; for (const v of hist) hs += v;
+  let os = 0; for (const v of ori) os += v;
+  let sig = '';
+  for (const v of hist) sig += vHex2((v / Math.max(1e-6, hs)) * 255);
+  for (let k = 0; k < G * G; k++) {
+    const c = Math.max(1, cc[k]);
+    sig += vHex2((cell[k * 3] / c) * 255) + vHex2((cell[k * 3 + 1] / c + 0.5) * 255) + vHex2((cell[k * 3 + 2] / c + 0.5) * 255);
+  }
+  for (const v of ori) sig += vHex2((v / Math.max(1e-6, os)) * 255 * 3);
+  // Kantendichte als Ganzes (Wald, Stadt ≠ Himmel, Meer)
+  sig += vHex2(Math.min(1, os / n / 40) * 255);
+
+  // --- ruhige Zonen: 8 × 8 Felder mit Detail (Laplace) und Helligkeit ---
+  // (auf leicht weichgezeichnetem Bild: Sensorrauschen zählt nicht als Unruhe, Strukturen schon)
+  const gs = new Float32Array(n);
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+    const i = y * w + x;
+    gs[i] = (g[i - w - 1] + g[i - w] + g[i - w + 1] + g[i - 1] + g[i] + g[i + 1] + g[i + w - 1] + g[i + w] + g[i + w + 1]) / 9;
+  }
+  const C = 8, det = new Float32Array(C * C), lum = new Float32Array(C * C), cnt = new Float32Array(C * C);
+  for (let y = 2; y < h - 2; y++) {
+    for (let x = 2; x < w - 2; x++) {
+      const i = y * w + x, k = Math.min(C - 1, Math.floor((y / h) * C)) * C + Math.min(C - 1, Math.floor((x / w) * C));
+      det[k] += Math.abs(4 * gs[i] - gs[i - 1] - gs[i + 1] - gs[i - w] - gs[i + w]) * 2.5;
+      lum[k] += g[i]; cnt[k]++;
+    }
+  }
+  let calmD = '', calmL = '', detSum = 0;
+  for (let k = 0; k < C * C; k++) {
+    const d = det[k] / Math.max(1, cnt[k]);
+    detSum += d;
+    // 0 = spiegelglatt (Himmel, Wasser, Wand), 15 = sehr unruhig (Laub, Menge, Schrift)
+    calmD += vHex1(Math.sqrt(Math.min(1, d / 40)) * 15);
+    calmL += vHex1((lum[k] / Math.max(1, cnt[k]) / 255) * 15);
+  }
+  const detail = Math.min(1, detSum / (C * C) / 22);
+
+  // --- Bildstimmung: Valenz (hell, warm, farbig = froh) und Erregung (Kontrast, Farbe, Details = lebhaft) ---
+  const pct = (p) => { let acc = 0; const lim = n * p; for (let k = 0; k < 32; k++) { acc += lumH[k]; if (acc >= lim) return (k + 0.5) / 32; } return 1; };
+  const contrast = Math.max(0, Math.min(1, (pct(0.95) - pct(0.05)) / 0.8));
+  let ml = 0; for (let i = 0; i < n; i++) ml += g[i];
+  const bright = ml / n / 255, warmth = Math.max(0, Math.min(1, warm / n * 2.2 + 0.5)), sat = Math.min(1, satS / n * 2);
+  const valence = Math.max(0, Math.min(1, 0.4 * warmth + 0.35 * Math.min(1, bright * 1.6) + 0.25 * sat));
+  const arousal = Math.max(0, Math.min(1, 0.4 * contrast + 0.35 * sat + 0.25 * detail));
+
+  // --- Bildaufbau (0–1): Motiv auf Drittel oder Mitte, Horizont auf Drittel und gerade, Freistellung,
+  //     Tonwertumfang, Ordnung statt Durcheinander ---
+  const fx = focus[0], fy = focus[1];
+  const third = Math.min(Math.abs(fx - 1 / 3), Math.abs(fx - 2 / 3), Math.abs(fx - 0.5) * 1.4) + Math.min(Math.abs(fy - 1 / 3), Math.abs(fy - 2 / 3), Math.abs(fy - 0.5) * 1.4);
+  let comp = 0.5 + 0.25 * (1 - Math.min(1, third / 0.3));
+  const tilt = horizonTilt(g, w, h, scene && scene.horizon);
+  if (scene && scene.horizon != null) {
+    const hz = scene.horizon;
+    comp += 0.12 * (1 - Math.min(1, Math.min(Math.abs(hz - 1 / 3), Math.abs(hz - 2 / 3)) / 0.12)) - (Math.abs(hz - 0.5) < 0.05 ? 0.06 : 0);
+    if (tilt.conf > 0.5) comp -= Math.min(0.2, Math.abs(tilt.deg) * 0.05);
+  }
+  if (scene && scene.iso != null) comp += Math.max(-0.05, Math.min(0.15, (scene.iso - 1.3) * 0.1));
+  comp += 0.12 * (contrast - 0.5);
+  // Durcheinander: überall viel Detail ohne ruhige Fläche
+  let calmCells = 0; for (let k = 0; k < C * C; k++) if (det[k] / Math.max(1, cnt[k]) < 9) calmCells++;
+  if (calmCells < 4 && detail > 0.6) comp -= 0.12;
+  comp = Math.max(0, Math.min(1, comp));
+
+  return { sig, calm: { d: calmD, l: calmL }, mood: [+valence.toFixed(2), +arousal.toFixed(2)], comp: +comp.toFixed(3), tilt: tilt.conf > 0.55 && Math.abs(tilt.deg) >= 0.6 && Math.abs(tilt.deg) <= 8 ? +tilt.deg.toFixed(2) : 0, detail: +detail.toFixed(2) };
+}
+
+/**
+ * Neigung des Horizonts in Grad (positiv = rechts tiefer). In 12 Spalten die stärkste waagerechte Kante nahe dem
+ * erkannten Horizont suchen, Gerade robust anpassen; conf = wie gut die Punkte auf einer Geraden liegen.
+ */
+function horizonTilt(g, w, h, horizon) {
+  if (horizon == null) return { deg: 0, conf: 0 };
+  const S = 12, pts = [];
+  const y0 = Math.max(2, Math.floor((horizon - 0.18) * h)), y1 = Math.min(h - 2, Math.ceil((horizon + 0.18) * h));
+  for (let s = 0; s < S; s++) {
+    const xa = Math.floor((s / S) * w) + 1, xb = Math.floor(((s + 1) / S) * w) - 1;
+    let by = -1, bv = 0;
+    for (let y = y0; y < y1; y++) {
+      let v = 0;
+      for (let x = xa; x < xb; x++) v += Math.abs(g[(y + 1) * w + x] - g[(y - 1) * w + x]);
+      v /= Math.max(1, xb - xa);
+      if (v > bv) { bv = v; by = y; }
+    }
+    if (by >= 0 && bv > 10) pts.push([((xa + xb) / 2) / w, by / h, bv]);
+  }
+  if (pts.length < 7) return { deg: 0, conf: 0 };
+  // Theil-Sen: Median aller Steigungen (unempfindlich gegen Boote, Bäume, Menschen am Horizont)
+  const sl = [];
+  for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) if (pts[j][0] - pts[i][0] > 0.15) sl.push((pts[j][1] - pts[i][1]) / (pts[j][0] - pts[i][0]));
+  if (sl.length < 6) return { deg: 0, conf: 0 };
+  sl.sort((a, b) => a - b);
+  const m = sl[sl.length >> 1];
+  const ys = pts.map((p) => p[1] - m * p[0]).sort((a, b) => a - b), c0 = ys[ys.length >> 1];
+  const inl = pts.filter((p) => Math.abs(p[1] - (m * p[0] + c0)) < 1.6 / h).length;
+  const deg = (Math.atan2(m * h, w) * 180) / Math.PI;
+  return { deg, conf: inl / pts.length };
+}
+
+/**
+ * Himmelslinie: für jede Spalte, bis wohin von oben Himmel reicht (0–1 der Bildhöhe), auf ~240 Spalten.
+ * Himmel = von oben zusammenhängend, glatt und im Farbbereich des oberen Rands (Blau, Grau, Weiß, Abendrot).
+ * Nur wenn die Linie eindeutig ist (klare Kante, darunter deutlich anderes Bild) – sonst null.
+ * Grundlage für „Ortsname hinter den Bergen“: was unter der Linie liegt, wird über den Titel gelegt.
+ */
+function skyProfile(src, sw, sh) {
+  const W = Math.min(240, Math.round(sw)), H = Math.max(8, Math.round((sh / sw) * W));
+  if (H < 40 || W < 60) return null;
+  const ctx = scoreCtx(W, H);
+  ctx.drawImage(src, 0, 0, W, H);
+  const d = ctx.getImageData(0, 0, W, H).data;
+  const L = new Float32Array(W * H), A = new Float32Array(W * H), B = new Float32Array(W * H);
+  for (let i = 0; i < W * H; i++) {
+    const r = d[i * 4], g = d[i * 4 + 1], b = d[i * 4 + 2];
+    L[i] = 0.2126 * r + 0.7152 * g + 0.0722 * b; A[i] = r - g; B[i] = (r + g) / 2 - b;
+  }
+  // Himmelsfarbe aus dem oberen Rand (oberste 6 %): Mittelwert und Streuung
+  const top = Math.max(2, Math.round(H * 0.06));
+  let sL = 0, sA = 0, sB = 0, qL = 0, nT = 0, rough = 0;
+  for (let y = 0; y < top; y++) for (let x = 1; x < W - 1; x++) {
+    const i = y * W + x; sL += L[i]; sA += A[i]; sB += B[i]; qL += L[i] * L[i]; nT++;
+    rough += Math.abs(L[i + 1] - L[i - 1]);
+  }
+  const mL = sL / nT, mA = sA / nT, mB = sB / nT, vL = Math.sqrt(Math.max(0, qL / nT - mL * mL));
+  // Himmel ist hell genug, eher kühl oder neutral (Abendrot erlaubt), oben glatt
+  if (mL < 70 || rough / nT > 9 || vL > 38) return null;
+  // je Spalte von oben nach unten: Himmel geht weiter, solange sich die Farbe nur allmählich ändert (Verläufe,
+  // Abendrot) und die Fläche glatt bleibt; die Linie ist der erste Sprung – an ihr muss eine echte Kante liegen
+  const prof = new Float32Array(W), edge = new Uint8Array(W);
+  const cd = (i, j) => Math.abs(L[i] - L[j]) + 1.2 * Math.abs(A[i] - A[j]) + 1.2 * Math.abs(B[i] - B[j]);
+  for (let x = 0; x < W; x++) {
+    let y = 1, miss = 0, stop = H;
+    let rL = L[x], rA = A[x], rB = B[x];
+    for (; y < H; y++) {
+      const i = y * W + x;
+      const gx = x > 0 && x < W - 1 ? Math.abs(L[i + 1] - L[i - 1]) : 0;
+      const step = Math.abs(L[i] - rL) + 1.2 * Math.abs(A[i] - rA) + 1.2 * Math.abs(B[i] - rB);
+      if (step < 16 && gx < 14) { miss = 0; rL = rL * 0.6 + L[i] * 0.4; rA = rA * 0.6 + A[i] * 0.4; rB = rB * 0.6 + B[i] * 0.4; }
+      else if (++miss >= 2) { stop = y - 1; break; }
+    }
+    prof[x] = Math.min(H, stop) / H;
+    // echte Kante: drei Pixel darüber und darunter deutlich verschieden
+    const yy = Math.min(H - 4, Math.max(3, stop));
+    edge[x] = stop < H && cd((yy - 3) * W + x, (yy + 2) * W + x) > 28 ? 1 : 0;
+  }
+  let edges = 0; for (let x = 0; x < W; x++) edges += edge[x];
+  if (edges < W * 0.85) return null;
+  // glätten (Median über 5 Spalten) gegen einzelne Ausreißer (Vögel, Leitungen)
+  const sm = new Float32Array(W);
+  for (let x = 0; x < W; x++) { const win = []; for (let k = -2; k <= 2; k++) win.push(prof[Math.max(0, Math.min(W - 1, x + k))]); win.sort((a, b) => a - b); sm[x] = win[2]; }
+  // Eindeutigkeit: unter der Linie deutlich anderes Bild (dunkler/strukturierter), Linie nicht am Bildrand,
+  // Himmel nimmt einen guten Teil ein
+  let below = 0, nb = 0, mean = 0, mn = 1, mx = 0;
+  for (let x = 0; x < W; x++) {
+    mean += sm[x]; mn = Math.min(mn, sm[x]); mx = Math.max(mx, sm[x]);
+    const y = Math.min(H - 1, Math.round(sm[x] * H) + 3);
+    if (y < H) { const i = y * W + x; below += Math.abs(L[i] - mL) + Math.abs(A[i] - mA) * 0.8 + Math.abs(B[i] - mB) * 0.8; nb++; }
+  }
+  mean /= W;
+  const contrast = below / Math.max(1, nb);
+  if (mean < 0.15 || mean > 0.8 || mx > 0.97 || contrast < 20) return null;
+  // Spalten, die bis ganz unten Himmel wären, sind unsicher (Lücke im Motiv): dann lieber keine Linie
+  let full = 0; for (let x = 0; x < W; x++) if (sm[x] > 0.95) full++;
+  if (full > W * 0.05) return null;
+  let s = '';
+  for (let x = 0; x < W; x++) s += vHex2(sm[x] * 255);
+  return { p: s, top: +mn.toFixed(3), mean: +mean.toFixed(3), bottom: +mx.toFixed(3), rise: +(mx - mn).toFixed(3) };
+}
+
+/** Himmelslinie als Zahlen 0–1 (Spalten von links). */
+function skyLine(sky) { if (!sky || !sky.p) return null; const u = vUnhex(sky.p); return Array.from(u, (v) => v / 255); }
+
+/**
+ * Ähnlichkeit zweier Aufnahmen (0 … 1) aus dem Motiv-Fingerabdruck: Farbverteilung, Bildaufbau mit Farben
+ * und Struktur. Zwei Strände, zweimal derselbe Platz, zwei Fotos derselben Serie liegen hoch.
+ * Ohne Fingerabdruck (ältere Aufnahmen): aus Differenzhash und Durchschnittsfarbe geschätzt.
+ */
+function motifSim(a, b) {
+  if (!a || !b) return 0;
+  if (a.id && a.id === b.id) return 1;
+  if (a.sig && b.sig && a.sig.length === b.sig.length) {
+    const key = a.sig < b.sig ? a.sig + b.sig : b.sig + a.sig;
+    const hit = motifSim.cache.get(key);
+    if (hit != null) return hit;
+    const p = vUnhex(a.sig), q = vUnhex(b.sig);
+    // Farbverteilung (Schnittmenge)
+    let inter = 0, sa = 0, sb = 0;
+    for (let i = 0; i < 15; i++) { inter += Math.min(p[i], q[i]); sa += p[i]; sb += q[i]; }
+    const simH = inter / Math.max(1, Math.min(sa, sb));
+    // Aufbau: Helligkeit und Gegenfarben je Feld und je Bildzeile (Zeilen: unempfindlich gegen seitliches Verschieben,
+    // entscheidend bei Landschaften – Himmel/Meer/Sand); Helligkeit relativ zum Bildmittel (Belichtung egal)
+    let mLp = 0, mLq = 0;
+    for (let k = 0; k < 16; k++) { mLp += p[15 + k * 3]; mLq += q[15 + k * 3]; }
+    const off = (mLp - mLq) / 16 * 0.8;
+    let dC = 0;
+    const rowP = new Float32Array(12), rowQ = new Float32Array(12);
+    for (let k = 0; k < 16; k++) {
+      const o = 15 + k * 3, r = (k >> 2) * 3;
+      dC += Math.abs(p[o] - q[o] - off) + 1.4 * Math.abs(p[o + 1] - q[o + 1]) + 1.4 * Math.abs(p[o + 2] - q[o + 2]);
+      for (let c = 0; c < 3; c++) { rowP[r + c] += p[o + c] / 4; rowQ[r + c] += q[o + c] / 4; }
+    }
+    let dR = 0;
+    for (let r = 0; r < 4; r++) dR += Math.abs(rowP[r * 3] - rowQ[r * 3] - off) + 1.4 * Math.abs(rowP[r * 3 + 1] - rowQ[r * 3 + 1]) + 1.4 * Math.abs(rowP[r * 3 + 2] - rowQ[r * 3 + 2]);
+    const simS = 0.6 * Math.max(0, 1 - dR / 4 / 170) + 0.4 * Math.max(0, 1 - dC / 16 / 210);
+    // Struktur: Kantenrichtungen in drei Höhen und Kantendichte
+    let dT = 0;
+    for (let i = 63; i < 81; i++) dT += Math.abs(p[i] - q[i]);
+    const simT = Math.max(0, 1 - dT / 18 / 60) * (1 - Math.min(0.5, Math.abs(p[81] - q[81]) / 255));
+    const v = +(0.36 * simH + 0.4 * simS + 0.24 * simT).toFixed(3);
+    if (motifSim.cache.size > 20000) motifSim.cache.clear();
+    motifSim.cache.set(key, v);
+    return v;
+  }
+  if (a.hash && b.hash && a.avg && b.avg) {
+    const cd = Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]);
+    return Math.max(0, Math.min(1, 1 - hamming(a.hash, b.hash) / 40 - cd / 220));
+  }
+  return 0;
+}
+motifSim.cache = new Map();
+
+/** Gleiches Motiv (gleicher Strand, gleicher Platz, gleiche Serie): nie direkt hintereinander. */
+const SAME_MOTIF = 0.56;
+const sameMotif = (a, b) => {
+  if (!a || !b) return false;
+  if (a.id === b.id || a.dupOf === b.id || b.dupOf === a.id) return true;
+  if (a.sig && b.sig) return motifSim(a, b) >= SAME_MOTIF;
+  // ältere Aufnahmen ohne Fingerabdruck: Differenzhash und Durchschnittsfarbe
+  return !!(a.hash && b.hash && a.avg && b.avg && hamming(a.hash, b.hash) < 12 && Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) < 30);
+};
+
+/**
+ * Wie gut trägt ein waagerechtes Band (Mitte yc, Höhe h, 80 % breit) im sichtbaren Ausschnitt view = [x0, y0, x1, y1]
+ * (Anteile des Bilds) einen Titel? Detail, Helligkeit, Gleichmäßigkeit → Schriftfarbe und nötige Abdunklung.
+ * dim = Abdunklung, die der Einstieg ohnehin über das Bild legt. Liefert { sc, ink, scrim, calm, contrast } oder null.
+ */
+function bandStats(m, view, yc, h = 0.18, dim = 0) {
+  if (!m || !m.calm || !m.calm.d) return null;
+  const C = 8, D = m.calm.d, Lg = m.calm.l;
+  const v = view || [0, 0, 1, 1];
+  const ya = v[1] + (yc - h / 2) * (v[3] - v[1]), yb = v[1] + (yc + h / 2) * (v[3] - v[1]);
+  const xa = v[0] + 0.1 * (v[2] - v[0]), xb = v[0] + 0.9 * (v[2] - v[0]);
+  let dS = 0, lS = 0, lQ = 0, wS = 0;
+  for (let cy = 0; cy < C; cy++) {
+    const oy = Math.max(0, Math.min(yb, (cy + 1) / C) - Math.max(ya, cy / C));
+    if (oy <= 0) continue;
+    for (let cx = 0; cx < C; cx++) {
+      const ox = Math.max(0, Math.min(xb, (cx + 1) / C) - Math.max(xa, cx / C));
+      if (ox <= 0) continue;
+      const wgt = ox * oy, k = cy * C + cx, dd = parseInt(D[k], 16) / 15, ll = (parseInt(Lg[k], 16) / 15) * (1 - dim);
+      dS += dd * wgt; lS += ll * wgt; lQ += ll * ll * wgt; wS += wgt;
+    }
+  }
+  if (!wS) return null;
+  const det = dS / wS, lum = lS / wS, lvar = Math.sqrt(Math.max(0, lQ / wS - lum * lum));
+  // Kontrast wie WCAG: helle Schrift (mit Schatten) gegen dunkle Schrift
+  const Lb = Math.pow(lum, 2.2), cW = 1.05 / (Lb + 0.05), cD = (Lb + 0.05) / 0.05;
+  const ink = cD > cW * 1.6 && det < 0.45 ? 'dark' : 'light';
+  const cr = ink === 'light' ? cW : cD;
+  // nötige Abdunklung hinter heller Schrift, damit sie sicher lesbar ist (≥ 4,5 : 1 auch über Details)
+  const scrim = ink === 'light' ? Math.max(0, Math.min(0.6, (4.5 - cW) / 9 + det * 0.3 + lvar * 0.5)) : 0;
+  const sc = (1 - det) * 0.55 + (1 - Math.min(1, lvar * 3)) * 0.2 + Math.min(1, cr / 7) * 0.25;
+  return { sc, ink, scrim: +scrim.toFixed(2), calm: +(1 - det).toFixed(2), contrast: +cr.toFixed(1) };
+}
+
+/** Ruhigstes Band aus bands (Mitten 0–1 im Ausschnitt); prefer zieht zur gewohnten Stelle. */
+function calmBand(m, view, opts = {}) {
+  const bands = opts.bands || [0.2, 0.33, 0.5, 0.66, 0.8];
+  let best = null;
+  for (const yc of bands) {
+    const st = bandStats(m, view, yc, opts.h, opts.dim || 0);
+    if (!st) continue;
+    const sc = st.sc - (opts.prefer != null ? Math.abs(yc - opts.prefer) * 0.35 : 0);
+    if (!best || sc > best.score) best = { y: yc, ...st, score: sc };
+  }
+  return best;
 }
 
 /* Planer · Grundlagen: Zufall, Looks, Formate, Übergangs-Typen, Takt- und Abschnittshilfen, Songausschnitt */
@@ -3922,7 +4262,7 @@ function selectMedia(pool, K, mustIds) {
 function flowOrder(list, wantMatch) {
   if (list.length < 3) return list.slice();
   const colorD = (a, b) => (a.avg && b.avg ? Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) : 60);
-  const twin = (a, b) => colorD(a, b) < 18 && a.hash && b.hash && hamming(a.hash, b.hash) < 14;
+  const twin = (a, b) => sameMotif(a, b) || (colorD(a, b) < 18 && a.hash && b.hash && hamming(a.hash, b.hash) < 14);
   const flow = (a, b) => {
     if (twin(a, b)) return -1;
     let v = 0.45 * (1 - Math.min(1, colorD(a, b) / 160)) + 0.25 * (1 - Math.min(1, Math.abs((a.luma || 0.45) - (b.luma || 0.45)) / 0.4));
@@ -3999,9 +4339,9 @@ function shotRelation(a, b) {
   return { sim: layoutSim(a.layout, b.layout), colorD, dl: (b.luma || 0.45) - (a.luma || 0.45), aLuma: a.luma || 0.45, sizeA: shotSize(a), sizeB: shotSize(b) };
 }
 
-/** Ähnliche Bilder nicht direkt hintereinander (Farbe/Hash). */
+/** Ähnliche Bilder nicht direkt hintereinander (Motiv-Fingerabdruck, sonst Farbe/Hash). */
 function spreadSimilar(order) {
-  const sim = (a, b) => a && b && a.avg && b.avg && Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) < 18 && (!a.hash || !b.hash || hamming(a.hash, b.hash) < 14);
+  const sim = (a, b) => a && b && (sameMotif(a, b) || (a.avg && b.avg && Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) < 18 && (!a.hash || !b.hash || hamming(a.hash, b.hash) < 14)));
   for (let i = 2; i < order.length - 1; i++) {
     // nur mit einer Aufnahme aus demselben Moment tauschen (nie über eine Pause, einen Tageswechsel oder eine Nacht)
     const close = !order[i].time || !order[i + 1].time || Math.abs(order[i].time - order[i + 1].time) <= 3 * 60 * 1000;
@@ -4031,6 +4371,30 @@ function imageMotion(rng, m, outAspect, visDur, role, prevDir, hint, tempo = 1) 
   return mo;
 }
 
+/**
+ * Schiefen Horizont gerade richten (Bildverständnis: m.tilt in Grad, rechts tiefer = positiv): die Fahrt dreht um
+ * −tilt und zoomt gerade so weit, dass der gedrehte Ausschnitt im Bild bleibt; Schwenks werden entsprechend kürzer.
+ */
+function levelHorizon(mo, m, outAspect) {
+  const deg = m.tilt || 0;
+  if (!deg || Math.abs(deg) > 5 || m.rot90) return;
+  const th = (Math.abs(deg) * Math.PI) / 180, c = Math.cos(th), sn = Math.sin(th);
+  const srcA = m.w && m.h ? m.w / m.h : outAspect;
+  // Ausschnitt bei s = 1 als Anteil der Bildbreite/-höhe; gedrehter Umriss in Bildanteilen
+  const fw = srcA > outAspect ? outAspect / srcA : 1, fh = srcA > outAspect ? 1 : srcA / outAspect;
+  const wr = fw * c + fh * sn / srcA, hr = fw * sn * srcA + fh * c;
+  const need = Math.max(wr, hr) * 1.01;
+  for (const k of ['from', 'to']) {
+    const e = mo[k];
+    e.r = -(deg * Math.PI) / 180;
+    const s0 = Math.max(e.s || 1, need);
+    // Schwenkweite: freier Rand nach dem Drehen statt ohne Drehung
+    const kx = 1 - fw / s0 > 0.001 ? Math.max(0, 1 - wr / s0) / (1 - fw / s0) : 0;
+    const ky = 1 - fh / s0 > 0.001 ? Math.max(0, 1 - hr / s0) / (1 - fh / s0) : 0;
+    e.s = s0; e.x = (e.x || 0) * Math.min(1, kx); e.y = (e.y || 0) * Math.min(1, ky);
+  }
+}
+
 /** Bildschirmgeschwindigkeit einer Fahrt (Anteil der Bildbreite je Sekunde): Schwenk plus Zoom an den Bildrändern. */
 function motionSpeed(mo, m, outAspect, dur) {
   if (!mo) return 0;
@@ -4056,13 +4420,15 @@ function scaleMotion(mo, k) {
 function fitSubject(mo, m, outAspect) {
   const sub = m.subject;
   if (m.horizon != null) { mo.m.from.r = 0; mo.m.to.r = 0; }
-  if (!sub) return mo;
+  // schiefer Horizont: zuletzt gerade richten (der Zoom fürs Drehen geht vor dem Motivschutz)
+  const done = () => { if (m.horizon != null) levelHorizon(mo.m, m, outAspect); return mo; };
+  if (!sub) return done();
   const srcAspect = m.w && m.h ? m.w / m.h : outAspect;
   const fw = srcAspect > outAspect ? outAspect / srcAspect : 1, fh = srcAspect > outAspect ? 1 : srcAspect / outAspect;
   const cap = Math.min(fw / Math.max(0.05, sub[2] * 1.08), fh / Math.max(0.05, sub[3] * 1.08));
-  if (cap < 1.02) return mo;
+  if (cap < 1.02) return done();
   for (const k of ['from', 'to']) if (mo.m[k].s > cap) mo.m[k].s = Math.max(1.0, cap);
-  return mo;
+  return done();
 }
 
 /**
@@ -5452,7 +5818,7 @@ function planOnce(opts) {
       // Höchstens drei Videos (sonst ruckelt es auf dem Handy), keine Beinahe-Doppel nebeneinander.
       const strength = (m) => (m.score || 0.5) + (m.fav ? 0.25 : 0) + (m.kind === 'video' ? 0.04 : 0);
       const rank = goodMedia(usable, gAll).slice().sort((a, b) => strength(b) - strength(a));
-      const twin = (a, b) => a.dupOf === b.id || b.dupOf === a.id || (a.hash && b.hash && hamming(a.hash, b.hash) < 10);
+      const twin = (a, b) => sameMotif(a, b) || (a.hash && b.hash && hamming(a.hash, b.hash) < 10);
       const pick = [];
       for (const m of rank) {
         if (pick.length >= SHUTTER.tiles.length) break;
@@ -5800,6 +6166,12 @@ function planOnce(opts) {
         if (done) break;
       }
     }
+  }
+
+  // Nie zwei gleiche Motive direkt hintereinander (Bildverständnis: Motiv-Fingerabdruck)
+  if (!flight) {
+    const tw = separateTwins(clips, { byId, ovOf, moved: userMoved, blocks: lied ? 'moment' : byTime });
+    if (tw) dir.notes.push(`Abwechslung: ${tw}× ein gleiches Motiv (gleicher Strand, Platz oder Serie) von seinem Nachbarn getrennt.`);
   }
 
   // Übergänge: aus dem Songaufbau und aus dem, was das vorige Bild zeigt
@@ -6736,6 +7108,15 @@ function planOnce(opts) {
     if (o.end < need) o.end = Math.max(o.end, Math.min(need, cap));
   }
 
+  // Titel an die ruhigste Stelle des Bilds (mit Kontrastprüfung), Ortsname hinter den Bergen (Bildverständnis)
+  {
+    const bh = band[1] * fmt.h, baseF = Math.min(fmt.w, bh * (vertical && band[1] < 1 ? 1.6 : 1));
+    const titleSize = Math.min(0.19 * baseF, (0.86 * fmt.w) / (0.62 * Math.max(4, String(title || '').length))) / bh;
+    const pl = placeTitles(overlays, clips, { byId, outAspect, vertical, fx, titleSize, band });
+    if (pl.behind) dir.notes.push('Ortsname hinter den Bergen: die Himmelslinie des Bilds läuft durch die Schrift, der Vordergrund liegt davor.');
+    else if (pl.placed) dir.notes.push(`Titel an die ruhigste Stelle des Bilds gesetzt, Schriftfarbe und Abdunklung nach dem Kontrast gewählt${pl.placed > 1 ? ` (${pl.placed} Einblendungen)` : ''}.`);
+  }
+
   // von dir festgelegte Videolängen: wie viele Sekunden fehlen (über einen Schlag hinaus)? Die Suche gibt ihnen dann Raum.
   const vShort = +good.filter((m) => userVideoLen(m)).reduce((a, m) => {
     const got = clips.filter((c) => c.mediaId === m.id && !c.split && !c.burst && !c.rush && !c.leader).reduce((x, c) => x + c.end - c.start, 0);
@@ -7012,7 +7393,7 @@ function arrangeBlocks(clips, { byId, ovOf = () => null, moved: userMoved = new 
     const sim = layoutSim(a.layout, b.layout);
     // Beinahe-Doppel: gleicher Aufbau UND gleiche Farbe (gleicher Aufbau in anderer Farbe ist ein Match-Cut)
     const colorD = a.avg && b.avg ? Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) : 99;
-    const dup = a.dupOf === b.id || b.dupOf === a.id || (a.hash && b.hash && hamming(a.hash, b.hash) < 12 && colorD < 30);
+    const dup = sameMotif(a, b) || (a.hash && b.hash && hamming(a.hash, b.hash) < 12 && colorD < 30);
     if (dup) p -= 0.6;
     // Match-Cut (Übergangswahl ab 0,78): unsichtbarer Schnitt, Kamerafahrt läuft weiter – nur bildfüllend möglich
     // (ein gerahmtes Querfoto im Hochformat hat keinen Ausschnitt, an den die Bewegung anschließen könnte)
@@ -7382,6 +7763,54 @@ function cutterPolish(clips, ctx) {
   return { retimed, hero };
 }
 
+/**
+ * Nie zwei gleiche Motive direkt hintereinander (gleicher Strand, gleicher Platz, gleiche Serie, dasselbe Bild):
+ * die zweite Aufnahme tauscht den Platz mit einer nahen, die zu beiden Nachbarn passt. Fest bleiben eigene
+ * Entscheidungen, verschobene Aufnahmen, das Startbild, Einsätze, das Schlussbild und Stil-Mittel.
+ * blocks wie beim Feinschliff ('moment' = Zum Lied, true = Tagesblock, false = streng nach Uhrzeit).
+ */
+function separateTwins(clips, ctx) {
+  const { byId, ovOf = () => null, moved = new Set(), blocks = false } = ctx;
+  const special = (c) => c.split || c.grid || c.burst || c.rush || c.flash || c.welcome || c.stack || c.strip || c.miniRew || c.pre || c.reveal || c.leader || c.flightAnim || c.loop || c.vid || c.gridMid || c.afterGrid || c.replay || c.replaySeg || c.repeatSeg || c.recap;
+  const own = (c) => { const o = ovOf(c); return !!(o && o.mediaId) || moved.has(c.mediaId); };
+  const img = (c) => { const m = c && byId.get(c.mediaId); return m && m.kind === 'image' ? m : null; };
+  const last = clips.length - 1;
+  const fixed = (k) => { const c = clips[k]; return !c || special(c) || !img(c) || own(c) || c.role === 'hook' || c.usMoment || k === last; };
+  // ein Einsatz (Abschnittswechsel) behält ein mindestens gleich starkes Bild
+  const keepsHero = (k, from, to) => !clips[k].sectionChange || (to.score || 0.5) >= (from.score || 0.5) - 0.05;
+  // was an Platz k zu sehen ist (Einstellungen mit einer Aufnahme; Split/Raster zählen nicht als Nachbar)
+  // (schnelle Folgen – Bilderflut, Serie, Welcome – sind gewollte Bildwechsel im Viertelschlag und zählen nicht)
+  const at = (k) => { const c = clips[k]; return c && !c.split && !c.grid && !c.stack && !c.loop && !c.flash && !c.rush && !c.burst && !c.welcome ? byId.get(c.mediaId) || null : null; };
+  const clashAt = (k, m) => [k - 1, k + 1].some((j) => { const n = at(j); return n && sameMotif(n, m); });
+  // streng nach Uhrzeit: höchstens eine halbe Stunde Aufnahmezeit tauschen (die Folge bleibt erkennbar chronologisch)
+  const near = (a, b) => (blocks === 'moment' ? true : blocks ? dayBlock(a) === dayBlock(b) : Math.abs((a.time || 0) - (b.time || 0)) <= 30 * 60 * 1000);
+  let fixedN = 0;
+  for (let i = 1; i < clips.length; i++) {
+    const a = at(i - 1), b = at(i);
+    if (!a || !b || !sameMotif(a, b)) continue;
+    // lieber die hintere Aufnahme verschieben, sonst die vordere
+    for (const k of [i, i - 1]) {
+      if (fixed(k)) continue;
+      const m = img(clips[k]);
+      let done = false;
+      for (let d = 1; d <= 6 && !done; d++) {
+        for (const j of [k + d, k - d]) {
+          if (j < 0 || j > last || Math.abs(j - k) < 2 || fixed(j)) continue;
+          const n = img(clips[j]);
+          if (!n || !near(m, n) || isUs(m) !== isUs(n) || !keepsHero(k, m, n) || !keepsHero(j, n, m)) continue;
+          // nach dem Tausch: n an Platz k ohne gleiches Motiv daneben, m an Platz j ebenso
+          const save = clips[k].mediaId;
+          clips[k].mediaId = n.id; clips[j].mediaId = m.id;
+          if (!clashAt(k, n) && !clashAt(j, m)) { done = true; fixedN++; break; }
+          clips[k].mediaId = save; clips[j].mediaId = n.id;
+        }
+      }
+      if (done) break;
+    }
+  }
+  return fixedN;
+}
+
 /* Planer · Videoschnitt wie ein Cutter: Aktionsmomente eines Videos (Sprung, Welle, Schwenk-Stopp) auf starke Schläge */
 
 /**
@@ -7536,7 +7965,7 @@ function planQuality(plan, media, detail) {
       const sa = shotSize(prev), sb = shotSize(m);
       if (sa === sb && sa !== 1) pen('groesse', 0.3);
       // Beinahe-Doppel direkt nacheinander
-      if (m.hash && prev.hash && m.avg && prev.avg && hamming(m.hash, prev.hash) < 10 && Math.hypot(m.avg[0] - prev.avg[0], m.avg[1] - prev.avg[1], m.avg[2] - prev.avg[2]) < 20) pen('doppel', 1);
+      if ((m.sig && prev.sig && sameMotif(m, prev)) || (m.hash && prev.hash && m.avg && prev.avg && hamming(m.hash, prev.hash) < 10 && Math.hypot(m.avg[0] - prev.avg[0], m.avg[1] - prev.avg[1], m.avg[2] - prev.avg[2]) < 20)) pen('doppel', 1);
     }
     // Hin und Her in ruhigen Teilen
     if (calm && prevDir && c.dir && ((prevDir === 'left' && c.dir === 'right') || (prevDir === 'right' && c.dir === 'left') || (prevDir === 'up' && c.dir === 'down') || (prevDir === 'down' && c.dir === 'up'))) pen('hinher', 0.4);
@@ -7815,6 +8244,134 @@ function planAudit(plan, media, an) {
   return out;
 }
 
+/* ============================================================
+ * Titel platzieren (Bildverständnis): an die ruhigste Stelle des sichtbaren Bilds, mit Kontrastprüfung
+ * (helle oder dunkle Schrift, Abdunklung nur wo nötig) – und der Ortsname hinter den Bergen, wenn das Bild
+ * eine klare Himmelslinie hat, die durch den unteren Teil der Schrift läuft.
+ * ============================================================ */
+
+/** Sichtbarer Ausschnitt einer Einstellung (Anteile des Bilds), aus der Mitte ihrer Kamerafahrt. */
+function clipView(c, m, outAspect) {
+  if (c.contain || !m || !m.w || !m.h) return [0, 0, 1, 1];
+  const srcA = m.w / m.h;
+  const mo = c.motion || { from: { s: 1, x: 0, y: 0 }, to: { s: 1, x: 0, y: 0 } };
+  const s = Math.max(1, ((mo.from.s || 1) + (mo.to.s || 1)) / 2), x = ((mo.from.x || 0) + (mo.to.x || 0)) / 2, y = ((mo.from.y || 0) + (mo.to.y || 0)) / 2;
+  let fw = srcA > outAspect ? outAspect / srcA : 1, fh = srcA > outAspect ? 1 : srcA / outAspect;
+  fw /= s; fh /= s;
+  const cx = 0.5 + (x * (1 - fw)) / 2, cy = 0.5 + (y * (1 - fh)) / 2;
+  return [cx - fw / 2, cy - fh / 2, cx + fw / 2, cy + fh / 2];
+}
+
+/**
+ * overlays: Einblendungen des Plans; clips: Einstellungen; ctx: { byId, outAspect, vertical, band, fx, sizeOf }.
+ * Setzt o.place = { y (Mitte 0–1 im Bildbereich), ink: 'light'|'dark', scrim } und bei Ortsnamen ggf. o.behind = { mediaId }.
+ * Liefert { placed, behind } für die Erklärung der Regie.
+ */
+function placeTitles(overlays, clips, ctx) {
+  const { byId, outAspect, vertical, fx = [], titleSize = 0.1, band = [0, 1] } = ctx;
+  let placed = 0, behind = 0;
+  for (const o of overlays) {
+    if (!['city', 'lower', 'chapter'].includes(o.type) || !o.text || o.place) continue;
+    // im Kinoband stehen Bauchbinde und Kapitel unter dem Bild im Schwarz
+    if (o.type !== 'city' && band[1] < 0.9) continue;
+    const parts = clips.filter((c) => c.end > o.start && c.start < o.end && c.mediaId && !c.split && !c.grid && !c.stack && !c.rush && !c.flash && !c.burst && !c.strip)
+      .map((c) => ({ c, m: byId.get(c.mediaId), w: Math.min(c.end, o.end) - Math.max(c.start, o.start) }))
+      .filter((p) => p.m && p.m.calm && p.w > 0.05);
+    if (!parts.length) continue;
+    const dim = fx.filter((f) => f.type === 'dim' && f.start <= o.start + 0.2 && f.end >= o.start + 0.6).reduce((a, f) => Math.max(a, f.amp || 0), 0);
+    // erlaubte Höhen: im Hochformat nicht in Instagrams Kopf- und Antwortzeile
+    const bands = vertical ? [0.22, 0.3, 0.38, 0.46, 0.54, 0.62, 0.7] : [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8];
+    const prefer = o.type === 'city' ? 0.5 : vertical ? 0.7 : 0.8;
+    const h = o.type === 'city' ? Math.max(0.12, titleSize * 1.6) : 0.14;
+    let best = null;
+    for (const yc of bands) {
+      let sc = 0, ws = 0, dark = 0, scrim = 0;
+      for (const p of parts) {
+        const st = bandStats(p.m, clipView(p.c, p.m, outAspect), yc, h, dim);
+        if (!st) continue;
+        sc += st.sc * p.w; ws += p.w; scrim = Math.max(scrim, st.scrim); if (st.ink === 'dark') dark += p.w;
+      }
+      if (!ws) continue;
+      const v = sc / ws - Math.abs(yc - prefer) * 0.3;
+      // dunkle Schrift nur, wenn sie über die ganze Lesezeit trägt
+      const ink = dark / ws > 0.85 ? 'dark' : 'light';
+      if (!best || v > best.v) best = { v, y: yc, ink, scrim: ink === 'dark' ? 0 : +scrim.toFixed(2) };
+    }
+    if (!best) continue;
+    // nur umsetzen, wenn die neue Stelle spürbar besser ist als die gewohnte
+    o.place = { y: best.y, ink: best.ink, scrim: best.scrim };
+    placed++;
+    if (o.type === 'city') {
+      const bh = behindTitle(o, parts, outAspect, titleSize);
+      if (bh) { o.place = { ...o.place, y: bh.y }; o.behind = { mediaId: bh.mediaId }; behind++; }
+    }
+  }
+  return { placed, behind };
+}
+
+/**
+ * Ortsname hinter den Bergen: die Einstellung, die den größten Teil der Lesezeit zeigt, braucht eine sichere
+ * Himmelslinie (vision.js skyProfile). Gesucht wird die Höhe, bei der die Linie den unteren Teil der Buchstaben
+ * verdeckt (15–45 %) und dabei sichtbar auf und ab geht (Gipfel, Dächer) – darüber muss ruhiger Himmel sein.
+ */
+function behindTitle(o, parts, outAspect, titleSize) {
+  const main = parts.slice().sort((a, b) => b.w - a.w)[0];
+  if (!main || main.w < (o.end - o.start) * 0.6 || main.m.kind !== 'image' || main.m.rot90) return null;
+  const line = skyLine(main.m.sky);
+  if (!line) return null;
+  // Himmelslinie im Ausgabebild über der Schriftbreite (12–88 %) – am Anfang und am Ende der Kamerafahrt
+  const mo = main.c.motion || { from: { s: 1, x: 0, y: 0 }, to: { s: 1, x: 0, y: 0 } };
+  const views = ['from', 'to'].map((k) => clipView({ ...main.c, motion: { from: mo[k], to: mo[k] } }, main.m, outAspect));
+  const N = 48;
+  // gerahmtes Bild (ganzes Querfoto in der Box): Bild- und Ausgabekoordinaten über die Boxgröße
+  const srcA = main.m.w / main.m.h;
+  const lines = (main.c.contain ? ['from', 'to'] : views).map((v) => {
+    const ys = [];
+    for (let k = 0; k < N; k++) {
+      const xo = 0.12 + (0.76 * (k + 0.5)) / N;
+      let xs, map;
+      if (main.c.contain) {
+        const sc = mo[v].s || 1, bw = Math.min(1, srcA / outAspect) * sc, bhF = Math.min(1, outAspect / srcA) * sc;
+        xs = 0.5 + (xo - 0.5) / bw;
+        map = (y) => 0.5 + (y - 0.5) * bhF;
+      } else { xs = v[0] + xo * (v[2] - v[0]); map = (y) => (y - v[1]) / (v[3] - v[1]); }
+      // neben dem gerahmten Bild ist kein Vordergrund
+      if (xs < 0 || xs > 1) { ys.push(9); continue; }
+      const idx = Math.max(0, Math.min(line.length - 1, Math.floor(xs * line.length)));
+      ys.push(map(line[idx]));
+    }
+    return ys;
+  });
+  // Schrifthöhe im Bildbereich: Versalhöhe ≈ 0,7 der Schriftgröße, Grundlinie bei Mitte + 0,3
+  const em = titleSize, top = (yc) => yc - 0.4 * em, base = (yc) => yc + 0.3 * em;
+  const inImg = lines[0].filter((y) => y < 2), lo = Math.min(...inImg), hi = Math.max(...inImg);
+  if (inImg.length < N * 0.6) return null;
+  if (hi - lo < 0.25 * 0.7 * em) return null;
+  let best = null;
+  for (let yc = 0.2; yc <= 0.72; yc += 0.01) {
+    const t0 = top(yc), t1 = base(yc);
+    if (t0 < 0.12) continue;
+    let ok = true, covSum = 0;
+    for (const ys of lines) {
+      // Anteil der Schriftfläche unter der Linie (Vordergrund); kein Buchstabe mehr als zu zwei Dritteln verdeckt
+      let cov = 0, worst = 0;
+      let hit = 0;
+      for (const y of ys) { const c = Math.max(0, Math.min(1, (t1 - Math.max(t0, y)) / (t1 - t0))); cov += c; worst = Math.max(worst, c); if (c > 0.1) hit++; }
+      cov /= ys.length;
+      // die Linie muss sichtbar in die Schrift greifen (mindestens ein Siebtel der Breite)
+      if (hit < ys.length / 7) ok = false;
+      // über der Schrift Himmel: kein Teil der Linie über der Oberkante
+      if (!ys.every((y) => y > t0 - 0.015) || cov < 0.05 || cov > 0.38 || worst > 0.65) ok = false;
+      covSum += cov;
+    }
+    if (!ok) continue;
+    const cov = covSum / lines.length;
+    const score = 1 - Math.abs(cov - 0.2) * 2 - Math.abs(yc - 0.42) * 0.5;
+    if (!best || score > best.score) best = { y: +yc.toFixed(2), score, cov };
+  }
+  return best ? { y: best.y, mediaId: main.m.id, cov: best.cov } : null;
+}
+
 /* Planer · Karussell-Beitrag (Instagram, 4:5): die besten Fotos als Einzelbilder, dazwischen kurze Clips (3–6 s,
  * ganze Takte) im Takt mit einem Songausschnitt – das Beste aus beiden Welten. Alle Slides teilen Look, Farbabgleich
  * und Format; die Clips führen den Song von Slide zu Slide fort, so klingt das Wischen wie ein Stück. */
@@ -7834,7 +8391,7 @@ function planCarousel({ an, media, count }) {
   const score = (m) => (m.score || 0.5) + (m.fav ? 0.25 : 0) + usScore(m) * 0.2;
   const colorD = (a, b) => (a.avg && b.avg ? Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) : 99);
   // zu ähnlich für zwei Slides: Beinahe-Doppel oder gleicher Aufbau im selben Tagesblock
-  const tooClose = (a, b) => a.dupOf === b.id || b.dupOf === a.id || (a.hash && b.hash && hamming(a.hash, b.hash) < 12 && colorD(a, b) < 30) || (dayBlock(a) === dayBlock(b) && layoutSim(a.layout, b.layout) > 0.85 && colorD(a, b) < 40);
+  const tooClose = (a, b) => sameMotif(a, b) || (a.hash && b.hash && hamming(a.hash, b.hash) < 12 && colorD(a, b) < 30) || (dayBlock(a) === dayBlock(b) && layoutSim(a.layout, b.layout) > 0.85 && colorD(a, b) < 40);
 
   // Anzahl: mit der Menge des Materials wachsend, 6–10
   const total = Math.max(1, Math.min(pool.length, count || Math.max(CAROUSEL.min, Math.min(CAROUSEL.max, Math.round(4 + Math.sqrt(pool.length) * 0.9)))));
@@ -9325,6 +9882,8 @@ varying vec2 vUv;
 uniform sampler2D uTexA;
 uniform sampler2D uTexB;
 uniform sampler2D uOvTop;
+uniform sampler2D uMaskA;  // Vordergrund der Ebene A (unter der Himmelslinie = 1) für „Titel hinter den Bergen“
+uniform float uBehind;
 uniform vec4 uXfA;      // Cover-Ausschnitt: fw, fh, cx, cy
 uniform vec4 uXfB;
 uniform vec3 uBoxA;     // contain: an/aus, Boxgröße
@@ -9498,6 +10057,17 @@ vec3 layer(sampler2D tex, vec4 xf, vec3 box, vec3 blur, vec4 geo, vec2 off, vec2
   return acc / ws;
 }
 
+// Bildkoordinate der Ebene A für einen Ausgabepunkt (wie sampleSrc ohne Rahmen/Abzug/Parallax)
+vec2 srcCoordA(vec2 uv) {
+  uv -= uOffA;
+  // gerahmt: das ganze Bild steht in der Box (außerhalb nur der weiche Hintergrund – kein Vordergrund)
+  if (uBoxA.x > 0.5) { vec2 q = (uv - 0.5) / uBoxA.yz + 0.5; return (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) ? vec2(-1.0) : q; }
+  float asp = uRes.x / (uRes.y * uBand.y);
+  vec2 p = uv - 0.5;
+  if (uGeoA.x != 0.0) p = rot2(p * vec2(asp, 1.0), -uGeoA.x) / vec2(asp, 1.0);
+  return uXfA.zw + p * uXfA.xy;
+}
+
 vec3 corrApply(vec3 c, vec4 k) { return pow(max(c, vec3(0.0)), vec3(k.w)) * k.rgb; }
 vec3 layerA(vec2 uv) { return corrApply(layer(uTexA, uXfA, uBoxA, uBlurA, uGeoA, uOffA, uv, uParA, uFocA, uHor.x), uCorrA); }
 vec3 layerB(vec2 uv) { return corrApply(layer(uTexB, uXfB, uBoxB, uBlurB, uGeoB, uOffB, uv, uParB, uFocB, uHor.y), uCorrB); }
@@ -9652,7 +10222,14 @@ void main() {
   // Titel, Texte, Sticker: ungegradet, über Schwarz
   if (uHasOvTop > 0.5) {
     vec4 o = texture2D(uOvTop, full);
-    c = mix(c, o.rgb, o.a);
+    float oa = o.a;
+    // Titel hinter den Bergen: wo das Bild Vordergrund ist, liegt es vor der Schrift
+    if (uBehind > 0.0 && full.y >= uBand.x && full.y <= uBand.x + uBand.y) {
+      vec2 sq = srcCoordA(vec2(full.x, (full.y - uBand.x) / uBand.y));
+      float fg = sq.x < -0.5 ? 0.0 : texture2D(uMaskA, sq).a;
+      oa *= 1.0 - fg * uBehind;
+    }
+    c = mix(c, o.rgb, oa);
   }
   gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }`;
@@ -9709,6 +10286,7 @@ class Renderer {
     gl.uniform1i(this.u.uTexA, 0);
     gl.uniform1i(this.u.uTexB, 1);
     gl.uniform1i(this.u.uOvTop, 2);
+    if (this.u.uMaskA) gl.uniform1i(this.u.uMaskA, 3);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
     this.black = this.createTexture();
@@ -9774,6 +10352,7 @@ class Renderer {
     bind(0, f.A ? f.A.tex : this.black);
     bind(1, f.B ? f.B.tex : this.black);
     bind(2, this.ovTex.top);
+    bind(3, f.maskA || this.black);
     gl.activeTexture(gl.TEXTURE0);
     const L = (o, key, fb) => (o && o[key] ? o[key] : fb);
     gl.uniform4fv(u.uXfA, L(f.A, 'xf', [1, 1, 0.5, 0.5]));
@@ -9798,6 +10377,7 @@ class Renderer {
     gl.uniform1f(u.uPop, f.pop || 0);
     gl.uniform1f(u.uChroma, f.chroma || 0);
     gl.uniform1f(u.uMirror, f.mirror || 0);
+    if (u.uBehind) gl.uniform1f(u.uBehind, f.maskA ? f.behind || 0 : 0);
     gl.uniform2fv(u.uBand, f.band || [0, 1]);
     gl.uniform1f(u.uHasA, f.A ? 1 : 0);
     gl.uniform1f(u.uHasB, f.B ? 1 : 0);
@@ -10087,6 +10667,12 @@ class OverlayPainter {
       const geo = this.geometry(plan);
       for (const o of active) {
         ctx.save();
+        // Bildverständnis: Titel an der ruhigsten Stelle; dunkle Schrift auf hellem, ruhigem Grund, sonst helle –
+        // wo nötig mit weicher Abdunklung dahinter (Kontrast ≥ 4,5 : 1)
+        const inkSave = this.ink;
+        this.darkInk = !!(o.place && o.place.ink === 'dark');
+        if (this.darkInk) this.ink = '#151515';
+        if (o.place && o.place.scrim > 0.05) this.drawScrim(ctx, o, t, geo);
         if (o.type === 'titlecard') this.drawTitleCard(ctx, o, t, geo);
         else if (o.type === 'endcard') this.drawEndCard(ctx, o, t, geo);
         else if (o.type === 'lower') this.drawLower(ctx, o, t, geo);
@@ -10105,6 +10691,7 @@ class OverlayPainter {
         else if (o.type === 'datestamp') this.drawDateStamp(ctx, o, t, geo);
         else if (o.type === 'usertext') this.drawUserText(ctx, o, t, geo, o.id === selectedId);
         else if (o.type === 'sticker') this.drawSticker(ctx, o, t, geo, o.id === selectedId);
+        this.ink = inkSave; this.darkInk = false;
         ctx.restore();
       }
       this.lastKey = key;
@@ -10229,8 +10816,19 @@ class OverlayPainter {
     return { W, H, by, bh, base, vertical, lowerY, cx: W / 2, cy: by + bh / 2, margin: W * (vertical ? 0.08 : 0.06) };
   }
 
+  /** Weiche Abdunklung hinter einem platzierten Titel (Band über die volle Breite, oben und unten verlaufend). */
+  drawScrim(ctx, o, t, g) {
+    const a = smooth(cl01((t - o.start) / 0.4)) * smooth(cl01((o.end - t) / 0.4)) * o.place.scrim * 0.6;
+    if (a <= 0.005) return;
+    const yc = g.by + g.bh * o.place.y, h = g.bh * (o.type === 'city' ? 0.26 : 0.2);
+    const gr = ctx.createLinearGradient(0, yc - h / 2, 0, yc + h / 2);
+    gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(0.35, `rgba(0,0,0,${a.toFixed(3)})`); gr.addColorStop(0.65, `rgba(0,0,0,${a.toFixed(3)})`); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = gr;
+    ctx.fillRect(0, yc - h / 2, g.W, h);
+  }
+
   shadow(ctx, size) {
-    ctx.shadowColor = 'rgba(0,0,0,0.45)';
+    ctx.shadowColor = this.darkInk ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.45)';
     ctx.shadowBlur = size * 0.35;
   }
 
@@ -10292,14 +10890,21 @@ class OverlayPainter {
     ctx.fillStyle = this.ink;
     this.shadow(ctx, size * 0.6);
     ctx.textBaseline = 'alphabetic';
-    const y = g.cy + size * 0.3;
+    const y = (o.place ? g.by + g.bh * o.place.y : g.cy) + size * 0.3;
     const track = tr + 0.03 * easeOutCubic(cl01((t - o.start) / 3));
     this.maskTitle(ctx, title, g.cx, y, size, track, 'center', times, exitT, t, (sz) => this.font('title', sz));
     const sp = easeOutCubic(cl01((t - times[words]) / 0.5)) * (1 - out);
     const ss = g.base * 0.024;
-    // Datum und Koordinaten blenden an ihrer Stelle ein (kein Nachrutschen), Kilometer ruhig darunter
-    this.drawLabel(ctx, o.sub, g.cx, y + ss * 2.8, ss, 'center', sp, 0.4);
-    this.drawGeoLine(ctx, o, t, g.cx, y + ss * (o.sub ? 5 : 2.8), g.base * 0.022, 'center', sp, true);
+    // Datum und Koordinaten blenden an ihrer Stelle ein (kein Nachrutschen), Kilometer ruhig darunter.
+    // Steht der Name hinter den Bergen, stehen sie darüber im Himmel (unten läge der Vordergrund davor).
+    if (o.behind) {
+      const top = y - size * 0.95;
+      this.drawLabel(ctx, o.sub, g.cx, top - ss * 1.2, ss, 'center', sp, 0.4);
+      this.drawGeoLine(ctx, o, t, g.cx, top - ss * (o.sub ? 3.4 : 1.2), g.base * 0.022, 'center', sp, false);
+    } else {
+      this.drawLabel(ctx, o.sub, g.cx, y + ss * 2.8, ss, 'center', sp, 0.4);
+      this.drawGeoLine(ctx, o, t, g.cx, y + ss * (o.sub ? 5 : 2.8), g.base * 0.022, 'center', sp, true);
+    }
   }
 
 
@@ -10751,7 +11356,7 @@ class OverlayPainter {
     const size = fitSize(ctx, title, (sz) => this.font('title', sz), g.base * 0.088, g.W - g.margin * 2, tr);
     const x = center ? g.cx : g.margin;
     const align = center ? 'center' : 'left';
-    const y = g.lowerY;
+    const y = o.place && !(g.bh < g.H * 0.9) ? g.by + g.bh * o.place.y + size * 0.35 : g.lowerY;
     const words = Math.max(1, title.split(/\s+/).length);
     const times = this.beatTimes(o, words + 1);
     const exitT = this.beatExit(o);
@@ -10910,7 +11515,7 @@ class OverlayPainter {
     const title = this.caseTitle(o.text);
     const tr = this.titleTrack(0.06);
     const size = fitSize(ctx, title, (sz) => this.font('title', sz), g.base * 0.07, g.W - g.margin * 2, tr);
-    const x = g.margin, y = g.lowerY;
+    const x = g.margin, y = o.place && !(g.bh < g.H * 0.9) ? g.by + g.bh * o.place.y + size * 0.35 : g.lowerY;
     const words = Math.max(1, title.split(/\s+/).length);
     const times = this.beatTimes(o, words + 1);
     const exitT = this.beatExit(o);
@@ -12076,6 +12681,7 @@ class Engine {
 
   releaseAll() {
     for (const k of Array.from(this.slots.keys())) this.releaseSlot(k);
+    if (this._masks) { for (const tx of this._masks.values()) if (tx) this.r.deleteTexture(tx); this._masks.clear(); }
   }
 
   /** Im Hintergrund Speicher abgeben (Texturen, Videos, Bildcache), damit iOS die App nicht verwirft. */
@@ -13052,10 +13658,50 @@ class Engine {
       }
       if (force > 0) desat = Math.max(desat, force);
     }
+    // Titel hinter den Bergen: nur über der geplanten Aufnahme, weich ein- und ausgeblendet, im Übergang anteilig
+    let maskA = null, behind = 0;
+    if (ov.top && A && L && L.a && !fx.mirror) {
+      const bo = plan.overlays.find((o) => o.behind && t >= o.start && t < o.end);
+      const ma = bo && this.media[L.a.mediaIndex];
+      if (ma && ma.id === bo.behind.mediaId) {
+        maskA = this.skyMask(ma);
+        if (maskA) behind = smooth(clamp01((t - bo.start) / 0.3)) * smooth(clamp01((bo.end - t) / 0.3)) * (B ? 1 - mix : 1);
+      }
+    }
     this.r.draw({
       A, B, mix, trans, dir, grade, time: t, band: plan.band,
-      flash: fx.flash, black: fx.black, dim: fx.dim, desat, bars: 0, ovTop: ov.top, col: colU, pop, chroma, mirror: fx.mirror || 0,
+      flash: fx.flash, black: fx.black, dim: fx.dim, desat, bars: 0, ovTop: ov.top, col: colU, pop, chroma, mirror: fx.mirror || 0, maskA, behind,
     });
+  }
+
+  /**
+   * Vordergrund-Maske einer Aufnahme aus ihrer Himmelslinie (vision.js): unter der Linie 1, darüber 0, Kante 1,5 px weich.
+   * Einmal je Aufnahme erzeugt und als Textur gehalten.
+   */
+  skyMask(m) {
+    this._masks = this._masks || new Map();
+    if (this._masks.has(m.id)) return this._masks.get(m.id);
+    const line = skyLine(m.sky);
+    let tex = null;
+    if (line && !m.rot90) {
+      const W = 512, H = Math.max(64, Math.round(W * (m.h || 3) / (m.w || 4)));
+      const c = document.createElement('canvas');
+      c.width = W; c.height = H;
+      const x = c.getContext('2d');
+      x.fillStyle = '#fff';
+      x.beginPath();
+      x.moveTo(0, H);
+      for (let k = 0; k < line.length; k++) x.lineTo(((k + 0.5) / line.length) * W, line[k] * H);
+      x.lineTo(W, line[line.length - 1] * H);
+      x.lineTo(W, H);
+      x.closePath();
+      x.filter = 'blur(1.2px)';
+      x.fill();
+      tex = this.r.createTexture();
+      if (!this.r.upload(tex, c, false)) tex = null;
+    }
+    this._masks.set(m.id, tex);
+    return tex;
   }
 
   /* ---------- Standbild ---------- */
@@ -15085,6 +15731,32 @@ async function runVideoAction() {
   perfLog.add('action', { videos: n, ms: Math.round(performance.now() - t0) });
   vAct.running = null;
 }
+/* Bildverständnis nachholen: Fotos, die vor dem aktuellen Stand eingelesen wurden (ohne Motiv-Fingerabdruck,
+ * ruhige Zonen, Himmelslinie), werden im Hintergrund klein neu dekodiert und ergänzt. Der nächste Schnitt nutzt sie. */
+const vUp = { queue: [], running: null };
+function queueVisionUpgrade(items) {
+  for (const m of items || []) if (m.kind === 'image' && (m.vis || 0) < VIS_VER && (m.file || m.url || m.canvas) && !m.bad && !m.loading && !vUp.queue.includes(m)) vUp.queue.push(m);
+  if (!vUp.running && vUp.queue.length) vUp.running = runVisionUpgrade();
+}
+async function runVisionUpgrade() {
+  const t0 = performance.now();
+  let n = 0;
+  while (vUp.queue.length) {
+    const m = vUp.queue.shift();
+    while (S.exporting) await new Promise((r) => setTimeout(r, 500));
+    try {
+      const small = m.canvas || await decodeImage(m, 480, true);
+      const r = scoreImage(small, small.width, small.height);
+      for (const k of ['sig', 'calm', 'mood', 'comp', 'tilt', 'detail', 'sky', 'vis', 'score']) m[k] = r[k];
+      if (!m.canvas) { if (small.close) small.close(); else { small.width = 0; small.height = 0; } }
+      n++;
+      if (!m.demo) saveWork(m);
+    } catch (e) { m.vis = VIS_VER; }
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  if (n) perfLog.add('vision', { images: n, ms: Math.round(performance.now() - t0) });
+  vUp.running = null;
+}
 function videoActionPending(media) { return !!vAct.running && (vAct.queue.some((m) => media.includes(m)) || media.some((m) => m.kind === 'video' && m.file && !m.hits)); }
 
 /** Bildmaße (mit EXIF-Drehung) aus dem Dateikopf, ohne das Bild zu dekodieren; null, wenn nicht lesbar. */
@@ -15714,6 +16386,7 @@ async function openPlace(placeId) {
   rec.overrides = { clips: {}, texts: [], stickers: [], ...(rec.overrides || {}) };
   S.ctx = { kind: 'place', rec, media: placeMedia(rec), song: null };
   queueVideoAction(S.ctx.media);
+  queueVisionUpgrade(S.ctx.media);
   const ctx0 = S.ctx;
   await attachSong(rec.songId || 'demo');
   if (S.ctx !== ctx0 || !ctx0.song) return;
@@ -15744,6 +16417,7 @@ async function openBestof() {
   }
   S.ctx = { kind: 'bestof', rec, media, chapters, song: null };
   queueVideoAction(media);
+  queueVisionUpgrade(media);
   const ctx0 = S.ctx;
   await attachSong(rec.songId || 'demo');
   if (S.ctx !== ctx0 || !ctx0.song) return;
@@ -16019,6 +16693,7 @@ async function cutFilm(n = 8, avoid = null) {
   engine.pause();
   // Schnitt auf den Takt braucht die Bewegungsmomente der Videos: kurz auf die Feinanalyse warten
   if (videoActionPending(media)) { busy('Analysiere die Bewegungen in deinen Videos …'); await vAct.running; }
+  if (vUp.running && media.some((m) => m.kind === 'image' && (m.vis || 0) < VIS_VER)) { busy('Schaue mir deine Fotos genauer an …'); await vUp.running; }
   busy(`Suche den besten Schnitt … Variante 1 von ${n}`);
   let res;
   const tp = performance.now();
@@ -16667,7 +17342,7 @@ function placeMenu(id) {
 }
 
 /* ---------- Leistungsprotokoll ---------- */
-const PERF_DE = { import: 'Einlesen', plan: 'Planen', export: 'Export', preview: 'Vorschau', action: 'Bewegung' };
+const PERF_DE = { import: 'Einlesen', plan: 'Planen', export: 'Export', preview: 'Vorschau', action: 'Bewegung', vision: 'Bildverständnis' };
 function perfLine(e) {
   const s = (ms) => (ms >= 1000 ? (ms / 1000).toFixed(1).replace('.', ',') + ' s' : ms + ' ms');
   if (e.kind === 'import') return `${e.files} Aufnahmen (${e.images} Fotos, ${e.videos} Videos) in ${s(e.ms)} · ${s(e.perItem)} je Aufnahme${e.worker ? ' · im Hintergrund-Thread' : ''}${e.bad ? ` · ${e.bad} nicht lesbar` : ''}`;
@@ -18456,7 +19131,7 @@ async function init() {
 window.CineBeat = {
   get S() { return S; },
   get engine() { return engine; },
-  openPlace, openBestof, addFiles, ingestFiles, scoreWorkers, perfLog, _trips: { tripForStop, tripRange, autoTripName, switchTrip, renderTrip }, rebuild, newPlace, importSong, getSong, openBeatSheet,
+  openPlace, openBestof, addFiles, ingestFiles, scoreWorkers, perfLog, scoreImage, _trips: { tripForStop, tripRange, autoTripName, switchTrip, renderTrip }, rebuild, newPlace, importSong, getSong, openBeatSheet,
 };
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

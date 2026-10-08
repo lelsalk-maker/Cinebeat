@@ -97,7 +97,7 @@ function planQuality(plan, media, detail) {
       const sa = shotSize(prev), sb = shotSize(m);
       if (sa === sb && sa !== 1) pen('groesse', 0.3);
       // Beinahe-Doppel direkt nacheinander
-      if (m.hash && prev.hash && m.avg && prev.avg && hamming(m.hash, prev.hash) < 10 && Math.hypot(m.avg[0] - prev.avg[0], m.avg[1] - prev.avg[1], m.avg[2] - prev.avg[2]) < 20) pen('doppel', 1);
+      if ((m.sig && prev.sig && sameMotif(m, prev)) || (m.hash && prev.hash && m.avg && prev.avg && hamming(m.hash, prev.hash) < 10 && Math.hypot(m.avg[0] - prev.avg[0], m.avg[1] - prev.avg[1], m.avg[2] - prev.avg[2]) < 20)) pen('doppel', 1);
     }
     // Hin und Her in ruhigen Teilen
     if (calm && prevDir && c.dir && ((prevDir === 'left' && c.dir === 'right') || (prevDir === 'right' && c.dir === 'left') || (prevDir === 'up' && c.dir === 'down') || (prevDir === 'down' && c.dir === 'up'))) pen('hinher', 0.4);

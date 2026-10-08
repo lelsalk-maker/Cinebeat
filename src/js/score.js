@@ -74,7 +74,8 @@ function imageMetrics(px) {
   const colorN = Math.max(0, Math.min(1, colorful / 85));
   let ar = 0, ag = 0, ab = 0;
   for (let i = 0; i < n; i++) { ar += data[i * 4]; ag += data[i * 4 + 1]; ab += data[i * 4 + 2]; }
-  return { sharp: sharpN, expo: expoN, color: colorN, luma: meanL, focus, scene, gray: g, w, h, avg: [Math.round(ar / n), Math.round(ag / n), Math.round(ab / n)] };
+  const vis = visionMetrics(data, g, w, h, focus, scene);
+  return { sharp: sharpN, expo: expoN, color: colorN, luma: meanL, focus, scene, vis, comp: vis.comp, gray: g, w, h, avg: [Math.round(ar / n), Math.round(ag / n), Math.round(ab / n)] };
 }
 
 /** 64-Bit-Differenzhash (9x8) als zwei 32-Bit-Zahlen */
@@ -182,13 +183,21 @@ function panShift(a, b, w, h) {
   return [best[0] / w, best[1] / h];
 }
 
+/** Gesamtwert eines Bilds: Technik (Schärfe, Belichtung, Farbe) und Bildaufbau (vision.js). */
 function combineScore(m) {
-  return 0.42 * m.sharp + 0.3 * m.expo + 0.28 * m.color;
+  return m.comp != null ? 0.34 * m.sharp + 0.24 * m.expo + 0.2 * m.color + 0.22 * m.comp : 0.42 * m.sharp + 0.3 * m.expo + 0.28 * m.color;
 }
 
 function scoreImage(src, sw, sh) {
   const m = imageMetrics(samplePixels(src, sw, sh));
-  return { score: combineScore(m), sharp: m.sharp, expo: m.expo, color: m.color, avg: m.avg, luma: +m.luma.toFixed(3), focus: m.focus.map((v) => +v.toFixed(3)), hash: dHash(src, sw, sh), layout: layoutSig(m), ...sceneFields(m.scene) };
+  let sky = null;
+  try { sky = skyProfile(src, sw, sh); } catch (e) { sky = null; }
+  return { score: combineScore(m), sharp: m.sharp, expo: m.expo, color: m.color, avg: m.avg, luma: +m.luma.toFixed(3), focus: m.focus.map((v) => +v.toFixed(3)), hash: dHash(src, sw, sh), layout: layoutSig(m), ...sceneFields(m.scene), ...visFields(m.vis), sky, vis: VIS_VER };
+}
+
+/** Felder des Bildverständnisses (vision.js) für die Aufnahme. */
+function visFields(v) {
+  return v ? { sig: v.sig, calm: v.calm, mood: v.mood, comp: v.comp, tilt: v.tilt, detail: v.detail } : {};
 }
 
 /** Motiv-Felder für die Aufnahme (werden mit gespeichert). */
@@ -275,7 +284,7 @@ async function scoreFrames(grab, W, H, duration) {
   // Schwenk über die Zeit (in Aufnahme-Reihenfolge): Inhalt bewegt sich je Sekunde um diesen Bildanteil
   const byT = res.slice().sort((x, y) => x.t - y.t);
   const pans = byT.map((r) => ({ t: r.t, x: +(r.pan[0] * 5).toFixed(3), y: +(r.pan[1] * 5).toFixed(3) }));
-  return { pans, ...sceneFields(top && top.scene), motion, score: res.length ? res[0].score : 0.3, hash: hash || [0, 0], avg, luma: +luma.toFixed(3), focus: top ? top.focus.map((v, i) => +(0.5 * v + 0.5 * [0.5, 0.45][i]).toFixed(3)) : undefined, layout, highlights: res.map((r) => ({ t: r.t, score: r.score })) };
+  return { pans, ...sceneFields(top && top.scene), ...visFields(top && top.vis), vis: VIS_VER, motion, score: res.length ? res[0].score : 0.3, hash: hash || [0, 0], avg, luma: +luma.toFixed(3), focus: top ? top.focus.map((v, i) => +(0.5 * v + 0.5 * [0.5, 0.45][i]).toFixed(3)) : undefined, layout, highlights: res.map((r) => ({ t: r.t, score: r.score })) };
 }
 
 /** Markiert Beinahe-Duplikate (nur das beste Bild einer Serie bleibt aktiv). */

@@ -97,3 +97,51 @@ function cutterPolish(clips, ctx) {
   }
   return { retimed, hero };
 }
+
+/**
+ * Nie zwei gleiche Motive direkt hintereinander (gleicher Strand, gleicher Platz, gleiche Serie, dasselbe Bild):
+ * die zweite Aufnahme tauscht den Platz mit einer nahen, die zu beiden Nachbarn passt. Fest bleiben eigene
+ * Entscheidungen, verschobene Aufnahmen, das Startbild, Einsätze, das Schlussbild und Stil-Mittel.
+ * blocks wie beim Feinschliff ('moment' = Zum Lied, true = Tagesblock, false = streng nach Uhrzeit).
+ */
+function separateTwins(clips, ctx) {
+  const { byId, ovOf = () => null, moved = new Set(), blocks = false } = ctx;
+  const special = (c) => c.split || c.grid || c.burst || c.rush || c.flash || c.welcome || c.stack || c.strip || c.miniRew || c.pre || c.reveal || c.leader || c.flightAnim || c.loop || c.vid || c.gridMid || c.afterGrid || c.replay || c.replaySeg || c.repeatSeg || c.recap;
+  const own = (c) => { const o = ovOf(c); return !!(o && o.mediaId) || moved.has(c.mediaId); };
+  const img = (c) => { const m = c && byId.get(c.mediaId); return m && m.kind === 'image' ? m : null; };
+  const last = clips.length - 1;
+  const fixed = (k) => { const c = clips[k]; return !c || special(c) || !img(c) || own(c) || c.role === 'hook' || c.usMoment || k === last; };
+  // ein Einsatz (Abschnittswechsel) behält ein mindestens gleich starkes Bild
+  const keepsHero = (k, from, to) => !clips[k].sectionChange || (to.score || 0.5) >= (from.score || 0.5) - 0.05;
+  // was an Platz k zu sehen ist (Einstellungen mit einer Aufnahme; Split/Raster zählen nicht als Nachbar)
+  // (schnelle Folgen – Bilderflut, Serie, Welcome – sind gewollte Bildwechsel im Viertelschlag und zählen nicht)
+  const at = (k) => { const c = clips[k]; return c && !c.split && !c.grid && !c.stack && !c.loop && !c.flash && !c.rush && !c.burst && !c.welcome ? byId.get(c.mediaId) || null : null; };
+  const clashAt = (k, m) => [k - 1, k + 1].some((j) => { const n = at(j); return n && sameMotif(n, m); });
+  // streng nach Uhrzeit: höchstens eine halbe Stunde Aufnahmezeit tauschen (die Folge bleibt erkennbar chronologisch)
+  const near = (a, b) => (blocks === 'moment' ? true : blocks ? dayBlock(a) === dayBlock(b) : Math.abs((a.time || 0) - (b.time || 0)) <= 30 * 60 * 1000);
+  let fixedN = 0;
+  for (let i = 1; i < clips.length; i++) {
+    const a = at(i - 1), b = at(i);
+    if (!a || !b || !sameMotif(a, b)) continue;
+    // lieber die hintere Aufnahme verschieben, sonst die vordere
+    for (const k of [i, i - 1]) {
+      if (fixed(k)) continue;
+      const m = img(clips[k]);
+      let done = false;
+      for (let d = 1; d <= 6 && !done; d++) {
+        for (const j of [k + d, k - d]) {
+          if (j < 0 || j > last || Math.abs(j - k) < 2 || fixed(j)) continue;
+          const n = img(clips[j]);
+          if (!n || !near(m, n) || isUs(m) !== isUs(n) || !keepsHero(k, m, n) || !keepsHero(j, n, m)) continue;
+          // nach dem Tausch: n an Platz k ohne gleiches Motiv daneben, m an Platz j ebenso
+          const save = clips[k].mediaId;
+          clips[k].mediaId = n.id; clips[j].mediaId = m.id;
+          if (!clashAt(k, n) && !clashAt(j, m)) { done = true; fixedN++; break; }
+          clips[k].mediaId = save; clips[j].mediaId = n.id;
+        }
+      }
+      if (done) break;
+    }
+  }
+  return fixedN;
+}

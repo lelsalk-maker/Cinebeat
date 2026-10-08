@@ -845,7 +845,7 @@ function planOnce(opts) {
       // Höchstens drei Videos (sonst ruckelt es auf dem Handy), keine Beinahe-Doppel nebeneinander.
       const strength = (m) => (m.score || 0.5) + (m.fav ? 0.25 : 0) + (m.kind === 'video' ? 0.04 : 0);
       const rank = goodMedia(usable, gAll).slice().sort((a, b) => strength(b) - strength(a));
-      const twin = (a, b) => a.dupOf === b.id || b.dupOf === a.id || (a.hash && b.hash && hamming(a.hash, b.hash) < 10);
+      const twin = (a, b) => sameMotif(a, b) || (a.hash && b.hash && hamming(a.hash, b.hash) < 10);
       const pick = [];
       for (const m of rank) {
         if (pick.length >= SHUTTER.tiles.length) break;
@@ -1193,6 +1193,12 @@ function planOnce(opts) {
         if (done) break;
       }
     }
+  }
+
+  // Nie zwei gleiche Motive direkt hintereinander (Bildverständnis: Motiv-Fingerabdruck)
+  if (!flight) {
+    const tw = separateTwins(clips, { byId, ovOf, moved: userMoved, blocks: lied ? 'moment' : byTime });
+    if (tw) dir.notes.push(`Abwechslung: ${tw}× ein gleiches Motiv (gleicher Strand, Platz oder Serie) von seinem Nachbarn getrennt.`);
   }
 
   // Übergänge: aus dem Songaufbau und aus dem, was das vorige Bild zeigt
@@ -2127,6 +2133,15 @@ function planOnce(opts) {
     const need = o.start + titleReadTime(o, beatDur);
     const cap = o.cap != null ? o.cap : D - 0.25;
     if (o.end < need) o.end = Math.max(o.end, Math.min(need, cap));
+  }
+
+  // Titel an die ruhigste Stelle des Bilds (mit Kontrastprüfung), Ortsname hinter den Bergen (Bildverständnis)
+  {
+    const bh = band[1] * fmt.h, baseF = Math.min(fmt.w, bh * (vertical && band[1] < 1 ? 1.6 : 1));
+    const titleSize = Math.min(0.19 * baseF, (0.86 * fmt.w) / (0.62 * Math.max(4, String(title || '').length))) / bh;
+    const pl = placeTitles(overlays, clips, { byId, outAspect, vertical, fx, titleSize, band });
+    if (pl.behind) dir.notes.push('Ortsname hinter den Bergen: die Himmelslinie des Bilds läuft durch die Schrift, der Vordergrund liegt davor.');
+    else if (pl.placed) dir.notes.push(`Titel an die ruhigste Stelle des Bilds gesetzt, Schriftfarbe und Abdunklung nach dem Kontrast gewählt${pl.placed > 1 ? ` (${pl.placed} Einblendungen)` : ''}.`);
   }
 
   // von dir festgelegte Videolängen: wie viele Sekunden fehlen (über einen Schlag hinaus)? Die Suche gibt ihnen dann Raum.

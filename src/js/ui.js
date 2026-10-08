@@ -1061,6 +1061,32 @@ async function runVideoAction() {
   perfLog.add('action', { videos: n, ms: Math.round(performance.now() - t0) });
   vAct.running = null;
 }
+/* Bildverständnis nachholen: Fotos, die vor dem aktuellen Stand eingelesen wurden (ohne Motiv-Fingerabdruck,
+ * ruhige Zonen, Himmelslinie), werden im Hintergrund klein neu dekodiert und ergänzt. Der nächste Schnitt nutzt sie. */
+const vUp = { queue: [], running: null };
+function queueVisionUpgrade(items) {
+  for (const m of items || []) if (m.kind === 'image' && (m.vis || 0) < VIS_VER && (m.file || m.url || m.canvas) && !m.bad && !m.loading && !vUp.queue.includes(m)) vUp.queue.push(m);
+  if (!vUp.running && vUp.queue.length) vUp.running = runVisionUpgrade();
+}
+async function runVisionUpgrade() {
+  const t0 = performance.now();
+  let n = 0;
+  while (vUp.queue.length) {
+    const m = vUp.queue.shift();
+    while (S.exporting) await new Promise((r) => setTimeout(r, 500));
+    try {
+      const small = m.canvas || await decodeImage(m, 480, true);
+      const r = scoreImage(small, small.width, small.height);
+      for (const k of ['sig', 'calm', 'mood', 'comp', 'tilt', 'detail', 'sky', 'vis', 'score']) m[k] = r[k];
+      if (!m.canvas) { if (small.close) small.close(); else { small.width = 0; small.height = 0; } }
+      n++;
+      if (!m.demo) saveWork(m);
+    } catch (e) { m.vis = VIS_VER; }
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  if (n) perfLog.add('vision', { images: n, ms: Math.round(performance.now() - t0) });
+  vUp.running = null;
+}
 function videoActionPending(media) { return !!vAct.running && (vAct.queue.some((m) => media.includes(m)) || media.some((m) => m.kind === 'video' && m.file && !m.hits)); }
 
 /** Bildmaße (mit EXIF-Drehung) aus dem Dateikopf, ohne das Bild zu dekodieren; null, wenn nicht lesbar. */
@@ -1690,6 +1716,7 @@ async function openPlace(placeId) {
   rec.overrides = { clips: {}, texts: [], stickers: [], ...(rec.overrides || {}) };
   S.ctx = { kind: 'place', rec, media: placeMedia(rec), song: null };
   queueVideoAction(S.ctx.media);
+  queueVisionUpgrade(S.ctx.media);
   const ctx0 = S.ctx;
   await attachSong(rec.songId || 'demo');
   if (S.ctx !== ctx0 || !ctx0.song) return;
@@ -1720,6 +1747,7 @@ async function openBestof() {
   }
   S.ctx = { kind: 'bestof', rec, media, chapters, song: null };
   queueVideoAction(media);
+  queueVisionUpgrade(media);
   const ctx0 = S.ctx;
   await attachSong(rec.songId || 'demo');
   if (S.ctx !== ctx0 || !ctx0.song) return;
@@ -1995,6 +2023,7 @@ async function cutFilm(n = 8, avoid = null) {
   engine.pause();
   // Schnitt auf den Takt braucht die Bewegungsmomente der Videos: kurz auf die Feinanalyse warten
   if (videoActionPending(media)) { busy('Analysiere die Bewegungen in deinen Videos …'); await vAct.running; }
+  if (vUp.running && media.some((m) => m.kind === 'image' && (m.vis || 0) < VIS_VER)) { busy('Schaue mir deine Fotos genauer an …'); await vUp.running; }
   busy(`Suche den besten Schnitt … Variante 1 von ${n}`);
   let res;
   const tp = performance.now();
@@ -2643,7 +2672,7 @@ function placeMenu(id) {
 }
 
 /* ---------- Leistungsprotokoll ---------- */
-const PERF_DE = { import: 'Einlesen', plan: 'Planen', export: 'Export', preview: 'Vorschau', action: 'Bewegung' };
+const PERF_DE = { import: 'Einlesen', plan: 'Planen', export: 'Export', preview: 'Vorschau', action: 'Bewegung', vision: 'Bildverständnis' };
 function perfLine(e) {
   const s = (ms) => (ms >= 1000 ? (ms / 1000).toFixed(1).replace('.', ',') + ' s' : ms + ' ms');
   if (e.kind === 'import') return `${e.files} Aufnahmen (${e.images} Fotos, ${e.videos} Videos) in ${s(e.ms)} · ${s(e.perItem)} je Aufnahme${e.worker ? ' · im Hintergrund-Thread' : ''}${e.bad ? ` · ${e.bad} nicht lesbar` : ''}`;
@@ -4432,7 +4461,7 @@ async function init() {
 window.CineBeat = {
   get S() { return S; },
   get engine() { return engine; },
-  openPlace, openBestof, addFiles, ingestFiles, scoreWorkers, perfLog, _trips: { tripForStop, tripRange, autoTripName, switchTrip, renderTrip }, rebuild, newPlace, importSong, getSong, openBeatSheet,
+  openPlace, openBestof, addFiles, ingestFiles, scoreWorkers, perfLog, scoreImage, _trips: { tripForStop, tripRange, autoTripName, switchTrip, renderTrip }, rebuild, newPlace, importSong, getSong, openBeatSheet,
 };
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

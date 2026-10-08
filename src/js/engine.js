@@ -243,6 +243,7 @@ class Engine {
 
   releaseAll() {
     for (const k of Array.from(this.slots.keys())) this.releaseSlot(k);
+    if (this._masks) { for (const tx of this._masks.values()) if (tx) this.r.deleteTexture(tx); this._masks.clear(); }
   }
 
   /** Im Hintergrund Speicher abgeben (Texturen, Videos, Bildcache), damit iOS die App nicht verwirft. */
@@ -1219,10 +1220,50 @@ class Engine {
       }
       if (force > 0) desat = Math.max(desat, force);
     }
+    // Titel hinter den Bergen: nur über der geplanten Aufnahme, weich ein- und ausgeblendet, im Übergang anteilig
+    let maskA = null, behind = 0;
+    if (ov.top && A && L && L.a && !fx.mirror) {
+      const bo = plan.overlays.find((o) => o.behind && t >= o.start && t < o.end);
+      const ma = bo && this.media[L.a.mediaIndex];
+      if (ma && ma.id === bo.behind.mediaId) {
+        maskA = this.skyMask(ma);
+        if (maskA) behind = smooth(clamp01((t - bo.start) / 0.3)) * smooth(clamp01((bo.end - t) / 0.3)) * (B ? 1 - mix : 1);
+      }
+    }
     this.r.draw({
       A, B, mix, trans, dir, grade, time: t, band: plan.band,
-      flash: fx.flash, black: fx.black, dim: fx.dim, desat, bars: 0, ovTop: ov.top, col: colU, pop, chroma, mirror: fx.mirror || 0,
+      flash: fx.flash, black: fx.black, dim: fx.dim, desat, bars: 0, ovTop: ov.top, col: colU, pop, chroma, mirror: fx.mirror || 0, maskA, behind,
     });
+  }
+
+  /**
+   * Vordergrund-Maske einer Aufnahme aus ihrer Himmelslinie (vision.js): unter der Linie 1, darüber 0, Kante 1,5 px weich.
+   * Einmal je Aufnahme erzeugt und als Textur gehalten.
+   */
+  skyMask(m) {
+    this._masks = this._masks || new Map();
+    if (this._masks.has(m.id)) return this._masks.get(m.id);
+    const line = skyLine(m.sky);
+    let tex = null;
+    if (line && !m.rot90) {
+      const W = 512, H = Math.max(64, Math.round(W * (m.h || 3) / (m.w || 4)));
+      const c = document.createElement('canvas');
+      c.width = W; c.height = H;
+      const x = c.getContext('2d');
+      x.fillStyle = '#fff';
+      x.beginPath();
+      x.moveTo(0, H);
+      for (let k = 0; k < line.length; k++) x.lineTo(((k + 0.5) / line.length) * W, line[k] * H);
+      x.lineTo(W, line[line.length - 1] * H);
+      x.lineTo(W, H);
+      x.closePath();
+      x.filter = 'blur(1.2px)';
+      x.fill();
+      tex = this.r.createTexture();
+      if (!this.r.upload(tex, c, false)) tex = null;
+    }
+    this._masks.set(m.id, tex);
+    return tex;
   }
 
   /* ---------- Standbild ---------- */

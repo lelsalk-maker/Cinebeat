@@ -4,6 +4,7 @@ const p = await b.newPage();
 p.on('pageerror', (e) => console.log('pageerror', e.message));
 await p.goto('http://127.0.0.1:8124/test/blank.html');
 await p.addScriptTag({ url: '/src/js/score.js' });
+await p.addScriptTag({ url: '/src/js/vision.js' });
 console.log(await p.evaluate(() => {
   const mk = (fn) => { const c = document.createElement('canvas'); c.width = 1200; c.height = 800; const x = c.getContext('2d'); fn(x); return c; };
   const scene = (x) => { const g = x.createLinearGradient(0, 0, 1200, 800); g.addColorStop(0, '#1e6fa8'); g.addColorStop(1, '#f2a33a'); x.fillStyle = g; x.fillRect(0, 0, 1200, 800); for (let i = 0; i < 60; i++) { x.fillStyle = `hsl(${i * 37 % 360},70%,${30 + i % 40}%)`; x.fillRect((i * 97) % 1100, (i * 53) % 700, 40 + i % 60, 30 + i % 50); } x.fillStyle = '#fff'; x.font = 'bold 90px sans-serif'; x.fillText('Lissabon', 300, 420); };

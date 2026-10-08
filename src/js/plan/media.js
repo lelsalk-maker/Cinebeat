@@ -234,7 +234,7 @@ function selectMedia(pool, K, mustIds) {
 function flowOrder(list, wantMatch) {
   if (list.length < 3) return list.slice();
   const colorD = (a, b) => (a.avg && b.avg ? Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) : 60);
-  const twin = (a, b) => colorD(a, b) < 18 && a.hash && b.hash && hamming(a.hash, b.hash) < 14;
+  const twin = (a, b) => sameMotif(a, b) || (colorD(a, b) < 18 && a.hash && b.hash && hamming(a.hash, b.hash) < 14);
   const flow = (a, b) => {
     if (twin(a, b)) return -1;
     let v = 0.45 * (1 - Math.min(1, colorD(a, b) / 160)) + 0.25 * (1 - Math.min(1, Math.abs((a.luma || 0.45) - (b.luma || 0.45)) / 0.4));
@@ -311,9 +311,9 @@ function shotRelation(a, b) {
   return { sim: layoutSim(a.layout, b.layout), colorD, dl: (b.luma || 0.45) - (a.luma || 0.45), aLuma: a.luma || 0.45, sizeA: shotSize(a), sizeB: shotSize(b) };
 }
 
-/** Ähnliche Bilder nicht direkt hintereinander (Farbe/Hash). */
+/** Ähnliche Bilder nicht direkt hintereinander (Motiv-Fingerabdruck, sonst Farbe/Hash). */
 function spreadSimilar(order) {
-  const sim = (a, b) => a && b && a.avg && b.avg && Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) < 18 && (!a.hash || !b.hash || hamming(a.hash, b.hash) < 14);
+  const sim = (a, b) => a && b && (sameMotif(a, b) || (a.avg && b.avg && Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) < 18 && (!a.hash || !b.hash || hamming(a.hash, b.hash) < 14)));
   for (let i = 2; i < order.length - 1; i++) {
     // nur mit einer Aufnahme aus demselben Moment tauschen (nie über eine Pause, einen Tageswechsel oder eine Nacht)
     const close = !order[i].time || !order[i + 1].time || Math.abs(order[i].time - order[i + 1].time) <= 3 * 60 * 1000;
@@ -343,6 +343,30 @@ function imageMotion(rng, m, outAspect, visDur, role, prevDir, hint, tempo = 1) 
   return mo;
 }
 
+/**
+ * Schiefen Horizont gerade richten (Bildverständnis: m.tilt in Grad, rechts tiefer = positiv): die Fahrt dreht um
+ * −tilt und zoomt gerade so weit, dass der gedrehte Ausschnitt im Bild bleibt; Schwenks werden entsprechend kürzer.
+ */
+function levelHorizon(mo, m, outAspect) {
+  const deg = m.tilt || 0;
+  if (!deg || Math.abs(deg) > 5 || m.rot90) return;
+  const th = (Math.abs(deg) * Math.PI) / 180, c = Math.cos(th), sn = Math.sin(th);
+  const srcA = m.w && m.h ? m.w / m.h : outAspect;
+  // Ausschnitt bei s = 1 als Anteil der Bildbreite/-höhe; gedrehter Umriss in Bildanteilen
+  const fw = srcA > outAspect ? outAspect / srcA : 1, fh = srcA > outAspect ? 1 : srcA / outAspect;
+  const wr = fw * c + fh * sn / srcA, hr = fw * sn * srcA + fh * c;
+  const need = Math.max(wr, hr) * 1.01;
+  for (const k of ['from', 'to']) {
+    const e = mo[k];
+    e.r = -(deg * Math.PI) / 180;
+    const s0 = Math.max(e.s || 1, need);
+    // Schwenkweite: freier Rand nach dem Drehen statt ohne Drehung
+    const kx = 1 - fw / s0 > 0.001 ? Math.max(0, 1 - wr / s0) / (1 - fw / s0) : 0;
+    const ky = 1 - fh / s0 > 0.001 ? Math.max(0, 1 - hr / s0) / (1 - fh / s0) : 0;
+    e.s = s0; e.x = (e.x || 0) * Math.min(1, kx); e.y = (e.y || 0) * Math.min(1, ky);
+  }
+}
+
 /** Bildschirmgeschwindigkeit einer Fahrt (Anteil der Bildbreite je Sekunde): Schwenk plus Zoom an den Bildrändern. */
 function motionSpeed(mo, m, outAspect, dur) {
   if (!mo) return 0;
@@ -368,13 +392,15 @@ function scaleMotion(mo, k) {
 function fitSubject(mo, m, outAspect) {
   const sub = m.subject;
   if (m.horizon != null) { mo.m.from.r = 0; mo.m.to.r = 0; }
-  if (!sub) return mo;
+  // schiefer Horizont: zuletzt gerade richten (der Zoom fürs Drehen geht vor dem Motivschutz)
+  const done = () => { if (m.horizon != null) levelHorizon(mo.m, m, outAspect); return mo; };
+  if (!sub) return done();
   const srcAspect = m.w && m.h ? m.w / m.h : outAspect;
   const fw = srcAspect > outAspect ? outAspect / srcAspect : 1, fh = srcAspect > outAspect ? 1 : srcAspect / outAspect;
   const cap = Math.min(fw / Math.max(0.05, sub[2] * 1.08), fh / Math.max(0.05, sub[3] * 1.08));
-  if (cap < 1.02) return mo;
+  if (cap < 1.02) return done();
   for (const k of ['from', 'to']) if (mo.m[k].s > cap) mo.m[k].s = Math.max(1.0, cap);
-  return mo;
+  return done();
 }
 
 /**

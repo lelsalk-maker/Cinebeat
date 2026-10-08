@@ -8,14 +8,15 @@
 import { spawn, execSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 const QUICK = ['analysis', 'smooth', 'flow', 'style', 'videos', 'allmedia', 'ui', 'e2e', 'features'];
-const ALL = ['meta', 'beats', 'longbeats', 'structure', 'score', 'mux', 'csp', 'offline', 'chapters', 'ui', 'e2e', 'trip', 'flight', 'overflow', 'features', 'flow', 'fastexport', 'ingest', 'adaptive', 'resume', 'sync', 'latency', 'quality', 'perf', 'style', 'stylevis', 'videos', 'allmedia', 'analysis', 'bgexport', 'smooth', 'judder', 'listen', 'workerscore', 'heat', 'grade', 'vsync', 'trips', 'levels', 'us', 'tap', 'hook', 'stimmig', 'carousel', 'carouselui', 'shutter', 'shutterui', 'diner', 'vplay', 'select', 'takt', 'studio', 'reisefilm', 'iosvideo', 'edit', 'quer', 'lied', 'welcome', 'songstart'];
+const ALL = ['meta', 'beats', 'longbeats', 'structure', 'score', 'mux', 'csp', 'offline', 'chapters', 'ui', 'e2e', 'trip', 'flight', 'overflow', 'features', 'flow', 'fastexport', 'ingest', 'adaptive', 'resume', 'sync', 'latency', 'quality', 'perf', 'style', 'stylevis', 'videos', 'allmedia', 'analysis', 'bgexport', 'smooth', 'judder', 'listen', 'workerscore', 'heat', 'grade', 'vsync', 'trips', 'levels', 'us', 'tap', 'hook', 'stimmig', 'carousel', 'carouselui', 'shutter', 'shutterui', 'diner', 'vplay', 'select', 'takt', 'studio', 'reisefilm', 'iosvideo', 'edit', 'quer', 'lied', 'welcome', 'songstart', 'vision'];
 // messen Zeit oder Bildrate: nie unter Last anderer Tests
 const SERIAL = new Set(['flight', 'ingest', 'perf', 'latency', 'sync', 'adaptive', 'fastexport', 'bgexport', 'tap', 'vplay']);
 // welche Tests eine Datei berühren
 // Planer-Änderungen prüfen die Planer-Tests; reine Bedien-Abläufe (features, select, shutterui, carouselui) hängen an
 // ui.js/engine.js und laufen vor jedem Veröffentlichen mit `all`
 const MAP = [
-  [/^src\/js\/plan\/|^src\/js\/director\.js/, ['analysis', 'smooth', 'flow', 'style', 'allmedia', 'videos', 'chapters', 'overflow', 'grade', 'vsync', 'us', 'tap', 'hook', 'stimmig', 'carousel', 'shutter', 'diner', 'vplay', 'takt', 'studio', 'reisefilm', 'edit', 'quer', 'lied', 'welcome']],
+  [/^src\/js\/(vision|score)\.js/, ['vision', 'score', 'lied', 'allmedia', 'select', 'carousel']],
+  [/^src\/js\/plan\/|^src\/js\/director\.js/, ['analysis', 'smooth', 'flow', 'style', 'allmedia', 'videos', 'chapters', 'overflow', 'grade', 'vsync', 'us', 'tap', 'hook', 'stimmig', 'carousel', 'shutter', 'diner', 'vplay', 'takt', 'studio', 'reisefilm', 'edit', 'quer', 'lied', 'welcome', 'vision']],
   [/^src\/js\/audio\.js/, ['songstart', 'beats', 'longbeats', 'structure', 'listen', 'analysis', 'stimmig', 'takt', 'studio']],
   [/^src\/js\/beats\.js/, ['studio', 'lied']],
   [/^src\/js\/(engine|mediaio|score|demux)\.js/, ['iosvideo']],

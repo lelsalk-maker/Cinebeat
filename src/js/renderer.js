@@ -17,6 +17,8 @@ varying vec2 vUv;
 uniform sampler2D uTexA;
 uniform sampler2D uTexB;
 uniform sampler2D uOvTop;
+uniform sampler2D uMaskA;  // Vordergrund der Ebene A (unter der Himmelslinie = 1) für „Titel hinter den Bergen“
+uniform float uBehind;
 uniform vec4 uXfA;      // Cover-Ausschnitt: fw, fh, cx, cy
 uniform vec4 uXfB;
 uniform vec3 uBoxA;     // contain: an/aus, Boxgröße
@@ -190,6 +192,17 @@ vec3 layer(sampler2D tex, vec4 xf, vec3 box, vec3 blur, vec4 geo, vec2 off, vec2
   return acc / ws;
 }
 
+// Bildkoordinate der Ebene A für einen Ausgabepunkt (wie sampleSrc ohne Rahmen/Abzug/Parallax)
+vec2 srcCoordA(vec2 uv) {
+  uv -= uOffA;
+  // gerahmt: das ganze Bild steht in der Box (außerhalb nur der weiche Hintergrund – kein Vordergrund)
+  if (uBoxA.x > 0.5) { vec2 q = (uv - 0.5) / uBoxA.yz + 0.5; return (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) ? vec2(-1.0) : q; }
+  float asp = uRes.x / (uRes.y * uBand.y);
+  vec2 p = uv - 0.5;
+  if (uGeoA.x != 0.0) p = rot2(p * vec2(asp, 1.0), -uGeoA.x) / vec2(asp, 1.0);
+  return uXfA.zw + p * uXfA.xy;
+}
+
 vec3 corrApply(vec3 c, vec4 k) { return pow(max(c, vec3(0.0)), vec3(k.w)) * k.rgb; }
 vec3 layerA(vec2 uv) { return corrApply(layer(uTexA, uXfA, uBoxA, uBlurA, uGeoA, uOffA, uv, uParA, uFocA, uHor.x), uCorrA); }
 vec3 layerB(vec2 uv) { return corrApply(layer(uTexB, uXfB, uBoxB, uBlurB, uGeoB, uOffB, uv, uParB, uFocB, uHor.y), uCorrB); }
@@ -344,7 +357,14 @@ void main() {
   // Titel, Texte, Sticker: ungegradet, über Schwarz
   if (uHasOvTop > 0.5) {
     vec4 o = texture2D(uOvTop, full);
-    c = mix(c, o.rgb, o.a);
+    float oa = o.a;
+    // Titel hinter den Bergen: wo das Bild Vordergrund ist, liegt es vor der Schrift
+    if (uBehind > 0.0 && full.y >= uBand.x && full.y <= uBand.x + uBand.y) {
+      vec2 sq = srcCoordA(vec2(full.x, (full.y - uBand.x) / uBand.y));
+      float fg = sq.x < -0.5 ? 0.0 : texture2D(uMaskA, sq).a;
+      oa *= 1.0 - fg * uBehind;
+    }
+    c = mix(c, o.rgb, oa);
   }
   gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }`;
@@ -401,6 +421,7 @@ class Renderer {
     gl.uniform1i(this.u.uTexA, 0);
     gl.uniform1i(this.u.uTexB, 1);
     gl.uniform1i(this.u.uOvTop, 2);
+    if (this.u.uMaskA) gl.uniform1i(this.u.uMaskA, 3);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
     this.black = this.createTexture();
@@ -466,6 +487,7 @@ class Renderer {
     bind(0, f.A ? f.A.tex : this.black);
     bind(1, f.B ? f.B.tex : this.black);
     bind(2, this.ovTex.top);
+    bind(3, f.maskA || this.black);
     gl.activeTexture(gl.TEXTURE0);
     const L = (o, key, fb) => (o && o[key] ? o[key] : fb);
     gl.uniform4fv(u.uXfA, L(f.A, 'xf', [1, 1, 0.5, 0.5]));
@@ -490,6 +512,7 @@ class Renderer {
     gl.uniform1f(u.uPop, f.pop || 0);
     gl.uniform1f(u.uChroma, f.chroma || 0);
     gl.uniform1f(u.uMirror, f.mirror || 0);
+    if (u.uBehind) gl.uniform1f(u.uBehind, f.maskA ? f.behind || 0 : 0);
     gl.uniform2fv(u.uBand, f.band || [0, 1]);
     gl.uniform1f(u.uHasA, f.A ? 1 : 0);
     gl.uniform1f(u.uHasB, f.B ? 1 : 0);
