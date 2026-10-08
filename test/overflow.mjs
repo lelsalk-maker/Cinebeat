@@ -11,7 +11,7 @@ await page.click('.place');
 await page.waitForFunction(() => CineBeat.S.plan && document.getElementById('busy').hidden, null, { timeout: 90000 });
 await page.waitForTimeout(800);
 await page.screenshot({ path: `${OUT}/ui_poster.png` });
-for (const tab of ['material', 'music', 'style', 'cut', 'text']) {
+for (const tab of ['format', 'style', 'flow', 'material', 'music', 'cut', 'text']) {
   await page.click(`[data-tab="${tab}"]`);
   await page.waitForTimeout(300);
   console.log(tab, 'Überbreite:', await page.evaluate(() => document.documentElement.scrollWidth - innerWidth));

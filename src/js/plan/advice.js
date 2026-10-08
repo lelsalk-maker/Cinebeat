@@ -254,7 +254,7 @@ function hookScore(plan, media, an) {
  * Hook automatisch verbessern: probiert Einstieg, Songstart und Startbild durch und nimmt die Kombination mit dem
  * höchsten Stopp-Wert – nur, wenn der übrige Film dadurch nicht schlechter wird. Liefert { settings, hookId, from, to }.
  */
-async function improveHook(opts, onProgress) {
+async function improveHook(opts, onProgress, only = {}) {
   const s0 = opts.settings;
   const base = buildPlan(opts);
   const hs0 = hookScore(base, opts.media, opts.an), h0 = hs0.score, q0 = planQuality(base, opts.media);
@@ -262,8 +262,9 @@ async function improveHook(opts, onProgress) {
   const byScore = imgs.slice().sort((a, b) => (b.score || 0) - (a.score || 0));
   const bestUs = imgs.filter((m) => isUs(m)).sort((a, b) => (b.score || 0) - (a.score || 0))[0];
   const hooks = [s0.hookId || null, byScore[0] && byScore[0].id, bestUs && bestUs.id].filter((v, i, a) => a.indexOf(v) === i);
-  const intros = [s0.intro || 'auto', 'rush', 'hook', 'knockout'].filter((v, i, a) => a.indexOf(v) === i);
-  const starts = [s0.songStart == null ? 'auto' : s0.songStart, 'hook', 'prehook'].filter((v, i, a) => a.indexOf(v) === i);
+  // only.intros / only.starts: was durchprobiert werden darf (z. B. nur, was der Nutzer auf Auto gelassen hat)
+  const intros = (only.intros || [s0.intro || 'auto', 'rush', 'hook', 'knockout']).filter((v, i, a) => a.indexOf(v) === i);
+  const starts = (only.starts || [s0.songStart == null ? 'auto' : s0.songStart, 'hook', 'prehook']).filter((v, i, a) => a.indexOf(v) === i);
   // zuerst Fehler beheben, dann den Stopp-Wert heben
   let best = { h: h0, e: hs0.errors, settings: null, hookId: s0.hookId || null };
   const total = intros.length * starts.length * hooks.length;

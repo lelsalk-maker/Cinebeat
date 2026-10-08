@@ -174,6 +174,8 @@ textarea.text-in { resize: vertical; min-height: 70px; }
 }
 /* Song-Ablauf: die Bühne nimmt die volle Breite und so viel Höhe wie der Inhalt braucht */
 .stage.flowing .transport, .stage.flowing .stage-tools { display: none; }
+/* noch kein Material: nur das Bild mit „Aus der Galerie wählen“, keine Zeitleiste, kein Export */
+.is-empty .transport, .is-empty .stage-tools, .is-empty .level, .is-empty .regie, .is-empty .export-bar { display: none; }
 .monitor.flow { aspect-ratio: auto; width: 100%; min-height: 0; }
 .monitor.flow .flow-stage { position: relative; inset: auto; overflow: visible; }
 .monitor.flow canvas#screen, .monitor.flow .hud, .monitor.flow .bigplay, .monitor.flow .sample-chip { display: none; }
@@ -246,10 +248,23 @@ textarea.text-in { resize: vertical; min-height: 70px; }
 
 .panel { display: grid; gap: 12px; }
 .regie { border-radius: var(--radius); border: 1px solid rgba(228, 213, 183, 0.22); background: linear-gradient(160deg, rgba(28, 47, 77, 0.55), rgba(10, 16, 27, 0.9)); padding: 14px 16px; display: grid; gap: 10px; }
-.regie-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.regie-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.regie-head h2 { flex: 1 0 100%; }
 .regie h2 { margin: 0; display: flex; align-items: center; gap: 8px; font-family: var(--f-display); font-size: 13px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--beige); }
 .regie h2 svg { width: 17px; height: 17px; }
 .decisions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.hook-card { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(228, 213, 183, 0.28); background: rgba(5, 6, 8, 0.45); }
+.hook-card.good { border-color: rgba(228, 213, 183, 0.55); }
+.hook-card.bad { border-color: rgba(226, 122, 110, 0.6); }
+.hook-main { flex: 1; min-width: 0; display: grid; grid-template-columns: auto 1fr; align-items: baseline; column-gap: 10px; row-gap: 4px; padding: 0; border: 0; background: none; color: var(--text); text-align: left; cursor: pointer; }
+.hook-main .hook-k { grid-column: 1 / -1; font: 600 9.5px/1.2 var(--f-sans); letter-spacing: 0.12em; text-transform: uppercase; color: var(--beige-2); }
+.hook-main b { font: 600 22px/1 var(--f-display); font-variant-numeric: tabular-nums; }
+.hook-main b small { font-size: 12px; font-weight: 500; color: var(--muted); }
+.hook-main > i { font-style: normal; font-size: 12px; color: var(--muted); min-width: 0; }
+.hook-meter { grid-column: 1 / -1; height: 4px; border-radius: 2px; background: rgba(236, 234, 228, 0.1); overflow: hidden; }
+.hook-meter i { display: block; height: 100%; border-radius: 2px; background: linear-gradient(90deg, var(--beige-2), var(--beige)); }
+.hook-card.bad .hook-meter i { background: var(--danger); }
+.hook-fix { flex: none; }
 .dec { display: grid; gap: 2px; align-content: start; min-height: 58px; padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(236, 234, 228, 0.1); background: rgba(5, 6, 8, 0.35); color: var(--text); text-align: left; cursor: pointer; transition: border-color 0.15s ease, background 0.15s ease; min-width: 0; }
 .dec:hover, .dec:focus-visible { border-color: rgba(228, 213, 183, 0.5); background: rgba(228, 213, 183, 0.06); }
 .dec span { font: 600 9.5px/1.2 var(--f-sans); letter-spacing: 0.12em; text-transform: uppercase; color: var(--beige-2); }
@@ -262,8 +277,10 @@ textarea.text-in { resize: vertical; min-height: 70px; }
 .regie-notes li::before { content: ""; position: absolute; left: 2px; top: 0.62em; width: 6px; height: 1px; background: var(--beige-2); }
 .tabs { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 60px); z-index: 10; display: flex; gap: 2px; padding: 4px; border-radius: 13px; background: rgb(10, 16, 27); border: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
 .tabs::-webkit-scrollbar { display: none; }
-.tabs button { flex: 1 0 auto; min-height: 38px; padding: 0 12px; border: 0; border-radius: 10px; background: transparent; color: var(--muted); font-weight: 600; font-size: 13px; cursor: pointer; }
-.tabs button[aria-selected="true"] { background: var(--navy-3); color: var(--text); }
+.tabs button { flex: 1 0 50px; display: grid; justify-items: center; align-content: center; gap: 3px; min-height: 52px; padding: 6px 4px 5px; border: 0; border-radius: 10px; background: transparent; color: var(--muted); font-weight: 600; font-size: 11px; letter-spacing: 0.01em; cursor: pointer; transition: color 0.15s ease, background 0.15s ease; }
+.tabs button svg { width: 20px; height: 20px; }
+.tabs button:hover { color: var(--text); }
+.tabs button[aria-selected="true"] { background: var(--navy-3); color: var(--beige); box-shadow: inset 0 0 0 1px var(--line-2); }
 @media (min-width: 960px) { .tabs { top: calc(env(safe-area-inset-top, 0px) + 64px); } }
 .tabpanel { display: grid; gap: 18px; padding: 16px; border-radius: var(--radius); border: 1px solid var(--line); background: rgba(10, 16, 27, 0.85); }
 
@@ -484,9 +501,9 @@ details.more[open] { display: grid; gap: 16px; }
 .tm-info { position: absolute; left: 12px; bottom: 10px; font: 500 10.5px/1 var(--f-mono); letter-spacing: 0.08em; color: var(--muted); background: rgba(5, 6, 8, 0.72); padding: 6px 9px; border-radius: 999px; pointer-events: none; font-variant-numeric: tabular-nums; }
 /* Zwei Bedienebenen */
 .level { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border-radius: 14px; background: rgb(10, 16, 27); border: 1px solid var(--line); }
-.level button { display: grid; gap: 2px; text-align: left; padding: 9px 12px; border-radius: 10px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.level button { display: grid; gap: 1px; text-align: left; padding: 7px 12px; border-radius: 10px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
 .level button b { font-size: 14px; font-weight: 600; color: var(--text); }
-.level button small { font-size: 11.5px; line-height: 1.3; }
+.level button small { font-size: 11px; line-height: 1.3; }
 .level button[aria-checked="true"] { background: var(--navy-2); box-shadow: inset 0 0 0 1px var(--line-2); }
 .level button[aria-checked="true"] b { color: var(--beige); }
 .app[data-level="regie"] #tabbtn-cut, .app[data-level="regie"] #grpRhythm, .app[data-level="regie"] #grpFx { display: none; }
@@ -728,14 +745,66 @@ body.comparing .mini, body.comparing .mini-bar { display: none !important; }
         </section>
 
         <nav class="tabs" role="tablist" aria-label="Bereiche">
-          <button role="tab" id="tabbtn-style" aria-controls="tab-style" aria-selected="true" data-tab="style" type="button">Look</button>
-          <button role="tab" id="tabbtn-material" aria-controls="tab-material" aria-selected="false" data-tab="material" type="button">Material</button>
-          <button role="tab" id="tabbtn-music" aria-controls="tab-music" aria-selected="false" data-tab="music" type="button">Musik</button>
-          <button role="tab" id="tabbtn-cut" aria-controls="tab-cut" aria-selected="false" data-tab="cut" type="button">Schnitt</button>
-          <button role="tab" id="tabbtn-text" aria-controls="tab-text" aria-selected="false" data-tab="text" type="button">Text</button>
+          <button role="tab" id="tabbtn-format" aria-controls="tab-format" aria-selected="true" data-tab="format" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="3" width="10" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 9v6M21 9v6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Format</span></button>
+          <button role="tab" id="tabbtn-style" aria-controls="tab-style" aria-selected="false" data-tab="style" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/></svg><span>Stil</span></button>
+          <button role="tab" id="tabbtn-flow" aria-controls="tab-flow" aria-selected="false" data-tab="flow" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h7M4 12h11M4 17h16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="14" cy="7" r="1.6" fill="currentColor"/><circle cx="18" cy="12" r="1.6" fill="currentColor"/></svg><span>Ablauf</span></button>
+          <button role="tab" id="tabbtn-material" aria-controls="tab-material" aria-selected="false" data-tab="material" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9" cy="10" r="1.6" fill="currentColor"/><path d="M4 17l5-4.5 4 3.5 3-2.5 4 3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Aufnahmen</span></button>
+          <button role="tab" id="tabbtn-music" aria-controls="tab-music" aria-selected="false" data-tab="music" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V6l10-2v12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6.5" cy="18" r="2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="16.5" cy="16" r="2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Musik</span></button>
+          <button role="tab" id="tabbtn-text" aria-controls="tab-text" aria-selected="false" data-tab="text" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6.5V5h14v1.5M12 5v14M9 19h6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Text</span></button>
+          <button role="tab" id="tabbtn-cut" aria-controls="tab-cut" aria-selected="false" data-tab="cut" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6.5" cy="7" r="2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6.5" cy="17" r="2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M8.6 8.4L20 17M8.6 15.6L20 7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Schnitt</span></button>
         </nav>
 
-        <div class="tabpanel" id="tab-style" role="tabpanel" aria-labelledby="tabbtn-style">
+        <div class="tabpanel" id="tab-format" role="tabpanel" aria-labelledby="tabbtn-format">
+          <div class="field">
+            <span class="field-label" id="fmtLabel">Wofür?</span>
+            <div class="formats" role="radiogroup" aria-labelledby="fmtLabel" id="fmtChips">
+              <button type="button" role="radio" data-v="9:16"><i class="ar ar-916" aria-hidden="true"></i><b>Story &amp; Reel</b><span>9:16</span></button>
+              <button type="button" role="radio" data-v="4:5"><i class="ar ar-45" aria-hidden="true"></i><b>Beitrag</b><span>4:5</span></button>
+              <button type="button" role="radio" data-v="16:9"><i class="ar ar-169" aria-hidden="true"></i><b>Film</b><span>16:9</span></button>
+              <button type="button" role="radio" data-v="2.39"><i class="ar ar-239" aria-hidden="true"></i><b>Kino</b><span>2.39:1</span></button>
+            </div>
+            <div class="chips sub-chips" role="radiogroup" aria-label="Story oder Reel" id="targetChips">
+              <button type="button" role="radio" data-v="story">Story · bis 60 s</button>
+              <button type="button" role="radio" data-v="reel">Reel · bis 90 s</button>
+            </div>
+            <div class="chips sub-chips" role="radiogroup" aria-label="Welche Aufnahmen" id="allChips">
+              <button type="button" role="radio" data-v="on">Alle Aufnahmen</button>
+              <button type="button" role="radio" data-v="off">Beste Auswahl</button>
+            </div>
+            <p class="hint small" id="capHint"></p>
+          </div>
+          <div class="field">
+            <span class="field-label" id="lenLabel">Länge</span>
+            <div class="chips" role="radiogroup" aria-labelledby="lenLabel" id="lenChips">
+              <button type="button" role="radio" data-v="auto">Passend zum Material</button>
+              <button type="button" role="radio" data-v="15">15 s</button>
+              <button type="button" role="radio" data-v="30">30 s</button>
+              <button type="button" role="radio" data-v="60">60 s</button>
+              <button type="button" role="radio" data-v="90">90 s</button>
+              <button type="button" role="radio" data-v="full">Ganzer Song</button>
+            </div>
+          </div>
+          <div class="field" id="frameField">
+            <span class="field-label" id="frameLabel">Bildrahmen</span>
+            <div class="chips" role="radiogroup" aria-labelledby="frameLabel" id="frameChips">
+              <button type="button" role="radio" data-v="auto">Auto</button>
+              <button type="button" role="radio" data-v="full">Vollbild</button>
+              <button type="button" role="radio" data-v="band">Kinoband</button>
+            </div>
+            <p class="hint small">Kinoband zeigt Queraufnahmen komplett im Breitbild-Streifen, Titel stehen darunter im Schwarz.</p>
+          </div>
+          <div class="field" id="querField">
+            <span class="field-label" id="querLabel">Querfotos in der Story</span>
+            <div class="chips" role="radiogroup" aria-labelledby="querLabel" id="querChips">
+              <button type="button" role="radio" data-v="auto">Auto</button>
+              <button type="button" role="radio" data-v="split">Split-Screen</button>
+              <button type="button" role="radio" data-v="drehen">Gedreht</button>
+            </div>
+            <p class="hint small">Split-Screen: zwei Querfotos übereinander. Gedreht: das ganze Foto um 90° gedreht, der Himmel rechts – zum Ansehen das Handy quer halten. Einzelne Fotos stellst du unter „Aufnahmen“ um.</p>
+          </div>
+        </div>
+
+        <div class="tabpanel" id="tab-style" role="tabpanel" aria-labelledby="tabbtn-style" hidden>
           <div class="style-card">
             <div class="style-text"><strong>Stil-Vorlage</strong><span id="styleInfo"></span></div>
             <button class="btn small" id="styleBtn" type="button">Vorlage</button>
@@ -759,103 +828,11 @@ body.comparing .mini, body.comparing .mini-bar { display: none !important; }
               <span class="sw-text"><b>Musikvideo</b><span>Mehrfachbelichtungen im Takt, Farbe auf der Bassdrum, Spiegelmoment</span></span>
               <span class="sw" aria-hidden="true"><i></i></span>
             </button>
-            <button type="button" class="switch-row" id="usBtn" role="switch" aria-checked="true">
-              <span class="sw-text"><b>Wir-Vorrang</b><span>Von euch als WIR markierte Aufnahmen: ruhige Passagen, mehr Zeit, eigener Wir-Moment und Schlussbild. Markieren im Material.</span></span>
-              <span class="sw" aria-hidden="true"><i></i></span>
-            </button>
-          </div>
-          <div class="field">
-            <span class="field-label" id="orderLabel">Reihenfolge</span>
-            <div class="formats variants" role="radiogroup" aria-labelledby="orderLabel" id="orderChips">
-              <button type="button" role="radio" data-v="lied"><b>Zum Lied</b><span>jede Szene an ihre Stelle</span></button>
-              <button type="button" role="radio" data-v="tageszeit"><b>Nach Tagen</b><span>Tag für Tag</span></button>
-              <button type="button" role="radio" data-v="streng"><b>Nach Uhrzeit</b><span>streng</span></button>
-            </div>
-            <p class="hint small" id="orderHint"></p>
-          </div>
-          <div class="field">
-            <span class="field-label" id="fmtLabel">Wofür?</span>
-            <div class="formats" role="radiogroup" aria-labelledby="fmtLabel" id="fmtChips">
-              <button type="button" role="radio" data-v="9:16"><i class="ar ar-916" aria-hidden="true"></i><b>Story &amp; Reel</b><span>9:16</span></button>
-              <button type="button" role="radio" data-v="4:5"><i class="ar ar-45" aria-hidden="true"></i><b>Beitrag</b><span>4:5</span></button>
-              <button type="button" role="radio" data-v="16:9"><i class="ar ar-169" aria-hidden="true"></i><b>Film</b><span>16:9</span></button>
-              <button type="button" role="radio" data-v="2.39"><i class="ar ar-239" aria-hidden="true"></i><b>Kino</b><span>2.39:1</span></button>
-            </div>
-            <div class="chips sub-chips" role="radiogroup" aria-label="Story oder Reel" id="targetChips">
-              <button type="button" role="radio" data-v="story">Story · bis 60 s</button>
-              <button type="button" role="radio" data-v="reel">Reel · bis 90 s</button>
-            </div>
-            <div class="chips sub-chips" role="radiogroup" aria-label="Welche Aufnahmen" id="allChips">
-              <button type="button" role="radio" data-v="on">Alle Aufnahmen</button>
-              <button type="button" role="radio" data-v="off">Beste Auswahl</button>
-            </div>
-            <p class="hint small" id="capHint"></p>
-          </div>
-          <div class="field" id="frameField">
-            <span class="field-label" id="frameLabel">Bildrahmen</span>
-            <div class="chips" role="radiogroup" aria-labelledby="frameLabel" id="frameChips">
-              <button type="button" role="radio" data-v="auto">Auto</button>
-              <button type="button" role="radio" data-v="full">Vollbild</button>
-              <button type="button" role="radio" data-v="band">Kinoband</button>
-            </div>
-            <p class="hint small">Kinoband zeigt Queraufnahmen komplett im Breitbild-Streifen, Titel stehen darunter im Schwarz.</p>
-          </div>
-          <div class="field" id="querField">
-            <span class="field-label" id="querLabel">Querfotos in der Story</span>
-            <div class="chips" role="radiogroup" aria-labelledby="querLabel" id="querChips">
-              <button type="button" role="radio" data-v="auto">Auto</button>
-              <button type="button" role="radio" data-v="split">Split-Screen</button>
-              <button type="button" role="radio" data-v="drehen">Gedreht</button>
-            </div>
-            <p class="hint small">Split-Screen: zwei Querfotos übereinander. Gedreht: das ganze Foto um 90° gedreht, der Himmel rechts – zum Ansehen das Handy quer halten. Einzelne Fotos stellst du im Material um.</p>
           </div>
           <div class="field">
             <span class="field-label">Look</span>
             <div class="looks" role="radiogroup" aria-label="Farblook" id="lookGrid"></div>
           </div>
-          <details class="group" id="grpStart">
-            <summary><b>Anfang &amp; Ende</b><span>Vorspann, Einstieg, Schluss</span></summary>
-            <div class="group-body">
-              <div class="field" id="preField">
-                <span class="field-label" id="preLabel">Vorspann</span>
-                <div class="chips" role="radiogroup" aria-labelledby="preLabel" id="preChips">
-                  <button type="button" role="radio" data-v="off">Keiner</button>
-                  <button type="button" role="radio" data-v="countdown">Countdown 3 · 2 · 1</button>
-                  <button type="button" role="radio" data-v="rewind">Rewind</button>
-                </div>
-                <p class="hint small" id="preHint">Läuft vor dem Einstieg und lässt sich mit jedem Einstieg kombinieren, z. B. Countdown und danach das 9er-Raster.</p>
-              </div>
-              <div class="field">
-                <span class="field-label" id="introLabel">Einstieg</span>
-                <div class="chips" role="radiogroup" aria-labelledby="introLabel" id="introChips">
-                  <button type="button" role="radio" data-v="auto">Auto</button>
-                  <button type="button" role="radio" data-v="reveal">Aufblende</button>
-                  <button type="button" role="radio" data-v="welcome">Welcome to…</button>
-                  <button type="button" role="radio" data-v="shutter">Kino-Rollladen</button>
-                  <button type="button" role="radio" data-v="rush">Bilderflut</button>
-                  <button type="button" role="radio" data-v="countdown">Countdown</button>
-                  <button type="button" role="radio" data-v="grid">9er-Raster</button>
-                  <button type="button" role="radio" data-v="knockout">Durch den Namen</button>
-                  <button type="button" role="radio" data-v="city">Ortsname</button>
-                   <button type="button" role="radio" data-v="cinema">Titelkarte</button>
-                  <button type="button" role="radio" data-v="hook">Stärkstes Bild</button>
-                  <button type="button" role="radio" data-v="type">Wort für Wort</button>
-                  <button type="button" role="radio" data-v="split">Split-Screen</button>
-                </div>
-              </div>
-              <div class="field">
-                <span class="field-label" id="outroLabel">Ende</span>
-                <div class="chips" role="radiogroup" aria-labelledby="outroLabel" id="outroChips">
-                  <button type="button" role="radio" data-v="auto">Auto</button>
-                  <button type="button" role="radio" data-v="credits">Schlusstitel</button>
-                  <button type="button" role="radio" data-v="loop">Endlos-Loop</button>
-                  <button type="button" role="radio" data-v="freeze">Standbild</button>
-                  <button type="button" role="radio" data-v="strip">Filmstreifen</button>
-                  <button type="button" role="radio" data-v="split">Split-Screen</button>
-                </div>
-              </div>
-            </div>
-          </details>
           <details class="group" id="grpRhythm">
             <summary><b>Rhythmus &amp; Bewegung</b><span>Tempo, Kamera, Schlagzeug, Farbe</span></summary>
             <div class="group-body">
@@ -946,48 +923,63 @@ body.comparing .mini, body.comparing .mini-bar { display: none !important; }
               </div>
             </div>
           </details>
-          <details class="group" id="grpText">
-            <summary><b>Titel &amp; Orte</b><span>Schrift, Einblendungen, Karte</span></summary>
-            <div class="group-body">
-              <div class="field">
-                <span class="field-label" id="fontLabel">Schrift der Titel</span>
-                <div class="chips font-chips" role="radiogroup" aria-labelledby="fontLabel" id="fontChips"></div>
-              </div>
-              <div class="field">
-                <span class="field-label" id="elLabel">Einblendungen</span>
-                <div class="chips" role="group" aria-labelledby="elLabel" id="elChips">
-                  <button type="button" aria-pressed="true" data-k="showTitle">Titel</button>
-                  <button type="button" aria-pressed="true" data-k="showChapters">Kapitel</button>
-                  <button type="button" aria-pressed="true" data-k="showStats">Reise-Statistik</button>
-                </div>
-                <p class="hint small">Alles ist optional: Tippe, um es ein- oder auszuschalten.</p>
-              </div>
-              <div class="field" id="kmField">
-                <span class="field-label" id="kmLabel">Unter dem Ortsnamen</span>
-                <div class="chips" role="radiogroup" aria-labelledby="kmLabel" id="kmChips">
-                  <button type="button" role="radio" data-v="off">Nichts</button>
-                  <button type="button" role="radio" data-v="coords">Koordinaten</button>
-                  <button type="button" role="radio" data-v="leg">Koordinaten → Etappe</button>
-                  <button type="button" role="radio" data-v="total">Koordinaten → gesamt</button>
-                </div>
-                <p class="hint small">Die Koordinaten erscheinen Ziffer für Ziffer und wechseln dann in die gefahrenen Kilometer: seit dem letzten Ort (+ km) oder seit Reisebeginn. Flugstrecken zählen nicht mit.</p>
-              </div>
-              <div class="field" id="mapField">
-                <span class="field-label">Flugkarte</span>
-                <div class="chips theme-chips" role="radiogroup" aria-label="Kartenstil" id="mapThemeChips"></div>
-                <div class="swatches" role="radiogroup" aria-label="Farbe von Route und Flugzeug" id="mapInkChips"></div>
-                <div class="chips sub-chips" role="radiogroup" aria-label="Kontinente" id="mapLandChips">
-                  <button type="button" role="radio" data-v="dots">Kontinente als Punkte</button>
-                  <button type="button" role="radio" data-v="solid">als Fläche</button>
-                  <button type="button" role="radio" data-v="off">ohne</button>
-                </div>
-                <div class="chips sub-chips" role="radiogroup" aria-label="Ansicht" id="flightViewChips">
-                  <button type="button" role="radio" data-v="globe">Globus</button>
-                  <button type="button" role="radio" data-v="flat">Flache Karte</button>
-                </div>
-              </div>
+        </div>
+
+        <div class="tabpanel" id="tab-flow" role="tabpanel" aria-labelledby="tabbtn-flow" hidden>
+          <div class="field" id="preField">
+            <span class="field-label" id="preLabel">Vorspann</span>
+            <div class="chips" role="radiogroup" aria-labelledby="preLabel" id="preChips">
+              <button type="button" role="radio" data-v="off">Keiner</button>
+              <button type="button" role="radio" data-v="countdown">Countdown 3 · 2 · 1</button>
+              <button type="button" role="radio" data-v="rewind">Rewind</button>
             </div>
-          </details>
+            <p class="hint small" id="preHint">Läuft vor dem Einstieg und lässt sich mit jedem Einstieg kombinieren, z. B. Countdown und danach das 9er-Raster.</p>
+          </div>
+          <div class="field">
+            <span class="field-label" id="introLabel">Einstieg</span>
+            <div class="chips" role="radiogroup" aria-labelledby="introLabel" id="introChips">
+              <button type="button" role="radio" data-v="auto">Auto</button>
+              <button type="button" role="radio" data-v="reveal">Aufblende</button>
+              <button type="button" role="radio" data-v="welcome">Welcome to…</button>
+              <button type="button" role="radio" data-v="shutter">Kino-Rollladen</button>
+              <button type="button" role="radio" data-v="rush">Bilderflut</button>
+              <button type="button" role="radio" data-v="countdown">Countdown</button>
+              <button type="button" role="radio" data-v="grid">9er-Raster</button>
+              <button type="button" role="radio" data-v="knockout">Durch den Namen</button>
+              <button type="button" role="radio" data-v="city">Ortsname</button>
+               <button type="button" role="radio" data-v="cinema">Titelkarte</button>
+              <button type="button" role="radio" data-v="hook">Stärkstes Bild</button>
+              <button type="button" role="radio" data-v="type">Wort für Wort</button>
+              <button type="button" role="radio" data-v="split">Split-Screen</button>
+            </div>
+          </div>
+          <div class="field">
+            <span class="field-label" id="outroLabel">Ende</span>
+            <div class="chips" role="radiogroup" aria-labelledby="outroLabel" id="outroChips">
+              <button type="button" role="radio" data-v="auto">Auto</button>
+              <button type="button" role="radio" data-v="credits">Schlusstitel</button>
+              <button type="button" role="radio" data-v="loop">Endlos-Loop</button>
+              <button type="button" role="radio" data-v="freeze">Standbild</button>
+              <button type="button" role="radio" data-v="strip">Filmstreifen</button>
+              <button type="button" role="radio" data-v="split">Split-Screen</button>
+            </div>
+          </div>
+          <div class="field">
+            <span class="field-label" id="orderLabel">Reihenfolge</span>
+            <div class="formats variants" role="radiogroup" aria-labelledby="orderLabel" id="orderChips">
+              <button type="button" role="radio" data-v="lied"><b>Zum Lied</b><span>jede Szene an ihre Stelle</span></button>
+              <button type="button" role="radio" data-v="tageszeit"><b>Nach Tagen</b><span>Tag für Tag</span></button>
+              <button type="button" role="radio" data-v="streng"><b>Nach Uhrzeit</b><span>streng</span></button>
+            </div>
+            <p class="hint small" id="orderHint"></p>
+          </div>
+          <div class="field">
+            <span class="field-label">Wir</span>
+            <button type="button" class="switch-row" id="usBtn" role="switch" aria-checked="true">
+              <span class="sw-text"><b>Wir-Vorrang</b><span>Von euch als WIR markierte Aufnahmen: ruhige Passagen, mehr Zeit, eigener Wir-Moment und Schlussbild. Markieren unter „Aufnahmen“.</span></span>
+              <span class="sw" aria-hidden="true"><i></i></span>
+            </button>
+          </div>
         </div>
 
         <div class="tabpanel" id="tab-material" role="tabpanel" aria-labelledby="tabbtn-material" hidden>
@@ -1033,17 +1025,6 @@ body.comparing .mini, body.comparing .mini-bar { display: none !important; }
               <button type="button" role="radio" data-v="start">Songanfang</button>
             </div>
           </div>
-          <div class="field">
-            <span class="field-label" id="lenLabel">Länge</span>
-            <div class="chips" role="radiogroup" aria-labelledby="lenLabel" id="lenChips">
-              <button type="button" role="radio" data-v="auto">Passend zum Material</button>
-              <button type="button" role="radio" data-v="15">15 s</button>
-              <button type="button" role="radio" data-v="30">30 s</button>
-              <button type="button" role="radio" data-v="60">60 s</button>
-              <button type="button" role="radio" data-v="90">90 s</button>
-              <button type="button" role="radio" data-v="full">Ganzer Song</button>
-            </div>
-          </div>
           <div class="ig-card">
             <div class="ig-text">
               <span class="field-label">Für Instagram</span>
@@ -1072,6 +1053,43 @@ body.comparing .mini, body.comparing .mini-bar { display: none !important; }
           </div>
           <div class="ovlist" id="ovList"></div>
           <p class="hint small">Ziehe Texte in der Vorschau an ihren Platz. Die Schutzzonen zeigen, wo Instagram eigene Elemente einblendet.</p>
+          <div class="field">
+            <span class="field-label" id="fontLabel">Schrift der Titel</span>
+            <div class="chips font-chips" role="radiogroup" aria-labelledby="fontLabel" id="fontChips"></div>
+          </div>
+          <div class="field">
+            <span class="field-label" id="elLabel">Einblendungen</span>
+            <div class="chips" role="group" aria-labelledby="elLabel" id="elChips">
+              <button type="button" aria-pressed="true" data-k="showTitle">Titel</button>
+              <button type="button" aria-pressed="true" data-k="showChapters">Kapitel</button>
+              <button type="button" aria-pressed="true" data-k="showStats">Reise-Statistik</button>
+            </div>
+            <p class="hint small">Alles ist optional: Tippe, um es ein- oder auszuschalten.</p>
+          </div>
+          <div class="field" id="kmField">
+            <span class="field-label" id="kmLabel">Unter dem Ortsnamen</span>
+            <div class="chips" role="radiogroup" aria-labelledby="kmLabel" id="kmChips">
+              <button type="button" role="radio" data-v="off">Nichts</button>
+              <button type="button" role="radio" data-v="coords">Koordinaten</button>
+              <button type="button" role="radio" data-v="leg">Koordinaten → Etappe</button>
+              <button type="button" role="radio" data-v="total">Koordinaten → gesamt</button>
+            </div>
+            <p class="hint small">Die Koordinaten erscheinen Ziffer für Ziffer und wechseln dann in die gefahrenen Kilometer: seit dem letzten Ort (+ km) oder seit Reisebeginn. Flugstrecken zählen nicht mit.</p>
+          </div>
+          <div class="field" id="mapField">
+            <span class="field-label">Flugkarte</span>
+            <div class="chips theme-chips" role="radiogroup" aria-label="Kartenstil" id="mapThemeChips"></div>
+            <div class="swatches" role="radiogroup" aria-label="Farbe von Route und Flugzeug" id="mapInkChips"></div>
+            <div class="chips sub-chips" role="radiogroup" aria-label="Kontinente" id="mapLandChips">
+              <button type="button" role="radio" data-v="dots">Kontinente als Punkte</button>
+              <button type="button" role="radio" data-v="solid">als Fläche</button>
+              <button type="button" role="radio" data-v="off">ohne</button>
+            </div>
+            <div class="chips sub-chips" role="radiogroup" aria-label="Ansicht" id="flightViewChips">
+              <button type="button" role="radio" data-v="globe">Globus</button>
+              <button type="button" role="radio" data-v="flat">Flache Karte</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -7675,7 +7693,7 @@ function hookScore(plan, media, an) {
  * Hook automatisch verbessern: probiert Einstieg, Songstart und Startbild durch und nimmt die Kombination mit dem
  * höchsten Stopp-Wert – nur, wenn der übrige Film dadurch nicht schlechter wird. Liefert { settings, hookId, from, to }.
  */
-async function improveHook(opts, onProgress) {
+async function improveHook(opts, onProgress, only = {}) {
   const s0 = opts.settings;
   const base = buildPlan(opts);
   const hs0 = hookScore(base, opts.media, opts.an), h0 = hs0.score, q0 = planQuality(base, opts.media);
@@ -7683,8 +7701,9 @@ async function improveHook(opts, onProgress) {
   const byScore = imgs.slice().sort((a, b) => (b.score || 0) - (a.score || 0));
   const bestUs = imgs.filter((m) => isUs(m)).sort((a, b) => (b.score || 0) - (a.score || 0))[0];
   const hooks = [s0.hookId || null, byScore[0] && byScore[0].id, bestUs && bestUs.id].filter((v, i, a) => a.indexOf(v) === i);
-  const intros = [s0.intro || 'auto', 'rush', 'hook', 'knockout'].filter((v, i, a) => a.indexOf(v) === i);
-  const starts = [s0.songStart == null ? 'auto' : s0.songStart, 'hook', 'prehook'].filter((v, i, a) => a.indexOf(v) === i);
+  // only.intros / only.starts: was durchprobiert werden darf (z. B. nur, was der Nutzer auf Auto gelassen hat)
+  const intros = (only.intros || [s0.intro || 'auto', 'rush', 'hook', 'knockout']).filter((v, i, a) => a.indexOf(v) === i);
+  const starts = (only.starts || [s0.songStart == null ? 'auto' : s0.songStart, 'hook', 'prehook']).filter((v, i, a) => a.indexOf(v) === i);
   // zuerst Fehler beheben, dann den Stopp-Wert heben
   let best = { h: h0, e: hs0.errors, settings: null, hookId: s0.hookId || null };
   const total = intros.length * starts.length * hooks.length;
@@ -14162,7 +14181,7 @@ const S = {
   places: [],
   ctx: null,
   plan: null,
-  tab: 'style',
+  tab: 'format',
   selOverlay: null,
   selClip: -1,
   hist: { stack: [], idx: -1 },
@@ -14446,13 +14465,13 @@ function openWishSheet(mode = 'cut', menge) {
       tageszeit: 'Tag für Tag; innerhalb von Morgen & Mittag bzw. Nachmittag & Abend frei nach dem Lied.',
       streng: 'Streng nach Uhrzeit der Aufnahme.' }],
     ['bw', 'Schwarzweiß?', [['kein', 'Kein'], ['moment', 'Farbmoment'], ['ganz', 'Ganzer Film']], {
-      kein: 'Alles in Farbe. Einzelne Bilder legst du im Material fest (Bild antippen → Schwarzweiß).',
-      moment: 'Schwarzweiß bis zum Höhepunkt, dort kommt die Farbe. Einzelne Bilder legst du im Material fest.',
-      ganz: 'Der ganze Film in Schwarzweiß. Bilder, die farbig bleiben sollen, markierst du im Material („Nie schwarzweiß“).' }],
+      kein: 'Alles in Farbe. Einzelne Bilder legst du unter „Aufnahmen“ fest (Bild antippen → Schwarzweiß).',
+      moment: 'Schwarzweiß bis zum Höhepunkt, dort kommt die Farbe. Einzelne Bilder legst du unter „Aufnahmen“ fest.',
+      ganz: 'Der ganze Film in Schwarzweiß. Bilder, die farbig bleiben sollen, markierst du unter „Aufnahmen“ („Nie schwarzweiß“).' }],
     st.format === '9:16' && land ? ['quer', `Querfotos (${land})`, [['auto', 'Automatisch'], ['split', 'Split-Screen'], ['drehen', 'Hochkant gedreht']], {
       auto: 'Die Regie wählt den Ausschnitt; wo es passt, zwei übereinander.',
       split: 'Querfotos paarweise übereinander als Split-Screen, ganz zu sehen.',
-      drehen: 'Um 90° gedreht und bildfüllend, der Himmel rechts: zum Anschauen das Handy quer halten. Einzelne Bilder stellst du im Material um.' }] : null,
+      drehen: 'Um 90° gedreht und bildfüllend, der Himmel rechts: zum Anschauen das Handy quer halten. Einzelne Bilder stellst du unter „Aufnahmen“ um.' }] : null,
     ['length', 'Wie lang?', [['auto', 'Passend zum Song'], ['full', 'Ganzer Song']], {
       auto: `Ca. ${fmtClock(adv.length)}: so lang, wie Song und Aufnahmen es tragen.`,
       full: story && songLen > 60 ? `Eine Story zeigt höchstens 60 s am Stück: der Film nimmt den besten Ausschnitt. Für den ganzen Song (${fmtClock(songLen)}) oben Reel oder Film wählen.` : `Der ganze Song, ${fmtClock(songLen)}.` }],
@@ -15890,6 +15909,7 @@ async function rebuild(opts = {}) {
     $('esHint').textContent = fl ? 'Start, Landung und gern den Blick aus dem Fenster. Die App ordnet sie nach Aufnahmezeit; dazwischen zeichnet sich die Flugroute.' : missing ? 'Die Aufnahmen sind nicht mehr im Zwischenspeicher. Am einfachsten wählst du alle Fotos der Reise, jede Aufnahme landet am richtigen Ort.' : 'Den Rest erledigt die Auto-Regie: Länge, Songausschnitt, Schnitt, Look.';
   }
   mon.classList.toggle('empty', empty);
+  $('viewEdit').classList.toggle('is-empty', empty);
   buildStripBase();
   drawStrip();
   if (S.tab === 'cut' || document.querySelector('.app').dataset.level === 'bench') renderCut();
@@ -15925,6 +15945,7 @@ function showFlow(media) {
   const empty = ctx.kind === 'place' && !media.length;
   $('emptyStage').hidden = !empty;
   $('monitor').classList.toggle('empty', empty);
+  $('viewEdit').classList.toggle('is-empty', empty);
   $('exportBtn').disabled = true;
   $('durLabel').textContent = '–';
   $('cutInfo').textContent = empty ? 'Noch kein Material. Füge Fotos oder Videos hinzu.' : ctx.rec.flow === 'song' ? 'Noch kein Film: zuerst der Song' : 'Song steht – bereit zum Schneiden';
@@ -15964,7 +15985,7 @@ function showFlow(media) {
     let verdict;
     if (ctx.kind === 'bestof') verdict = 'Der Gesamtfilm nimmt aus jedem Ort die stärksten Momente, in Kapiteln.';
     else if (isFlight(ctx.rec)) verdict = 'Abflug, Flugroute und Landung ordnet die Regie selbst.';
-    else if (nI > b) verdict = allOn ? `Mehr als ideal: Alle ${nI} kommen hinein. Die Regie verlängert den Film, wenn der Song es hergibt, und verdichtet sonst im Refrain (Split-Screens, Foto-Serien); ruhige Teile bleiben ruhig. Lieber luftiger? Unter „Look“ auf „Beste Auswahl“: dann nimmt sie die stärksten ${adv.ideal.images}.` : `Mehr als ideal: Die Regie nimmt die stärksten ${adv.ideal.images} (Einstellung „Beste Auswahl“).`;
+    else if (nI > b) verdict = allOn ? `Mehr als ideal: Alle ${nI} kommen hinein. Die Regie verlängert den Film, wenn der Song es hergibt, und verdichtet sonst im Refrain (Split-Screens, Foto-Serien); ruhige Teile bleiben ruhig. Lieber luftiger? Unter „Format“ auf „Beste Auswahl“: dann nimmt sie die stärksten ${adv.ideal.images}.` : `Mehr als ideal: Die Regie nimmt die stärksten ${adv.ideal.images} (Einstellung „Beste Auswahl“).`;
     else if (nI < a) verdict = `Etwas weniger als ideal: Jedes Bild steht länger, der Film wird entsprechend kürzer. Für den vollen Bogen fehlen etwa ${a - nI} Aufnahmen – oder du nimmst sie so, auch das wird rund.`;
     else verdict = 'Passt ideal zu diesem Song.';
     stage.innerHTML = `<div class="fs-inner">
@@ -16008,13 +16029,31 @@ async function cutFilm(n = 8, avoid = null) {
   perfLog.add('plan', { what: 'Besten Schnitt suchen', ms: Math.round(performance.now() - tp), tried: res.tried, media: media.length });
   if (S.ctx !== ctx) return;
   ctx.rec.settings.seed = res.seed;
+  // Hook gleich mit verstärken: Einstieg, Songstart und Startbild durchprobieren – nur, was auf Auto steht,
+  // und nur, wenn der übrige Film nicht schlechter wird (improveHook prüft die Gesamtqualität)
+  let hookMsg = '';
+  try {
+    const st = ctx.rec.settings, opts = planOpts(ctx, media);
+    busy('Suche den stärksten Einstieg …');
+    const hr = await improveHook(opts, (k, N) => busy(`Suche den stärksten Einstieg … ${k} von ${N}`), {
+      intros: !st.intro || st.intro === 'auto' ? null : [st.intro],
+      starts: st.songStart == null || st.songStart === 'auto' ? null : [st.songStart],
+    });
+    if (S.ctx === ctx && hr && hr.settings && (hr.errorsTo < hr.errorsFrom || hr.to >= hr.from + 8)) {
+      Object.assign(st, hr.settings);
+      ctx.rec.hookId = hr.hookId;
+      hookMsg = ` Hook ${hr.from} → ${hr.to} von 100.`;
+    }
+  } catch (e) { console.error(e); }
+  busy(null);
+  if (S.ctx !== ctx) return;
   if (ctx.rec.flow) ctx.rec.flow = 'done';
   commit();
   savePlaceSoon();
   $('flowStage').hidden = true;
   engine.t = 0;
   await rebuild({ fresh: true });
-  toast(`Fertig: der beste von ${res.tried.length} geprüften Schnitten. ${res.audit && res.audit.length ? `${res.audit.length} Stelle${res.audit.length === 1 ? '' : 'n'} weicht vom Song ab.` : 'Stimmig: jeder Schnitt passt zum Song.'}`);
+  toast(`Fertig: der beste von ${res.tried.length} geprüften Schnitten. ${res.audit && res.audit.length ? `${res.audit.length} Stelle${res.audit.length === 1 ? '' : 'n'} weicht vom Song ab.` : 'Stimmig: jeder Schnitt passt zum Song.'}${hookMsg}`);
 }
 
 async function showPoster() {
@@ -16128,7 +16167,7 @@ function setLevel(lv, save = true) {
   if (lv === 'bench' && wrap.parentElement !== dock) { dock.appendChild(wrap); dock.hidden = false; renderCut(); }
   if (lv === 'regie' && wrap.parentElement === dock) { $('tab-cut').insertBefore(wrap, $('tab-cut').querySelector('.row')); dock.hidden = true; }
   // in der Regie gibt es keinen Schnitt-Reiter: zurück zum Look
-  if (lv === 'regie' && S.tab === 'cut') { const t = document.querySelector('#tabbtn-style'); t && t.click(); }
+  if (lv === 'regie' && S.tab === 'cut') { const t = document.querySelector('#tabbtn-format'); t && t.click(); }
   if (save) { try { localStorage.setItem(LEVEL_KEY, lv); } catch (e) { /* egal */ } }
 }
 // Werkbank: laufende Einstellung in der Zeitleiste markieren und im Blick halten
@@ -16585,7 +16624,7 @@ async function newPlace() {
   };
   S.places.push(rec);
   await S.store.put('places', rec);
-  S.tab = 'style';
+  S.tab = 'format';
   await openPlace(rec.id);
 }
 
@@ -16710,13 +16749,22 @@ function renderEditor() {
   $('placeName').readOnly = isBest;
   $('placeSub').value = isBest ? `${ctx.chapters.length} Kapitel · ${S.trip.name}` : ctx.rec.sub || '';
   $('placeSub').readOnly = isBest;
-  $('tabbtn-material').textContent = isBest ? 'Kapitel' : 'Material';
+  $('tabbtn-material').querySelector('span').textContent = isBest ? 'Kapitel' : 'Aufnahmen';
   renderTabs();
   renderMaterial();
   renderMusic();
   renderStyle();
 }
 
+/** Nach dem Reiterwechsel: klebt die Reiterleiste oben, beginnt der neue Bereich direkt darunter statt mittendrin. */
+function keepTabsInView() {
+  const tabs = document.querySelector('.tabs'), pn = $('tab-' + S.tab);
+  if (!tabs || !pn || pn.hidden) return;
+  const tb = tabs.getBoundingClientRect(), top = parseFloat(getComputedStyle(tabs).top) || 0;
+  if (tb.top > top + 2) return;
+  const d = pn.getBoundingClientRect().top - tb.bottom - 8;
+  if (d < 0) window.scrollBy(0, d);
+}
 function renderTabs() {
   for (const b of document.querySelectorAll('.tabs [role="tab"]')) {
     const on = b.dataset.tab === S.tab;
@@ -16832,7 +16880,7 @@ function openMediaSheet(id) {
     <div class="field"><span class="field-label">Schwarzweiß</span><div id="bwPick">${radioHTML('Schwarzweiß', [['auto', 'Wie der Film'], ['yes', 'Immer schwarzweiß'], ['no', 'Nie schwarzweiß']], m.bw === true ? 'yes' : m.bw === false ? 'no' : 'auto')}</div>
       <p class="hint small">Nie: das Foto bleibt farbig, auch in Schwarzweiß-Momenten und -Looks. Immer: es erscheint im Film schwarzweiß.</p></div>
     <div class="field"><span class="field-label">Wir-Aufnahme</span><div id="usPick">${radioHTML('Wir-Aufnahme', [['yes', 'Ja, wir'], ['no', 'Nein']], m.us === true ? 'yes' : 'no')}</div>
-      <p class="hint small">Eure Aufnahmen bekommen einen besonderen Platz: die ruhigen Passagen, mehr Zeit, einen eigenen Wir-Moment und das Schlussbild. Schneller markieren: im Material „Wir markieren“ und Bilder antippen.</p></div>
+      <p class="hint small">Eure Aufnahmen bekommen einen besonderen Platz: die ruhigen Passagen, mehr Zeit, einen eigenen Wir-Moment und das Schlussbild. Schneller markieren: unter „Aufnahmen“ auf „Wir markieren“ und Bilder antippen.</p></div>
     <div class="sheet-actions">
       <button class="btn" data-act="fav" type="button">${m.fav ? '♥ Nicht mehr sicher im Film' : '♡ Favorit: sicher im Film'}</button>
       ${flightRole ? `<button class="btn" data-act="takeoff" type="button">${flightRole === 'takeoff' ? '✓ Abflug' : 'Als Abflug verwenden'}</button>
@@ -17194,7 +17242,7 @@ function capacityText() {
   if (how.length) parts.push(`Verdichtet: ${how.join(', ')}.`);
   if (c.all && c.droppedIds.length) parts.push('Mehr passt selbst verdichtet nicht sinnvoll hinein: wähle eine längere Länge oder ein Reel.');
   if (c.repeats) parts.push(`${c.repeats} ${c.repeats === 1 ? 'Einstellung wiederholt' : 'Einstellungen wiederholen'} ein Bild: für diese Länge fehlen Aufnahmen.`);
-  if (c.tooLong.length) parts.push(`${c.tooLong.length === 1 ? 'Ein Video ist' : c.tooLong.length + ' Videos sind'} länger als ${Math.round(c.vmax)} s: im Material antippen und einen Ausschnitt wählen.`);
+  if (c.tooLong.length) parts.push(`${c.tooLong.length === 1 ? 'Ein Video ist' : c.tooLong.length + ' Videos sind'} länger als ${Math.round(c.vmax)} s: unter „Aufnahmen“ antippen und einen Ausschnitt wählen.`);
   return parts.join(' ');
 }
 
@@ -17255,9 +17303,19 @@ function renderRegie() {
   // Hook-Prüfung: Stopp-Wert der ersten 1,5 s
   if (good && S.ctx.song && S.ctx.song.an) {
     try { S.hook = hookScore(p, filmMedia(S.ctx), S.ctx.song.an); } catch (e) { S.hook = null; }
-    if (S.hook) items.unshift(['hook', 'Hook', `${S.hook.score} / 100`, hookVerdict(S.hook, true)]);
   }
-  dec.innerHTML = items.map(([k, l, v, sub]) => `<button type="button" class="dec" data-go="${k}"><span>${l}</span><b>${esc(v)}</b>${sub ? `<i>${esc(sub)}</i>` : ''}</button>`).join('');
+  // Hook als breite Karte mit Leiste: der Wert, der im Feed über Weiterwischen entscheidet, und die Verbesserung mit einem Tipp
+  const h = S.hook;
+  const hookCard = h ? `<div class="hook-card${h.errors ? ' bad' : h.score >= 75 ? ' good' : ''}">
+      <button type="button" class="hook-main" data-go="hook" aria-label="Hook ${h.score} von 100: Details">
+        <span class="hook-k">Hook</span><b>${h.score}<small> / 100</small></b><i>${esc(hookVerdict(h, true))}</i>
+        <span class="hook-meter" aria-hidden="true"><i style="width:${Math.max(3, h.score)}%"></i></span>
+      </button>
+      ${h.score < 90 || h.errors ? '<button type="button" class="btn small primary-outline hook-fix" id="hookFix">Verbessern</button>' : ''}
+    </div>` : '';
+  dec.innerHTML = hookCard + items.map(([k, l, v, sub]) => `<button type="button" class="dec" data-go="${k}"><span>${l}</span><b>${esc(v)}</b>${sub ? `<i>${esc(sub)}</i>` : ''}</button>`).join('');
+  const hf = $('hookFix');
+  if (hf) hf.addEventListener('click', improveHookNow);
   const notes = good ? p.notes : ['Wähle Fotos und Videos. Die Auto-Regie bestimmt dann Filmlänge, Songausschnitt, Schnitt, Look und Farbangleichung.'];
   const open = ul.dataset.open === '1' || !good;
   ul.innerHTML = (open ? notes.map((n) => `<li>${esc(n)}</li>`).join('') : '') + (good ? `<li class="more-toggle"><button type="button" id="regieMore">${open ? 'Begründung ausblenden' : `Warum so? ${notes.length} Entscheidungen im Klartext`}</button></li>` : '');
@@ -17300,32 +17358,34 @@ function openHookSheet() {
     const a = e.target.closest('[data-act]');
     if (!a) return;
     if (a.dataset.act === 'loop') { closeSheet(); HOOKLOOP.on = true; HOOKLOOP.n = 0; engine.play(0); return; }
-    if (a.dataset.act === 'improve') {
-      closeSheet();
-      const ctx = S.ctx, media = filmMedia(ctx);
-      engine.pause();
-      busy('Probiere Einstiege, Songstart und Startbild …');
-      let r;
-      try { r = await improveHook(planOpts(ctx, media), (k, n) => busy(`Probiere Einstiege, Songstart und Startbild … ${k} von ${n}`)); } catch (err) { console.error(err); r = null; }
-      busy(null);
-      if (!r || !r.settings) { toast(r ? (r.errorsFrom ? `Die ${r.errorsFrom === 1 ? 'Fehlerstelle lässt' : 'Fehlerstellen lassen'} sich mit deinem Material nicht automatisch beheben – die Hinweise im Hook zeigen, was hilft (z. B. ein anderes Startbild).` : `Der Hook ist schon das Stärkste, was dein Material hergibt (${r.from}/100), ohne den übrigen Film zu verschlechtern.`) : 'Konnte den Hook nicht prüfen.'); return; }
-      Object.assign(ctx.rec.settings, r.settings);
-      ctx.rec.hookId = r.hookId;
-      commit(); savePlaceSoon();
-      engine.t = 0;
-      await rebuild();
-      toast(`Hook verbessert: ${r.from} → ${r.to} von 100${r.errorsFrom > r.errorsTo ? `, ${r.errorsFrom - r.errorsTo} Fehler behoben` : ''}. Rückgängig mit ↶.`);
-      return;
-    }
+    if (a.dataset.act === 'improve') { closeSheet(); improveHookNow(); return; }
     closeSheet();
   });
+}
+
+/** Hook automatisch verbessern: Einstiege, Songstart und Startbild durchprobieren, ohne den Rest des Films zu verschlechtern. */
+async function improveHookNow() {
+  if (!S.ctx || !S.plan || S.exporting) return;
+  const ctx = S.ctx, media = filmMedia(ctx);
+  engine.pause();
+  busy('Probiere Einstiege, Songstart und Startbild …');
+  let r;
+  try { r = await improveHook(planOpts(ctx, media), (k, n) => busy(`Probiere Einstiege, Songstart und Startbild … ${k} von ${n}`)); } catch (err) { console.error(err); r = null; }
+  busy(null);
+  if (!r || !r.settings) { toast(r ? (r.errorsFrom ? `Die ${r.errorsFrom === 1 ? 'Fehlerstelle lässt' : 'Fehlerstellen lassen'} sich mit deinem Material nicht automatisch beheben – die Hinweise im Hook zeigen, was hilft (z. B. ein anderes Startbild).` : `Der Hook ist schon das Stärkste, was dein Material hergibt (${r.from}/100), ohne den übrigen Film zu verschlechtern.`) : 'Konnte den Hook nicht prüfen.'); return; }
+  Object.assign(ctx.rec.settings, r.settings);
+  ctx.rec.hookId = r.hookId;
+  commit(); savePlaceSoon();
+  engine.t = 0;
+  await rebuild();
+  toast(`Hook verbessert: ${r.from} → ${r.to} von 100${r.errorsFrom > r.errorsTo ? `, ${r.errorsFrom - r.errorsTo} Fehler behoben` : ''}. Rückgängig mit ↶.`);
 }
 
 /** Von einer Entscheidung direkt zur passenden Einstellung springen. */
 function goDecision(k) {
   if (k === 'hook') { openHookSheet(); return; }
   if (k === 'media') S.matFilter = S.plan && S.plan.capacity && S.plan.capacity.droppedIds.length ? 'out' : 'all';
-  const target = { len: ['music', 'lenChips'], intro: ['style', 'introChips', 'grpStart'], outro: ['style', 'outroChips', 'grpStart'], look: ['style', 'lookGrid'], pace: ['style', 'paceChips', 'grpRhythm'], media: ['material', 'mediaGrid'] }[k];
+  const target = { len: ['format', 'lenChips'], intro: ['flow', 'introChips'], outro: ['flow', 'outroChips'], look: ['style', 'lookGrid'], pace: ['style', 'paceChips', 'grpRhythm'], media: ['material', 'mediaGrid'] }[k];
   if (!target) return;
   const [tab, id, grp] = target;
   $('tabbtn-' + tab).click();
@@ -18195,6 +18255,7 @@ async function init() {
     if (!b) return;
     S.tab = b.dataset.tab;
     renderTabs();
+    keepTabsInView();
     saveResume();
   });
   document.querySelector('.tabs').addEventListener('keydown', (e) => {
@@ -18328,7 +18389,7 @@ async function init() {
   });
   $('clipRow').addEventListener('click', (e) => { const c = e.target.closest('[data-clip]'); if (c && !setupClipDrag.justDropped) openClipSheet(+c.dataset.clip); });
   setupClipDrag();
-  // aufgeklappte Gruppen im Look-Tab merken (nur Bequemlichkeit, fehlt der Speicher, bleiben sie zu)
+  // aufgeklappte Gruppen im Stil-Tab merken (nur Bequemlichkeit, fehlt der Speicher, bleiben sie zu)
   for (const d of document.querySelectorAll('details.group')) {
     try { d.open = localStorage.getItem('cb.grp.' + d.id) === '1'; } catch (err) { /* ignore */ }
     d.addEventListener('toggle', () => { try { localStorage.setItem('cb.grp.' + d.id, d.open ? '1' : '0'); } catch (err) { /* ignore */ } });

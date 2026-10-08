@@ -152,6 +152,8 @@ textarea.text-in { resize: vertical; min-height: 70px; }
 }
 /* Song-Ablauf: die Bühne nimmt die volle Breite und so viel Höhe wie der Inhalt braucht */
 .stage.flowing .transport, .stage.flowing .stage-tools { display: none; }
+/* noch kein Material: nur das Bild mit „Aus der Galerie wählen“, keine Zeitleiste, kein Export */
+.is-empty .transport, .is-empty .stage-tools, .is-empty .level, .is-empty .regie, .is-empty .export-bar { display: none; }
 .monitor.flow { aspect-ratio: auto; width: 100%; min-height: 0; }
 .monitor.flow .flow-stage { position: relative; inset: auto; overflow: visible; }
 .monitor.flow canvas#screen, .monitor.flow .hud, .monitor.flow .bigplay, .monitor.flow .sample-chip { display: none; }
@@ -224,10 +226,23 @@ textarea.text-in { resize: vertical; min-height: 70px; }
 
 .panel { display: grid; gap: 12px; }
 .regie { border-radius: var(--radius); border: 1px solid rgba(228, 213, 183, 0.22); background: linear-gradient(160deg, rgba(28, 47, 77, 0.55), rgba(10, 16, 27, 0.9)); padding: 14px 16px; display: grid; gap: 10px; }
-.regie-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.regie-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.regie-head h2 { flex: 1 0 100%; }
 .regie h2 { margin: 0; display: flex; align-items: center; gap: 8px; font-family: var(--f-display); font-size: 13px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--beige); }
 .regie h2 svg { width: 17px; height: 17px; }
 .decisions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.hook-card { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(228, 213, 183, 0.28); background: rgba(5, 6, 8, 0.45); }
+.hook-card.good { border-color: rgba(228, 213, 183, 0.55); }
+.hook-card.bad { border-color: rgba(226, 122, 110, 0.6); }
+.hook-main { flex: 1; min-width: 0; display: grid; grid-template-columns: auto 1fr; align-items: baseline; column-gap: 10px; row-gap: 4px; padding: 0; border: 0; background: none; color: var(--text); text-align: left; cursor: pointer; }
+.hook-main .hook-k { grid-column: 1 / -1; font: 600 9.5px/1.2 var(--f-sans); letter-spacing: 0.12em; text-transform: uppercase; color: var(--beige-2); }
+.hook-main b { font: 600 22px/1 var(--f-display); font-variant-numeric: tabular-nums; }
+.hook-main b small { font-size: 12px; font-weight: 500; color: var(--muted); }
+.hook-main > i { font-style: normal; font-size: 12px; color: var(--muted); min-width: 0; }
+.hook-meter { grid-column: 1 / -1; height: 4px; border-radius: 2px; background: rgba(236, 234, 228, 0.1); overflow: hidden; }
+.hook-meter i { display: block; height: 100%; border-radius: 2px; background: linear-gradient(90deg, var(--beige-2), var(--beige)); }
+.hook-card.bad .hook-meter i { background: var(--danger); }
+.hook-fix { flex: none; }
 .dec { display: grid; gap: 2px; align-content: start; min-height: 58px; padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(236, 234, 228, 0.1); background: rgba(5, 6, 8, 0.35); color: var(--text); text-align: left; cursor: pointer; transition: border-color 0.15s ease, background 0.15s ease; min-width: 0; }
 .dec:hover, .dec:focus-visible { border-color: rgba(228, 213, 183, 0.5); background: rgba(228, 213, 183, 0.06); }
 .dec span { font: 600 9.5px/1.2 var(--f-sans); letter-spacing: 0.12em; text-transform: uppercase; color: var(--beige-2); }
@@ -240,8 +255,10 @@ textarea.text-in { resize: vertical; min-height: 70px; }
 .regie-notes li::before { content: ""; position: absolute; left: 2px; top: 0.62em; width: 6px; height: 1px; background: var(--beige-2); }
 .tabs { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 60px); z-index: 10; display: flex; gap: 2px; padding: 4px; border-radius: 13px; background: rgb(10, 16, 27); border: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
 .tabs::-webkit-scrollbar { display: none; }
-.tabs button { flex: 1 0 auto; min-height: 38px; padding: 0 12px; border: 0; border-radius: 10px; background: transparent; color: var(--muted); font-weight: 600; font-size: 13px; cursor: pointer; }
-.tabs button[aria-selected="true"] { background: var(--navy-3); color: var(--text); }
+.tabs button { flex: 1 0 50px; display: grid; justify-items: center; align-content: center; gap: 3px; min-height: 52px; padding: 6px 4px 5px; border: 0; border-radius: 10px; background: transparent; color: var(--muted); font-weight: 600; font-size: 11px; letter-spacing: 0.01em; cursor: pointer; transition: color 0.15s ease, background 0.15s ease; }
+.tabs button svg { width: 20px; height: 20px; }
+.tabs button:hover { color: var(--text); }
+.tabs button[aria-selected="true"] { background: var(--navy-3); color: var(--beige); box-shadow: inset 0 0 0 1px var(--line-2); }
 @media (min-width: 960px) { .tabs { top: calc(env(safe-area-inset-top, 0px) + 64px); } }
 .tabpanel { display: grid; gap: 18px; padding: 16px; border-radius: var(--radius); border: 1px solid var(--line); background: rgba(10, 16, 27, 0.85); }
 
@@ -462,9 +479,9 @@ details.more[open] { display: grid; gap: 16px; }
 .tm-info { position: absolute; left: 12px; bottom: 10px; font: 500 10.5px/1 var(--f-mono); letter-spacing: 0.08em; color: var(--muted); background: rgba(5, 6, 8, 0.72); padding: 6px 9px; border-radius: 999px; pointer-events: none; font-variant-numeric: tabular-nums; }
 /* Zwei Bedienebenen */
 .level { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border-radius: 14px; background: rgb(10, 16, 27); border: 1px solid var(--line); }
-.level button { display: grid; gap: 2px; text-align: left; padding: 9px 12px; border-radius: 10px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.level button { display: grid; gap: 1px; text-align: left; padding: 7px 12px; border-radius: 10px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
 .level button b { font-size: 14px; font-weight: 600; color: var(--text); }
-.level button small { font-size: 11.5px; line-height: 1.3; }
+.level button small { font-size: 11px; line-height: 1.3; }
 .level button[aria-checked="true"] { background: var(--navy-2); box-shadow: inset 0 0 0 1px var(--line-2); }
 .level button[aria-checked="true"] b { color: var(--beige); }
 .app[data-level="regie"] #tabbtn-cut, .app[data-level="regie"] #grpRhythm, .app[data-level="regie"] #grpFx { display: none; }

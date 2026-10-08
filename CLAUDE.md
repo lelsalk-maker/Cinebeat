@@ -43,7 +43,7 @@ beat-synchrone Filme macht. Läuft komplett auf dem Gerät (iPhone ist Hauptziel
 | `renderer.js` | WebGL-Shader (zwei Ebenen A/B, Grading, Übergänge, Film-Schwarzweiß `filmBW`, Farbmomente, Mehrfachbelichtung 21/22, Spiegel, Farbversatz) |
 | `overlay.js` | Titel, Kapitel, Flug- und Etappenkarte (`drawRouteMap`), Countdown usw. (Canvas 2D, ungegradet) |
 | `engine.js` | Vorschau (Audio-Uhr), Slots/Texturen, Kompositionen (Raster, Split, Stapel, Streifen), Export (WebCodecs + `mp4mux.js`/`demux.js`) |
-| `store.js`, `demo.js`, `ui.js` | IndexedDB, Beispielmaterial, gesamte Oberfläche; `src/body.html`, `src/app.css` |
+| `store.js`, `demo.js`, `ui.js` | IndexedDB, Beispielmaterial, gesamte Oberfläche; `src/body.html`, `src/app.css`. Editor-Reiter (`data-tab`): `format` (Standard) · `style` · `flow` (Vorspann/Einstieg/Ende/Reihenfolge/Wir) · `material` · `music` · `text` · `cut` (nur Werkbank). Tests klicken vor einem Regler den passenden Reiter. `cutFilm` verstärkt nach dem besten Schnitt den Hook (`improveHook` mit `only.intros/starts` = nur, was auf Auto steht; übernimmt bei ≥ 8 Punkten oder weniger Fehlern), `improveHookNow` = Knopf „Verbessern“ in der Hook-Karte (`.hook-main[data-go=hook]`). |
 
 ## Datenfluss
 `analyzeAudio` → `an` · Medien mit Scores → `buildPlan({ an, media, settings, overrides, chapters, trip, flight })` → `plan`

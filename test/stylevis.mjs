@@ -23,10 +23,10 @@ let info = await page.evaluate(() => ({ r: CineBeat.S.plan.resolved, notes: Cine
 console.log('Auto:', JSON.stringify({ color: info.r.color, accent: info.r.accent, echo: info.r.echo, stack: info.r.stack, mini: info.r.mini, drift: info.r.drift, parallax: info.r.parallax, notes: info.notes, color: info.color, drum: info.drum, pressed: info.pressed }));
 if (!info.knockHidden) fails.push('Kapitel-Schalter im Ortsfilm sichtbar');
 // Farbe vom Motiv aus + Stapel + Echo + Mini-Rewind, im ganzen Song als Reel
-await page.click('[data-tab="music"]').catch(() => {});
+await page.click('[data-tab="format"]');
 await page.click('#lenChips [data-v="full"]'); await settle();
 await page.click('[data-tab="style"]'); await page.evaluate(() => document.querySelectorAll('details.group').forEach((d) => { d.open = true; }));
-await page.click('#targetChips [data-v="reel"]'); await settle();
+await page.click('[data-tab="format"]'); await page.click('#targetChips [data-v="reel"]'); await settle(); await page.click('[data-tab="style"]');
 await page.click('#colorChips [data-v="bloom"]'); await settle();
 for (const k of ['stack', 'echo', 'mini']) {
   for (let n = 0; n < 2 && (await page.evaluate((kk) => CineBeat.S.ctx.rec.settings[kk], k)) !== 'on'; n++) { await page.click(`#fxChips [data-fx="${k}"]`); await settle(); }

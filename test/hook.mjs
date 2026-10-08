@@ -9,7 +9,7 @@ await page.waitForSelector('.place');
 await page.click('.place');
 await page.waitForFunction(() => CineBeat.S.plan && document.getElementById('busy').hidden, null, { timeout: 120000 });
 const fails = [];
-const tile = await page.$('.dec[data-go="hook"]');
+const tile = await page.$('.hook-main[data-go="hook"]');
 if (!tile) fails.push('keine Hook-Karte');
 const before = await page.evaluate(() => CineBeat.S.hook && CineBeat.S.hook.score);
 if (!(before >= 0 && before <= 100)) fails.push('Wert ' + before);

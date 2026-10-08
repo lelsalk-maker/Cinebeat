@@ -64,7 +64,7 @@ console.log('Musikvideo:', mvs);
 if (mvs.mv !== 'on' || mvs.pressed !== 'true' || mvs.layers !== 'on') errs.push('Musikvideo-Schalter wirkt nicht');
 await shot('9_mv');
 await page.click('#mvBtn'); await page.waitForTimeout(800);
-await page.click('[data-tab="style"]');
+await page.click('[data-tab="format"]');
 await page.click('#fmtChips [data-v="16:9"]');
 await page.waitForTimeout(1500);
 await shot('4_film');

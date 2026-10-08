@@ -15,10 +15,10 @@ await page.click('.place');
 const idle = () => page.waitForFunction(() => CineBeat.S.plan && document.getElementById('busy').hidden, null, { timeout: 120000 });
 await idle();
 // „Beste Auswahl“ und kurze Länge: es bleiben Aufnahmen draußen
-await page.click('[data-tab="style"]');
+await page.click('[data-tab="format"]');
 await page.click('#allChips [data-v="off"]');
 await page.waitForTimeout(600); await idle();
-await page.click('[data-tab="music"]');
+await page.click('[data-tab="format"]');
 await page.click('#lenChips [data-v="15"]');
 await page.waitForTimeout(600); await idle();
 const st = () => page.evaluate(() => { const S = CineBeat.S; return { dropped: S.plan.capacity.droppedIds.slice(), media: S.ctx.media.map((m) => ({ id: m.id, fav: !!m.fav, ex: !!m.excluded })), seed: S.ctx.rec.settings.seed, clips: S.plan.clips.map((c) => c.mediaId).join(',') }; });

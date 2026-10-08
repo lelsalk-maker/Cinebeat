@@ -153,14 +153,66 @@
         </section>
 
         <nav class="tabs" role="tablist" aria-label="Bereiche">
-          <button role="tab" id="tabbtn-style" aria-controls="tab-style" aria-selected="true" data-tab="style" type="button">Look</button>
-          <button role="tab" id="tabbtn-material" aria-controls="tab-material" aria-selected="false" data-tab="material" type="button">Material</button>
-          <button role="tab" id="tabbtn-music" aria-controls="tab-music" aria-selected="false" data-tab="music" type="button">Musik</button>
-          <button role="tab" id="tabbtn-cut" aria-controls="tab-cut" aria-selected="false" data-tab="cut" type="button">Schnitt</button>
-          <button role="tab" id="tabbtn-text" aria-controls="tab-text" aria-selected="false" data-tab="text" type="button">Text</button>
+          <button role="tab" id="tabbtn-format" aria-controls="tab-format" aria-selected="true" data-tab="format" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="3" width="10" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 9v6M21 9v6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Format</span></button>
+          <button role="tab" id="tabbtn-style" aria-controls="tab-style" aria-selected="false" data-tab="style" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/></svg><span>Stil</span></button>
+          <button role="tab" id="tabbtn-flow" aria-controls="tab-flow" aria-selected="false" data-tab="flow" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h7M4 12h11M4 17h16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="14" cy="7" r="1.6" fill="currentColor"/><circle cx="18" cy="12" r="1.6" fill="currentColor"/></svg><span>Ablauf</span></button>
+          <button role="tab" id="tabbtn-material" aria-controls="tab-material" aria-selected="false" data-tab="material" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9" cy="10" r="1.6" fill="currentColor"/><path d="M4 17l5-4.5 4 3.5 3-2.5 4 3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Aufnahmen</span></button>
+          <button role="tab" id="tabbtn-music" aria-controls="tab-music" aria-selected="false" data-tab="music" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V6l10-2v12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6.5" cy="18" r="2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="16.5" cy="16" r="2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Musik</span></button>
+          <button role="tab" id="tabbtn-text" aria-controls="tab-text" aria-selected="false" data-tab="text" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6.5V5h14v1.5M12 5v14M9 19h6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Text</span></button>
+          <button role="tab" id="tabbtn-cut" aria-controls="tab-cut" aria-selected="false" data-tab="cut" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6.5" cy="7" r="2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6.5" cy="17" r="2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M8.6 8.4L20 17M8.6 15.6L20 7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Schnitt</span></button>
         </nav>
 
-        <div class="tabpanel" id="tab-style" role="tabpanel" aria-labelledby="tabbtn-style">
+        <div class="tabpanel" id="tab-format" role="tabpanel" aria-labelledby="tabbtn-format">
+          <div class="field">
+            <span class="field-label" id="fmtLabel">Wofür?</span>
+            <div class="formats" role="radiogroup" aria-labelledby="fmtLabel" id="fmtChips">
+              <button type="button" role="radio" data-v="9:16"><i class="ar ar-916" aria-hidden="true"></i><b>Story &amp; Reel</b><span>9:16</span></button>
+              <button type="button" role="radio" data-v="4:5"><i class="ar ar-45" aria-hidden="true"></i><b>Beitrag</b><span>4:5</span></button>
+              <button type="button" role="radio" data-v="16:9"><i class="ar ar-169" aria-hidden="true"></i><b>Film</b><span>16:9</span></button>
+              <button type="button" role="radio" data-v="2.39"><i class="ar ar-239" aria-hidden="true"></i><b>Kino</b><span>2.39:1</span></button>
+            </div>
+            <div class="chips sub-chips" role="radiogroup" aria-label="Story oder Reel" id="targetChips">
+              <button type="button" role="radio" data-v="story">Story · bis 60 s</button>
+              <button type="button" role="radio" data-v="reel">Reel · bis 90 s</button>
+            </div>
+            <div class="chips sub-chips" role="radiogroup" aria-label="Welche Aufnahmen" id="allChips">
+              <button type="button" role="radio" data-v="on">Alle Aufnahmen</button>
+              <button type="button" role="radio" data-v="off">Beste Auswahl</button>
+            </div>
+            <p class="hint small" id="capHint"></p>
+          </div>
+          <div class="field">
+            <span class="field-label" id="lenLabel">Länge</span>
+            <div class="chips" role="radiogroup" aria-labelledby="lenLabel" id="lenChips">
+              <button type="button" role="radio" data-v="auto">Passend zum Material</button>
+              <button type="button" role="radio" data-v="15">15 s</button>
+              <button type="button" role="radio" data-v="30">30 s</button>
+              <button type="button" role="radio" data-v="60">60 s</button>
+              <button type="button" role="radio" data-v="90">90 s</button>
+              <button type="button" role="radio" data-v="full">Ganzer Song</button>
+            </div>
+          </div>
+          <div class="field" id="frameField">
+            <span class="field-label" id="frameLabel">Bildrahmen</span>
+            <div class="chips" role="radiogroup" aria-labelledby="frameLabel" id="frameChips">
+              <button type="button" role="radio" data-v="auto">Auto</button>
+              <button type="button" role="radio" data-v="full">Vollbild</button>
+              <button type="button" role="radio" data-v="band">Kinoband</button>
+            </div>
+            <p class="hint small">Kinoband zeigt Queraufnahmen komplett im Breitbild-Streifen, Titel stehen darunter im Schwarz.</p>
+          </div>
+          <div class="field" id="querField">
+            <span class="field-label" id="querLabel">Querfotos in der Story</span>
+            <div class="chips" role="radiogroup" aria-labelledby="querLabel" id="querChips">
+              <button type="button" role="radio" data-v="auto">Auto</button>
+              <button type="button" role="radio" data-v="split">Split-Screen</button>
+              <button type="button" role="radio" data-v="drehen">Gedreht</button>
+            </div>
+            <p class="hint small">Split-Screen: zwei Querfotos übereinander. Gedreht: das ganze Foto um 90° gedreht, der Himmel rechts – zum Ansehen das Handy quer halten. Einzelne Fotos stellst du unter „Aufnahmen“ um.</p>
+          </div>
+        </div>
+
+        <div class="tabpanel" id="tab-style" role="tabpanel" aria-labelledby="tabbtn-style" hidden>
           <div class="style-card">
             <div class="style-text"><strong>Stil-Vorlage</strong><span id="styleInfo"></span></div>
             <button class="btn small" id="styleBtn" type="button">Vorlage</button>
@@ -184,103 +236,11 @@
               <span class="sw-text"><b>Musikvideo</b><span>Mehrfachbelichtungen im Takt, Farbe auf der Bassdrum, Spiegelmoment</span></span>
               <span class="sw" aria-hidden="true"><i></i></span>
             </button>
-            <button type="button" class="switch-row" id="usBtn" role="switch" aria-checked="true">
-              <span class="sw-text"><b>Wir-Vorrang</b><span>Von euch als WIR markierte Aufnahmen: ruhige Passagen, mehr Zeit, eigener Wir-Moment und Schlussbild. Markieren im Material.</span></span>
-              <span class="sw" aria-hidden="true"><i></i></span>
-            </button>
-          </div>
-          <div class="field">
-            <span class="field-label" id="orderLabel">Reihenfolge</span>
-            <div class="formats variants" role="radiogroup" aria-labelledby="orderLabel" id="orderChips">
-              <button type="button" role="radio" data-v="lied"><b>Zum Lied</b><span>jede Szene an ihre Stelle</span></button>
-              <button type="button" role="radio" data-v="tageszeit"><b>Nach Tagen</b><span>Tag für Tag</span></button>
-              <button type="button" role="radio" data-v="streng"><b>Nach Uhrzeit</b><span>streng</span></button>
-            </div>
-            <p class="hint small" id="orderHint"></p>
-          </div>
-          <div class="field">
-            <span class="field-label" id="fmtLabel">Wofür?</span>
-            <div class="formats" role="radiogroup" aria-labelledby="fmtLabel" id="fmtChips">
-              <button type="button" role="radio" data-v="9:16"><i class="ar ar-916" aria-hidden="true"></i><b>Story &amp; Reel</b><span>9:16</span></button>
-              <button type="button" role="radio" data-v="4:5"><i class="ar ar-45" aria-hidden="true"></i><b>Beitrag</b><span>4:5</span></button>
-              <button type="button" role="radio" data-v="16:9"><i class="ar ar-169" aria-hidden="true"></i><b>Film</b><span>16:9</span></button>
-              <button type="button" role="radio" data-v="2.39"><i class="ar ar-239" aria-hidden="true"></i><b>Kino</b><span>2.39:1</span></button>
-            </div>
-            <div class="chips sub-chips" role="radiogroup" aria-label="Story oder Reel" id="targetChips">
-              <button type="button" role="radio" data-v="story">Story · bis 60 s</button>
-              <button type="button" role="radio" data-v="reel">Reel · bis 90 s</button>
-            </div>
-            <div class="chips sub-chips" role="radiogroup" aria-label="Welche Aufnahmen" id="allChips">
-              <button type="button" role="radio" data-v="on">Alle Aufnahmen</button>
-              <button type="button" role="radio" data-v="off">Beste Auswahl</button>
-            </div>
-            <p class="hint small" id="capHint"></p>
-          </div>
-          <div class="field" id="frameField">
-            <span class="field-label" id="frameLabel">Bildrahmen</span>
-            <div class="chips" role="radiogroup" aria-labelledby="frameLabel" id="frameChips">
-              <button type="button" role="radio" data-v="auto">Auto</button>
-              <button type="button" role="radio" data-v="full">Vollbild</button>
-              <button type="button" role="radio" data-v="band">Kinoband</button>
-            </div>
-            <p class="hint small">Kinoband zeigt Queraufnahmen komplett im Breitbild-Streifen, Titel stehen darunter im Schwarz.</p>
-          </div>
-          <div class="field" id="querField">
-            <span class="field-label" id="querLabel">Querfotos in der Story</span>
-            <div class="chips" role="radiogroup" aria-labelledby="querLabel" id="querChips">
-              <button type="button" role="radio" data-v="auto">Auto</button>
-              <button type="button" role="radio" data-v="split">Split-Screen</button>
-              <button type="button" role="radio" data-v="drehen">Gedreht</button>
-            </div>
-            <p class="hint small">Split-Screen: zwei Querfotos übereinander. Gedreht: das ganze Foto um 90° gedreht, der Himmel rechts – zum Ansehen das Handy quer halten. Einzelne Fotos stellst du im Material um.</p>
           </div>
           <div class="field">
             <span class="field-label">Look</span>
             <div class="looks" role="radiogroup" aria-label="Farblook" id="lookGrid"></div>
           </div>
-          <details class="group" id="grpStart">
-            <summary><b>Anfang &amp; Ende</b><span>Vorspann, Einstieg, Schluss</span></summary>
-            <div class="group-body">
-              <div class="field" id="preField">
-                <span class="field-label" id="preLabel">Vorspann</span>
-                <div class="chips" role="radiogroup" aria-labelledby="preLabel" id="preChips">
-                  <button type="button" role="radio" data-v="off">Keiner</button>
-                  <button type="button" role="radio" data-v="countdown">Countdown 3 · 2 · 1</button>
-                  <button type="button" role="radio" data-v="rewind">Rewind</button>
-                </div>
-                <p class="hint small" id="preHint">Läuft vor dem Einstieg und lässt sich mit jedem Einstieg kombinieren, z. B. Countdown und danach das 9er-Raster.</p>
-              </div>
-              <div class="field">
-                <span class="field-label" id="introLabel">Einstieg</span>
-                <div class="chips" role="radiogroup" aria-labelledby="introLabel" id="introChips">
-                  <button type="button" role="radio" data-v="auto">Auto</button>
-                  <button type="button" role="radio" data-v="reveal">Aufblende</button>
-                  <button type="button" role="radio" data-v="welcome">Welcome to…</button>
-                  <button type="button" role="radio" data-v="shutter">Kino-Rollladen</button>
-                  <button type="button" role="radio" data-v="rush">Bilderflut</button>
-                  <button type="button" role="radio" data-v="countdown">Countdown</button>
-                  <button type="button" role="radio" data-v="grid">9er-Raster</button>
-                  <button type="button" role="radio" data-v="knockout">Durch den Namen</button>
-                  <button type="button" role="radio" data-v="city">Ortsname</button>
-                   <button type="button" role="radio" data-v="cinema">Titelkarte</button>
-                  <button type="button" role="radio" data-v="hook">Stärkstes Bild</button>
-                  <button type="button" role="radio" data-v="type">Wort für Wort</button>
-                  <button type="button" role="radio" data-v="split">Split-Screen</button>
-                </div>
-              </div>
-              <div class="field">
-                <span class="field-label" id="outroLabel">Ende</span>
-                <div class="chips" role="radiogroup" aria-labelledby="outroLabel" id="outroChips">
-                  <button type="button" role="radio" data-v="auto">Auto</button>
-                  <button type="button" role="radio" data-v="credits">Schlusstitel</button>
-                  <button type="button" role="radio" data-v="loop">Endlos-Loop</button>
-                  <button type="button" role="radio" data-v="freeze">Standbild</button>
-                  <button type="button" role="radio" data-v="strip">Filmstreifen</button>
-                  <button type="button" role="radio" data-v="split">Split-Screen</button>
-                </div>
-              </div>
-            </div>
-          </details>
           <details class="group" id="grpRhythm">
             <summary><b>Rhythmus &amp; Bewegung</b><span>Tempo, Kamera, Schlagzeug, Farbe</span></summary>
             <div class="group-body">
@@ -371,48 +331,63 @@
               </div>
             </div>
           </details>
-          <details class="group" id="grpText">
-            <summary><b>Titel &amp; Orte</b><span>Schrift, Einblendungen, Karte</span></summary>
-            <div class="group-body">
-              <div class="field">
-                <span class="field-label" id="fontLabel">Schrift der Titel</span>
-                <div class="chips font-chips" role="radiogroup" aria-labelledby="fontLabel" id="fontChips"></div>
-              </div>
-              <div class="field">
-                <span class="field-label" id="elLabel">Einblendungen</span>
-                <div class="chips" role="group" aria-labelledby="elLabel" id="elChips">
-                  <button type="button" aria-pressed="true" data-k="showTitle">Titel</button>
-                  <button type="button" aria-pressed="true" data-k="showChapters">Kapitel</button>
-                  <button type="button" aria-pressed="true" data-k="showStats">Reise-Statistik</button>
-                </div>
-                <p class="hint small">Alles ist optional: Tippe, um es ein- oder auszuschalten.</p>
-              </div>
-              <div class="field" id="kmField">
-                <span class="field-label" id="kmLabel">Unter dem Ortsnamen</span>
-                <div class="chips" role="radiogroup" aria-labelledby="kmLabel" id="kmChips">
-                  <button type="button" role="radio" data-v="off">Nichts</button>
-                  <button type="button" role="radio" data-v="coords">Koordinaten</button>
-                  <button type="button" role="radio" data-v="leg">Koordinaten → Etappe</button>
-                  <button type="button" role="radio" data-v="total">Koordinaten → gesamt</button>
-                </div>
-                <p class="hint small">Die Koordinaten erscheinen Ziffer für Ziffer und wechseln dann in die gefahrenen Kilometer: seit dem letzten Ort (+ km) oder seit Reisebeginn. Flugstrecken zählen nicht mit.</p>
-              </div>
-              <div class="field" id="mapField">
-                <span class="field-label">Flugkarte</span>
-                <div class="chips theme-chips" role="radiogroup" aria-label="Kartenstil" id="mapThemeChips"></div>
-                <div class="swatches" role="radiogroup" aria-label="Farbe von Route und Flugzeug" id="mapInkChips"></div>
-                <div class="chips sub-chips" role="radiogroup" aria-label="Kontinente" id="mapLandChips">
-                  <button type="button" role="radio" data-v="dots">Kontinente als Punkte</button>
-                  <button type="button" role="radio" data-v="solid">als Fläche</button>
-                  <button type="button" role="radio" data-v="off">ohne</button>
-                </div>
-                <div class="chips sub-chips" role="radiogroup" aria-label="Ansicht" id="flightViewChips">
-                  <button type="button" role="radio" data-v="globe">Globus</button>
-                  <button type="button" role="radio" data-v="flat">Flache Karte</button>
-                </div>
-              </div>
+        </div>
+
+        <div class="tabpanel" id="tab-flow" role="tabpanel" aria-labelledby="tabbtn-flow" hidden>
+          <div class="field" id="preField">
+            <span class="field-label" id="preLabel">Vorspann</span>
+            <div class="chips" role="radiogroup" aria-labelledby="preLabel" id="preChips">
+              <button type="button" role="radio" data-v="off">Keiner</button>
+              <button type="button" role="radio" data-v="countdown">Countdown 3 · 2 · 1</button>
+              <button type="button" role="radio" data-v="rewind">Rewind</button>
             </div>
-          </details>
+            <p class="hint small" id="preHint">Läuft vor dem Einstieg und lässt sich mit jedem Einstieg kombinieren, z. B. Countdown und danach das 9er-Raster.</p>
+          </div>
+          <div class="field">
+            <span class="field-label" id="introLabel">Einstieg</span>
+            <div class="chips" role="radiogroup" aria-labelledby="introLabel" id="introChips">
+              <button type="button" role="radio" data-v="auto">Auto</button>
+              <button type="button" role="radio" data-v="reveal">Aufblende</button>
+              <button type="button" role="radio" data-v="welcome">Welcome to…</button>
+              <button type="button" role="radio" data-v="shutter">Kino-Rollladen</button>
+              <button type="button" role="radio" data-v="rush">Bilderflut</button>
+              <button type="button" role="radio" data-v="countdown">Countdown</button>
+              <button type="button" role="radio" data-v="grid">9er-Raster</button>
+              <button type="button" role="radio" data-v="knockout">Durch den Namen</button>
+              <button type="button" role="radio" data-v="city">Ortsname</button>
+               <button type="button" role="radio" data-v="cinema">Titelkarte</button>
+              <button type="button" role="radio" data-v="hook">Stärkstes Bild</button>
+              <button type="button" role="radio" data-v="type">Wort für Wort</button>
+              <button type="button" role="radio" data-v="split">Split-Screen</button>
+            </div>
+          </div>
+          <div class="field">
+            <span class="field-label" id="outroLabel">Ende</span>
+            <div class="chips" role="radiogroup" aria-labelledby="outroLabel" id="outroChips">
+              <button type="button" role="radio" data-v="auto">Auto</button>
+              <button type="button" role="radio" data-v="credits">Schlusstitel</button>
+              <button type="button" role="radio" data-v="loop">Endlos-Loop</button>
+              <button type="button" role="radio" data-v="freeze">Standbild</button>
+              <button type="button" role="radio" data-v="strip">Filmstreifen</button>
+              <button type="button" role="radio" data-v="split">Split-Screen</button>
+            </div>
+          </div>
+          <div class="field">
+            <span class="field-label" id="orderLabel">Reihenfolge</span>
+            <div class="formats variants" role="radiogroup" aria-labelledby="orderLabel" id="orderChips">
+              <button type="button" role="radio" data-v="lied"><b>Zum Lied</b><span>jede Szene an ihre Stelle</span></button>
+              <button type="button" role="radio" data-v="tageszeit"><b>Nach Tagen</b><span>Tag für Tag</span></button>
+              <button type="button" role="radio" data-v="streng"><b>Nach Uhrzeit</b><span>streng</span></button>
+            </div>
+            <p class="hint small" id="orderHint"></p>
+          </div>
+          <div class="field">
+            <span class="field-label">Wir</span>
+            <button type="button" class="switch-row" id="usBtn" role="switch" aria-checked="true">
+              <span class="sw-text"><b>Wir-Vorrang</b><span>Von euch als WIR markierte Aufnahmen: ruhige Passagen, mehr Zeit, eigener Wir-Moment und Schlussbild. Markieren unter „Aufnahmen“.</span></span>
+              <span class="sw" aria-hidden="true"><i></i></span>
+            </button>
+          </div>
         </div>
 
         <div class="tabpanel" id="tab-material" role="tabpanel" aria-labelledby="tabbtn-material" hidden>
@@ -458,17 +433,6 @@
               <button type="button" role="radio" data-v="start">Songanfang</button>
             </div>
           </div>
-          <div class="field">
-            <span class="field-label" id="lenLabel">Länge</span>
-            <div class="chips" role="radiogroup" aria-labelledby="lenLabel" id="lenChips">
-              <button type="button" role="radio" data-v="auto">Passend zum Material</button>
-              <button type="button" role="radio" data-v="15">15 s</button>
-              <button type="button" role="radio" data-v="30">30 s</button>
-              <button type="button" role="radio" data-v="60">60 s</button>
-              <button type="button" role="radio" data-v="90">90 s</button>
-              <button type="button" role="radio" data-v="full">Ganzer Song</button>
-            </div>
-          </div>
           <div class="ig-card">
             <div class="ig-text">
               <span class="field-label">Für Instagram</span>
@@ -497,6 +461,43 @@
           </div>
           <div class="ovlist" id="ovList"></div>
           <p class="hint small">Ziehe Texte in der Vorschau an ihren Platz. Die Schutzzonen zeigen, wo Instagram eigene Elemente einblendet.</p>
+          <div class="field">
+            <span class="field-label" id="fontLabel">Schrift der Titel</span>
+            <div class="chips font-chips" role="radiogroup" aria-labelledby="fontLabel" id="fontChips"></div>
+          </div>
+          <div class="field">
+            <span class="field-label" id="elLabel">Einblendungen</span>
+            <div class="chips" role="group" aria-labelledby="elLabel" id="elChips">
+              <button type="button" aria-pressed="true" data-k="showTitle">Titel</button>
+              <button type="button" aria-pressed="true" data-k="showChapters">Kapitel</button>
+              <button type="button" aria-pressed="true" data-k="showStats">Reise-Statistik</button>
+            </div>
+            <p class="hint small">Alles ist optional: Tippe, um es ein- oder auszuschalten.</p>
+          </div>
+          <div class="field" id="kmField">
+            <span class="field-label" id="kmLabel">Unter dem Ortsnamen</span>
+            <div class="chips" role="radiogroup" aria-labelledby="kmLabel" id="kmChips">
+              <button type="button" role="radio" data-v="off">Nichts</button>
+              <button type="button" role="radio" data-v="coords">Koordinaten</button>
+              <button type="button" role="radio" data-v="leg">Koordinaten → Etappe</button>
+              <button type="button" role="radio" data-v="total">Koordinaten → gesamt</button>
+            </div>
+            <p class="hint small">Die Koordinaten erscheinen Ziffer für Ziffer und wechseln dann in die gefahrenen Kilometer: seit dem letzten Ort (+ km) oder seit Reisebeginn. Flugstrecken zählen nicht mit.</p>
+          </div>
+          <div class="field" id="mapField">
+            <span class="field-label">Flugkarte</span>
+            <div class="chips theme-chips" role="radiogroup" aria-label="Kartenstil" id="mapThemeChips"></div>
+            <div class="swatches" role="radiogroup" aria-label="Farbe von Route und Flugzeug" id="mapInkChips"></div>
+            <div class="chips sub-chips" role="radiogroup" aria-label="Kontinente" id="mapLandChips">
+              <button type="button" role="radio" data-v="dots">Kontinente als Punkte</button>
+              <button type="button" role="radio" data-v="solid">als Fläche</button>
+              <button type="button" role="radio" data-v="off">ohne</button>
+            </div>
+            <div class="chips sub-chips" role="radiogroup" aria-label="Ansicht" id="flightViewChips">
+              <button type="button" role="radio" data-v="globe">Globus</button>
+              <button type="button" role="radio" data-v="flat">Flache Karte</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>

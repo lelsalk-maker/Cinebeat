@@ -157,7 +157,7 @@ const S = {
   places: [],
   ctx: null,
   plan: null,
-  tab: 'style',
+  tab: 'format',
   selOverlay: null,
   selClip: -1,
   hist: { stack: [], idx: -1 },
@@ -441,13 +441,13 @@ function openWishSheet(mode = 'cut', menge) {
       tageszeit: 'Tag für Tag; innerhalb von Morgen & Mittag bzw. Nachmittag & Abend frei nach dem Lied.',
       streng: 'Streng nach Uhrzeit der Aufnahme.' }],
     ['bw', 'Schwarzweiß?', [['kein', 'Kein'], ['moment', 'Farbmoment'], ['ganz', 'Ganzer Film']], {
-      kein: 'Alles in Farbe. Einzelne Bilder legst du im Material fest (Bild antippen → Schwarzweiß).',
-      moment: 'Schwarzweiß bis zum Höhepunkt, dort kommt die Farbe. Einzelne Bilder legst du im Material fest.',
-      ganz: 'Der ganze Film in Schwarzweiß. Bilder, die farbig bleiben sollen, markierst du im Material („Nie schwarzweiß“).' }],
+      kein: 'Alles in Farbe. Einzelne Bilder legst du unter „Aufnahmen“ fest (Bild antippen → Schwarzweiß).',
+      moment: 'Schwarzweiß bis zum Höhepunkt, dort kommt die Farbe. Einzelne Bilder legst du unter „Aufnahmen“ fest.',
+      ganz: 'Der ganze Film in Schwarzweiß. Bilder, die farbig bleiben sollen, markierst du unter „Aufnahmen“ („Nie schwarzweiß“).' }],
     st.format === '9:16' && land ? ['quer', `Querfotos (${land})`, [['auto', 'Automatisch'], ['split', 'Split-Screen'], ['drehen', 'Hochkant gedreht']], {
       auto: 'Die Regie wählt den Ausschnitt; wo es passt, zwei übereinander.',
       split: 'Querfotos paarweise übereinander als Split-Screen, ganz zu sehen.',
-      drehen: 'Um 90° gedreht und bildfüllend, der Himmel rechts: zum Anschauen das Handy quer halten. Einzelne Bilder stellst du im Material um.' }] : null,
+      drehen: 'Um 90° gedreht und bildfüllend, der Himmel rechts: zum Anschauen das Handy quer halten. Einzelne Bilder stellst du unter „Aufnahmen“ um.' }] : null,
     ['length', 'Wie lang?', [['auto', 'Passend zum Song'], ['full', 'Ganzer Song']], {
       auto: `Ca. ${fmtClock(adv.length)}: so lang, wie Song und Aufnahmen es tragen.`,
       full: story && songLen > 60 ? `Eine Story zeigt höchstens 60 s am Stück: der Film nimmt den besten Ausschnitt. Für den ganzen Song (${fmtClock(songLen)}) oben Reel oder Film wählen.` : `Der ganze Song, ${fmtClock(songLen)}.` }],
@@ -1885,6 +1885,7 @@ async function rebuild(opts = {}) {
     $('esHint').textContent = fl ? 'Start, Landung und gern den Blick aus dem Fenster. Die App ordnet sie nach Aufnahmezeit; dazwischen zeichnet sich die Flugroute.' : missing ? 'Die Aufnahmen sind nicht mehr im Zwischenspeicher. Am einfachsten wählst du alle Fotos der Reise, jede Aufnahme landet am richtigen Ort.' : 'Den Rest erledigt die Auto-Regie: Länge, Songausschnitt, Schnitt, Look.';
   }
   mon.classList.toggle('empty', empty);
+  $('viewEdit').classList.toggle('is-empty', empty);
   buildStripBase();
   drawStrip();
   if (S.tab === 'cut' || document.querySelector('.app').dataset.level === 'bench') renderCut();
@@ -1920,6 +1921,7 @@ function showFlow(media) {
   const empty = ctx.kind === 'place' && !media.length;
   $('emptyStage').hidden = !empty;
   $('monitor').classList.toggle('empty', empty);
+  $('viewEdit').classList.toggle('is-empty', empty);
   $('exportBtn').disabled = true;
   $('durLabel').textContent = '–';
   $('cutInfo').textContent = empty ? 'Noch kein Material. Füge Fotos oder Videos hinzu.' : ctx.rec.flow === 'song' ? 'Noch kein Film: zuerst der Song' : 'Song steht – bereit zum Schneiden';
@@ -1959,7 +1961,7 @@ function showFlow(media) {
     let verdict;
     if (ctx.kind === 'bestof') verdict = 'Der Gesamtfilm nimmt aus jedem Ort die stärksten Momente, in Kapiteln.';
     else if (isFlight(ctx.rec)) verdict = 'Abflug, Flugroute und Landung ordnet die Regie selbst.';
-    else if (nI > b) verdict = allOn ? `Mehr als ideal: Alle ${nI} kommen hinein. Die Regie verlängert den Film, wenn der Song es hergibt, und verdichtet sonst im Refrain (Split-Screens, Foto-Serien); ruhige Teile bleiben ruhig. Lieber luftiger? Unter „Look“ auf „Beste Auswahl“: dann nimmt sie die stärksten ${adv.ideal.images}.` : `Mehr als ideal: Die Regie nimmt die stärksten ${adv.ideal.images} (Einstellung „Beste Auswahl“).`;
+    else if (nI > b) verdict = allOn ? `Mehr als ideal: Alle ${nI} kommen hinein. Die Regie verlängert den Film, wenn der Song es hergibt, und verdichtet sonst im Refrain (Split-Screens, Foto-Serien); ruhige Teile bleiben ruhig. Lieber luftiger? Unter „Format“ auf „Beste Auswahl“: dann nimmt sie die stärksten ${adv.ideal.images}.` : `Mehr als ideal: Die Regie nimmt die stärksten ${adv.ideal.images} (Einstellung „Beste Auswahl“).`;
     else if (nI < a) verdict = `Etwas weniger als ideal: Jedes Bild steht länger, der Film wird entsprechend kürzer. Für den vollen Bogen fehlen etwa ${a - nI} Aufnahmen – oder du nimmst sie so, auch das wird rund.`;
     else verdict = 'Passt ideal zu diesem Song.';
     stage.innerHTML = `<div class="fs-inner">
@@ -2003,13 +2005,31 @@ async function cutFilm(n = 8, avoid = null) {
   perfLog.add('plan', { what: 'Besten Schnitt suchen', ms: Math.round(performance.now() - tp), tried: res.tried, media: media.length });
   if (S.ctx !== ctx) return;
   ctx.rec.settings.seed = res.seed;
+  // Hook gleich mit verstärken: Einstieg, Songstart und Startbild durchprobieren – nur, was auf Auto steht,
+  // und nur, wenn der übrige Film nicht schlechter wird (improveHook prüft die Gesamtqualität)
+  let hookMsg = '';
+  try {
+    const st = ctx.rec.settings, opts = planOpts(ctx, media);
+    busy('Suche den stärksten Einstieg …');
+    const hr = await improveHook(opts, (k, N) => busy(`Suche den stärksten Einstieg … ${k} von ${N}`), {
+      intros: !st.intro || st.intro === 'auto' ? null : [st.intro],
+      starts: st.songStart == null || st.songStart === 'auto' ? null : [st.songStart],
+    });
+    if (S.ctx === ctx && hr && hr.settings && (hr.errorsTo < hr.errorsFrom || hr.to >= hr.from + 8)) {
+      Object.assign(st, hr.settings);
+      ctx.rec.hookId = hr.hookId;
+      hookMsg = ` Hook ${hr.from} → ${hr.to} von 100.`;
+    }
+  } catch (e) { console.error(e); }
+  busy(null);
+  if (S.ctx !== ctx) return;
   if (ctx.rec.flow) ctx.rec.flow = 'done';
   commit();
   savePlaceSoon();
   $('flowStage').hidden = true;
   engine.t = 0;
   await rebuild({ fresh: true });
-  toast(`Fertig: der beste von ${res.tried.length} geprüften Schnitten. ${res.audit && res.audit.length ? `${res.audit.length} Stelle${res.audit.length === 1 ? '' : 'n'} weicht vom Song ab.` : 'Stimmig: jeder Schnitt passt zum Song.'}`);
+  toast(`Fertig: der beste von ${res.tried.length} geprüften Schnitten. ${res.audit && res.audit.length ? `${res.audit.length} Stelle${res.audit.length === 1 ? '' : 'n'} weicht vom Song ab.` : 'Stimmig: jeder Schnitt passt zum Song.'}${hookMsg}`);
 }
 
 async function showPoster() {
@@ -2123,7 +2143,7 @@ function setLevel(lv, save = true) {
   if (lv === 'bench' && wrap.parentElement !== dock) { dock.appendChild(wrap); dock.hidden = false; renderCut(); }
   if (lv === 'regie' && wrap.parentElement === dock) { $('tab-cut').insertBefore(wrap, $('tab-cut').querySelector('.row')); dock.hidden = true; }
   // in der Regie gibt es keinen Schnitt-Reiter: zurück zum Look
-  if (lv === 'regie' && S.tab === 'cut') { const t = document.querySelector('#tabbtn-style'); t && t.click(); }
+  if (lv === 'regie' && S.tab === 'cut') { const t = document.querySelector('#tabbtn-format'); t && t.click(); }
   if (save) { try { localStorage.setItem(LEVEL_KEY, lv); } catch (e) { /* egal */ } }
 }
 // Werkbank: laufende Einstellung in der Zeitleiste markieren und im Blick halten
@@ -2580,7 +2600,7 @@ async function newPlace() {
   };
   S.places.push(rec);
   await S.store.put('places', rec);
-  S.tab = 'style';
+  S.tab = 'format';
   await openPlace(rec.id);
 }
 
@@ -2705,13 +2725,22 @@ function renderEditor() {
   $('placeName').readOnly = isBest;
   $('placeSub').value = isBest ? `${ctx.chapters.length} Kapitel · ${S.trip.name}` : ctx.rec.sub || '';
   $('placeSub').readOnly = isBest;
-  $('tabbtn-material').textContent = isBest ? 'Kapitel' : 'Material';
+  $('tabbtn-material').querySelector('span').textContent = isBest ? 'Kapitel' : 'Aufnahmen';
   renderTabs();
   renderMaterial();
   renderMusic();
   renderStyle();
 }
 
+/** Nach dem Reiterwechsel: klebt die Reiterleiste oben, beginnt der neue Bereich direkt darunter statt mittendrin. */
+function keepTabsInView() {
+  const tabs = document.querySelector('.tabs'), pn = $('tab-' + S.tab);
+  if (!tabs || !pn || pn.hidden) return;
+  const tb = tabs.getBoundingClientRect(), top = parseFloat(getComputedStyle(tabs).top) || 0;
+  if (tb.top > top + 2) return;
+  const d = pn.getBoundingClientRect().top - tb.bottom - 8;
+  if (d < 0) window.scrollBy(0, d);
+}
 function renderTabs() {
   for (const b of document.querySelectorAll('.tabs [role="tab"]')) {
     const on = b.dataset.tab === S.tab;
@@ -2827,7 +2856,7 @@ function openMediaSheet(id) {
     <div class="field"><span class="field-label">Schwarzweiß</span><div id="bwPick">${radioHTML('Schwarzweiß', [['auto', 'Wie der Film'], ['yes', 'Immer schwarzweiß'], ['no', 'Nie schwarzweiß']], m.bw === true ? 'yes' : m.bw === false ? 'no' : 'auto')}</div>
       <p class="hint small">Nie: das Foto bleibt farbig, auch in Schwarzweiß-Momenten und -Looks. Immer: es erscheint im Film schwarzweiß.</p></div>
     <div class="field"><span class="field-label">Wir-Aufnahme</span><div id="usPick">${radioHTML('Wir-Aufnahme', [['yes', 'Ja, wir'], ['no', 'Nein']], m.us === true ? 'yes' : 'no')}</div>
-      <p class="hint small">Eure Aufnahmen bekommen einen besonderen Platz: die ruhigen Passagen, mehr Zeit, einen eigenen Wir-Moment und das Schlussbild. Schneller markieren: im Material „Wir markieren“ und Bilder antippen.</p></div>
+      <p class="hint small">Eure Aufnahmen bekommen einen besonderen Platz: die ruhigen Passagen, mehr Zeit, einen eigenen Wir-Moment und das Schlussbild. Schneller markieren: unter „Aufnahmen“ auf „Wir markieren“ und Bilder antippen.</p></div>
     <div class="sheet-actions">
       <button class="btn" data-act="fav" type="button">${m.fav ? '♥ Nicht mehr sicher im Film' : '♡ Favorit: sicher im Film'}</button>
       ${flightRole ? `<button class="btn" data-act="takeoff" type="button">${flightRole === 'takeoff' ? '✓ Abflug' : 'Als Abflug verwenden'}</button>
@@ -3189,7 +3218,7 @@ function capacityText() {
   if (how.length) parts.push(`Verdichtet: ${how.join(', ')}.`);
   if (c.all && c.droppedIds.length) parts.push('Mehr passt selbst verdichtet nicht sinnvoll hinein: wähle eine längere Länge oder ein Reel.');
   if (c.repeats) parts.push(`${c.repeats} ${c.repeats === 1 ? 'Einstellung wiederholt' : 'Einstellungen wiederholen'} ein Bild: für diese Länge fehlen Aufnahmen.`);
-  if (c.tooLong.length) parts.push(`${c.tooLong.length === 1 ? 'Ein Video ist' : c.tooLong.length + ' Videos sind'} länger als ${Math.round(c.vmax)} s: im Material antippen und einen Ausschnitt wählen.`);
+  if (c.tooLong.length) parts.push(`${c.tooLong.length === 1 ? 'Ein Video ist' : c.tooLong.length + ' Videos sind'} länger als ${Math.round(c.vmax)} s: unter „Aufnahmen“ antippen und einen Ausschnitt wählen.`);
   return parts.join(' ');
 }
 
@@ -3250,9 +3279,19 @@ function renderRegie() {
   // Hook-Prüfung: Stopp-Wert der ersten 1,5 s
   if (good && S.ctx.song && S.ctx.song.an) {
     try { S.hook = hookScore(p, filmMedia(S.ctx), S.ctx.song.an); } catch (e) { S.hook = null; }
-    if (S.hook) items.unshift(['hook', 'Hook', `${S.hook.score} / 100`, hookVerdict(S.hook, true)]);
   }
-  dec.innerHTML = items.map(([k, l, v, sub]) => `<button type="button" class="dec" data-go="${k}"><span>${l}</span><b>${esc(v)}</b>${sub ? `<i>${esc(sub)}</i>` : ''}</button>`).join('');
+  // Hook als breite Karte mit Leiste: der Wert, der im Feed über Weiterwischen entscheidet, und die Verbesserung mit einem Tipp
+  const h = S.hook;
+  const hookCard = h ? `<div class="hook-card${h.errors ? ' bad' : h.score >= 75 ? ' good' : ''}">
+      <button type="button" class="hook-main" data-go="hook" aria-label="Hook ${h.score} von 100: Details">
+        <span class="hook-k">Hook</span><b>${h.score}<small> / 100</small></b><i>${esc(hookVerdict(h, true))}</i>
+        <span class="hook-meter" aria-hidden="true"><i style="width:${Math.max(3, h.score)}%"></i></span>
+      </button>
+      ${h.score < 90 || h.errors ? '<button type="button" class="btn small primary-outline hook-fix" id="hookFix">Verbessern</button>' : ''}
+    </div>` : '';
+  dec.innerHTML = hookCard + items.map(([k, l, v, sub]) => `<button type="button" class="dec" data-go="${k}"><span>${l}</span><b>${esc(v)}</b>${sub ? `<i>${esc(sub)}</i>` : ''}</button>`).join('');
+  const hf = $('hookFix');
+  if (hf) hf.addEventListener('click', improveHookNow);
   const notes = good ? p.notes : ['Wähle Fotos und Videos. Die Auto-Regie bestimmt dann Filmlänge, Songausschnitt, Schnitt, Look und Farbangleichung.'];
   const open = ul.dataset.open === '1' || !good;
   ul.innerHTML = (open ? notes.map((n) => `<li>${esc(n)}</li>`).join('') : '') + (good ? `<li class="more-toggle"><button type="button" id="regieMore">${open ? 'Begründung ausblenden' : `Warum so? ${notes.length} Entscheidungen im Klartext`}</button></li>` : '');
@@ -3295,32 +3334,34 @@ function openHookSheet() {
     const a = e.target.closest('[data-act]');
     if (!a) return;
     if (a.dataset.act === 'loop') { closeSheet(); HOOKLOOP.on = true; HOOKLOOP.n = 0; engine.play(0); return; }
-    if (a.dataset.act === 'improve') {
-      closeSheet();
-      const ctx = S.ctx, media = filmMedia(ctx);
-      engine.pause();
-      busy('Probiere Einstiege, Songstart und Startbild …');
-      let r;
-      try { r = await improveHook(planOpts(ctx, media), (k, n) => busy(`Probiere Einstiege, Songstart und Startbild … ${k} von ${n}`)); } catch (err) { console.error(err); r = null; }
-      busy(null);
-      if (!r || !r.settings) { toast(r ? (r.errorsFrom ? `Die ${r.errorsFrom === 1 ? 'Fehlerstelle lässt' : 'Fehlerstellen lassen'} sich mit deinem Material nicht automatisch beheben – die Hinweise im Hook zeigen, was hilft (z. B. ein anderes Startbild).` : `Der Hook ist schon das Stärkste, was dein Material hergibt (${r.from}/100), ohne den übrigen Film zu verschlechtern.`) : 'Konnte den Hook nicht prüfen.'); return; }
-      Object.assign(ctx.rec.settings, r.settings);
-      ctx.rec.hookId = r.hookId;
-      commit(); savePlaceSoon();
-      engine.t = 0;
-      await rebuild();
-      toast(`Hook verbessert: ${r.from} → ${r.to} von 100${r.errorsFrom > r.errorsTo ? `, ${r.errorsFrom - r.errorsTo} Fehler behoben` : ''}. Rückgängig mit ↶.`);
-      return;
-    }
+    if (a.dataset.act === 'improve') { closeSheet(); improveHookNow(); return; }
     closeSheet();
   });
+}
+
+/** Hook automatisch verbessern: Einstiege, Songstart und Startbild durchprobieren, ohne den Rest des Films zu verschlechtern. */
+async function improveHookNow() {
+  if (!S.ctx || !S.plan || S.exporting) return;
+  const ctx = S.ctx, media = filmMedia(ctx);
+  engine.pause();
+  busy('Probiere Einstiege, Songstart und Startbild …');
+  let r;
+  try { r = await improveHook(planOpts(ctx, media), (k, n) => busy(`Probiere Einstiege, Songstart und Startbild … ${k} von ${n}`)); } catch (err) { console.error(err); r = null; }
+  busy(null);
+  if (!r || !r.settings) { toast(r ? (r.errorsFrom ? `Die ${r.errorsFrom === 1 ? 'Fehlerstelle lässt' : 'Fehlerstellen lassen'} sich mit deinem Material nicht automatisch beheben – die Hinweise im Hook zeigen, was hilft (z. B. ein anderes Startbild).` : `Der Hook ist schon das Stärkste, was dein Material hergibt (${r.from}/100), ohne den übrigen Film zu verschlechtern.`) : 'Konnte den Hook nicht prüfen.'); return; }
+  Object.assign(ctx.rec.settings, r.settings);
+  ctx.rec.hookId = r.hookId;
+  commit(); savePlaceSoon();
+  engine.t = 0;
+  await rebuild();
+  toast(`Hook verbessert: ${r.from} → ${r.to} von 100${r.errorsFrom > r.errorsTo ? `, ${r.errorsFrom - r.errorsTo} Fehler behoben` : ''}. Rückgängig mit ↶.`);
 }
 
 /** Von einer Entscheidung direkt zur passenden Einstellung springen. */
 function goDecision(k) {
   if (k === 'hook') { openHookSheet(); return; }
   if (k === 'media') S.matFilter = S.plan && S.plan.capacity && S.plan.capacity.droppedIds.length ? 'out' : 'all';
-  const target = { len: ['music', 'lenChips'], intro: ['style', 'introChips', 'grpStart'], outro: ['style', 'outroChips', 'grpStart'], look: ['style', 'lookGrid'], pace: ['style', 'paceChips', 'grpRhythm'], media: ['material', 'mediaGrid'] }[k];
+  const target = { len: ['format', 'lenChips'], intro: ['flow', 'introChips'], outro: ['flow', 'outroChips'], look: ['style', 'lookGrid'], pace: ['style', 'paceChips', 'grpRhythm'], media: ['material', 'mediaGrid'] }[k];
   if (!target) return;
   const [tab, id, grp] = target;
   $('tabbtn-' + tab).click();
@@ -4190,6 +4231,7 @@ async function init() {
     if (!b) return;
     S.tab = b.dataset.tab;
     renderTabs();
+    keepTabsInView();
     saveResume();
   });
   document.querySelector('.tabs').addEventListener('keydown', (e) => {
@@ -4323,7 +4365,7 @@ async function init() {
   });
   $('clipRow').addEventListener('click', (e) => { const c = e.target.closest('[data-clip]'); if (c && !setupClipDrag.justDropped) openClipSheet(+c.dataset.clip); });
   setupClipDrag();
-  // aufgeklappte Gruppen im Look-Tab merken (nur Bequemlichkeit, fehlt der Speicher, bleiben sie zu)
+  // aufgeklappte Gruppen im Stil-Tab merken (nur Bequemlichkeit, fehlt der Speicher, bleiben sie zu)
   for (const d of document.querySelectorAll('details.group')) {
     try { d.open = localStorage.getItem('cb.grp.' + d.id) === '1'; } catch (err) { /* ignore */ }
     d.addEventListener('toggle', () => { try { localStorage.setItem('cb.grp.' + d.id, d.open ? '1' : '0'); } catch (err) { /* ignore */ } });

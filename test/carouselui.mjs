@@ -20,7 +20,7 @@ await page.waitForSelector('#coverExport');
 if (await page.$('#carouselExport')) fails.push('Karussell außerhalb von 4:5');
 await page.evaluate(() => CineBeat.closeSheet ? CineBeat.closeSheet() : document.getElementById('sheetBackdrop').click());
 await page.waitForTimeout(400);
-await page.click('[data-tab="style"]');
+await page.click('[data-tab="format"]');
 await page.click('#fmtChips [data-v="4:5"]');
 await page.waitForTimeout(700); await idle();
 const D0 = await page.evaluate(() => { CineBeat.S.sizeOverride = { w: 216, h: 270 }; return CineBeat.S.plan.duration; });

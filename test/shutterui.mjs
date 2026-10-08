@@ -13,7 +13,7 @@ await page.waitForSelector('.place', { timeout: 30000 });
 await page.click('.place');
 const idle = () => page.waitForFunction(() => CineBeat.S.plan && document.getElementById('busy').hidden, null, { timeout: 90000 });
 await idle();
-await page.click('[data-tab="style"]');
+await page.click('[data-tab="flow"]');
 await page.evaluate(() => document.querySelectorAll('details.group').forEach((d) => { d.open = true; }));
 await page.click('#introChips [data-v="shutter"]');
 await page.waitForTimeout(700); await idle();

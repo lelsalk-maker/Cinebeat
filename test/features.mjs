@@ -18,7 +18,7 @@ const idle = () => page.waitForFunction(() => CineBeat.S.plan && document.getEle
 const settle = async () => { await page.waitForTimeout(700); await idle(); };
 await idle();
 await page.click('[data-tab="style"]'); await page.evaluate(() => document.querySelectorAll('details.group').forEach((d) => { d.open = true; }));
-await page.click('#preChips [data-v="countdown"]'); await settle();
+await page.click('[data-tab="flow"]'); await page.click('#preChips [data-v="countdown"]'); await settle();
 await page.click('#introChips [data-v="grid"]'); await settle();
 let info = await page.evaluate(() => { const p = CineBeat.S.plan; return { pre: p.clips.filter((c) => c.pre).length, grid: p.clips.findIndex((c) => c.grid), leader: p.overlays.filter((o) => o.type === 'leader').length }; });
 console.log('Countdown + Raster:', info);
@@ -33,6 +33,7 @@ if (!info.rew || info.roles[0] !== 'tease' || !info.roles.includes('leader')) fa
 await page.click('#preChips [data-v="off"]');
 await page.click('#introChips [data-v="auto"]'); await settle();
 // Im Film: mehrere gleichzeitig
+await page.click('[data-tab="style"]'); 
 for (const k of ['morph', 'burst', 'ramp']) { await page.click(`#fxChips [data-fx="${k}"]`); await settle(); }
 info = await page.evaluate(() => { const s = CineBeat.S.ctx.rec.settings; const p = CineBeat.S.plan; return { morph: s.morph, burst: s.burst, ramp: s.ramp, pressed: [...document.querySelectorAll('#fxChips [aria-pressed="true"]')].map((b) => b.dataset.fx), bursts: p.clips.filter((c) => c.burst).length, morphs: p.clips.filter((c) => c.tin && c.tin.type >= 10).length, hint: document.getElementById('fxHint').textContent }; });
 console.log('Im Film:', info);
@@ -41,7 +42,7 @@ await page.click('#fxChips [data-fx="morph"]'); await settle();
 if (await page.evaluate(() => CineBeat.S.ctx.rec.settings.morph) !== 'off') fails.push('abwählen');
 // Digicam mit Datumsstempel, Filmstreifen-Ende
 await page.click('#lookGrid [data-v="digicam"]'); await settle();
-await page.click('#outroChips [data-v="strip"]'); await settle();
+await page.click('[data-tab="flow"]'); await page.click('#outroChips [data-v="strip"]'); await settle();
 info = await page.evaluate(() => { const p = CineBeat.S.plan; return { stamps: p.overlays.filter((o) => o.type === 'datestamp').map((o) => o.text), strip: !!p.clips[p.clips.length - 1].strip, stampPressed: document.querySelector('#fxChips [data-fx="stamp"]').getAttribute('aria-pressed') }; });
 console.log('Digicam/Strip:', info);
 if (!info.stamps.length || !info.strip || info.stampPressed !== 'true') fails.push('Digicam/Strip');
