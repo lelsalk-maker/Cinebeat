@@ -71,7 +71,8 @@ function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0
   const maxLen = (pace === 'ruhig' ? 7.5 : 6) * Math.max(1, Math.min(lengthScale > 1.6 ? 2.6 : 1.6, lengthScale));
   const pf = PACES[pace] * lengthScale * (shotBase || 1);
   const tgt = (t) => {
-    const abs = win.start + t;
+    // (10 ms nach dem Schnitt: ein Platz, der genau auf dem Abschnittswechsel beginnt, gehört zum neuen Teil)
+    const abs = win.start + t + 0.01;
     const sec = sectionAt(an, abs);
     // ruhig genug, dass jedes Bild wirkt; auch im Drop nicht hektisch
     const base = { intro: 2.6, verse: 2.1, build: 1.7, chorus: 1.35, drop: 1.2, break: 3.3, outro: 2.7 }[sec.label] || 2;
@@ -101,6 +102,16 @@ function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0
     }
     // Einsatz des Drops: zwei Schnitte genau auf den ersten Beats, danach wieder ruhiger (schlicht: nur der eine Schnitt)
     if (!simple && sec.label === 'drop' && abs - sec.start < beatDur * 2.1) return Math.max(beatMin, beatDur * (pace === 'ruhig' ? 2 : 1));
+    // Kontrast bleibt: kann der Drop wegen der Mindestlänge nicht schneller werden, stehen die ruhigen Teile entsprechend
+    // länger (Strophe ≈ 1,75×, Break ≈ 2,75× die Drop-Länge) – sonst schneidet der ganze Film im selben Takt
+    // (nur ohne Verdichtung: müssen alle Aufnahmen hinein, geht die Menge vor)
+    if (!calmMin) {
+      const minEff = Math.max(minLen, Math.ceil(minLen / beatDur - 0.02) * beatDur);
+      const r = { intro: 2.1, verse: 1.75, break: 2.4, outro: 2.1 }[sec.label];
+      if (r) v = Math.max(v, minEff * r * (1 - 0.15 * e));
+      // Aufbau: beginnt ruhiger und wird zum Einsatz hin dichter – auch wenn der Drop schon an der Mindestlänge steht
+      else if (sec.label === 'build') { const prog = Math.max(0, Math.min(1, (abs - sec.start) / Math.max(0.1, sec.end - sec.start))); v = Math.max(v, minEff * (1.9 - 0.9 * prog)); }
+    }
     return Math.max(minLen, Math.min(maxLen, v));
   };
   const n = pts.length;

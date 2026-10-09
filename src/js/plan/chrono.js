@@ -25,6 +25,11 @@ function layoutChrono(ctx, segs0, queue, bias) {
   const skipSeg = (g) => g.pre || g.leader || g.reveal || g.rush || g.gridSeg || g.miniRew;
   // nach dem Mini-Rewind steht der beste Moment noch einmal: dieser Platz nimmt keine neue Aufnahme
   for (let i = 1; i < sg.length; i++) if (sg[i - 1].miniRew && !sg[i].miniRew) sg[i].replaySeg = true;
+  // der wiederholte beste Moment bekommt mindestens zwei Schläge (nicht nur den einen Akzent-Schlag des Einsatzes)
+  for (let i = 1; i + 1 < sg.length; i++) {
+    const g = sg[i], nx = sg[i + 1];
+    if (g.replaySeg && g.end - g.start < beatDur * 1.8 && !special(nx) && !nx.vslot && !nx.tap && nx.end - g.start <= beatDur * 8.2) { g.end = nx.end; sg.splice(i + 1, 1); }
+  }
   const fitSplit = (m) => m && m.kind === 'image' && splitFit(m);
   const vidFit = (m) => m && m.kind === 'video' && splitFit(m);
   // Mindestspielzeit eines Videos: ein Takt (bei sehr viel Material knapp darunter)
@@ -155,7 +160,8 @@ function layoutChrono(ctx, segs0, queue, bias) {
       while (nk < Math.min(q.length, qi + 5) && q[nk].kind === 'video') nk++;
       const nx = q[nk];
       // (von dir verschobene Aufnahmen und ihr Ziel tauschen nie – deine Reihenfolge gilt)
-      if (room < minW(head) * 0.9 && nx && nx.kind === 'image' && same(nx) && !pinned.has(head.id) && !pinned.has(nx.id)) {
+      // (der Platz gleich nach dem Startbild ist immer ein Foto – der frühe Schnitt des Einstiegs, das Video kommt danach)
+      if ((room < minW(head) * 0.9 || g.hookNext) && nx && nx.kind === 'image' && same(nx) && !pinned.has(head.id) && !pinned.has(nx.id)) {
         q.splice(nk, 1);
         q.splice(qi, 0, nx);
         g.vDeferred = true;
@@ -204,7 +210,7 @@ function layoutChrono(ctx, segs0, queue, bias) {
         }
       }
       // ein Video darf auch Stücke einer Foto-Serie oder eines Stapels übernehmen (nie Einstieg, Vorspann, Ende)
-      const absorb = (x) => x && (normal(x) || x.burst || x.stackSeg || x.gridMid) && !x.replaySeg;
+      const absorb = (x) => x && (normal(x) || x.burst || x.stackSeg || x.gridMid) && !x.replaySeg && !x.hookNext;
       let j = i, end = g.end;
       // Plätze für die Aufnahmen nach dem Video frei halten (Split-Screens können je zwei aufnehmen)
       const after = q.slice(qi + group.length);
@@ -213,9 +219,19 @@ function layoutChrono(ctx, segs0, queue, bias) {
       const slotsAfter = (k) => { let n = 0; for (let x = k + 1; x < sg.length; x++) if (normal(sg[x]) || (sg[x].burst && !sg[x].flash)) n++; else if (sg[x].stackSeg) n += 4; return n; };
       // (eine von dir festgelegte Länge geht vor: die Fotos danach rücken dann enger oder in Split-Screens)
       const keepRoom = (k) => !!userL || end - g.start < minW(head) || slotsAfter(k) >= needAfter;
-      while (end - g.start < w * 0.95 && j + 1 < sg.length && absorb(sg[j + 1]) && sg[j + 1].end - g.start <= w * 1.2 && keepRoom(j + 1)) { j++; end = sg[j].end; }
+      // ein Abschnittswechsel (Strophe → Aufbau, Drop → Break …) ist ein Schnitt: läuft das Video schon gut halb so lang wie
+      // gewünscht, endet es dort, statt in den nächsten Teil hineinzulaufen
+      // (in einen Aufbau hinein und aus der Kraft heraus schon ab der Mindestspielzeit – dort ändert die Musik ihre Richtung)
+      const secStop = (k) => {
+        if (!sg[k] || !isSecCut(sg[k].start)) return false;
+        const la = sectionAt(an, win.start + sg[k].start - 0.05).label, lb = sectionAt(an, win.start + sg[k].start + 0.05).label;
+        const turn = lb === 'build' || isCalmLabel(la) !== isCalmLabel(lb);
+        // (wer aus seinen Korrekturen längere Videos will – vt –, bekommt sie auch über einen Aufbau hinweg)
+        return end - g.start >= (turn && vt <= 1.15 ? minW(head) * 0.95 : Math.max(minW(head), w * 0.55));
+      };
+      while (end - g.start < w * 0.95 && j + 1 < sg.length && absorb(sg[j + 1]) && !secStop(j + 1) && sg[j + 1].end - g.start <= w * 1.2 && keepRoom(j + 1)) { j++; end = sg[j].end; }
       const nx = sg[j + 1];
-      if (end - g.start < w * 0.9 && absorb(nx) && nx.end - g.start <= Math.min(w * 1.3, videoSpan(head) / 0.8) && nx.end - g.start - w < w - (end - g.start) && keepRoom(j + 1)) { j++; end = nx.end; }
+      if (end - g.start < w * 0.9 && absorb(nx) && !secStop(j + 1) && nx.end - g.start <= Math.min(w * 1.3, videoSpan(head) / 0.8) && nx.end - g.start - w < w - (end - g.start) && keepRoom(j + 1)) { j++; end = nx.end; }
       // ein Video endet auf einem ganzen Schlag: hat es ein Serienstück im halben Schlag übernommen, nimmt es das nächste
       // dazu (oder gibt das letzte zurück)
       if (!bRel.some((x) => Math.abs(x - end) < 0.02) && sg[j].burst) {

@@ -50,7 +50,8 @@ function planOnce(opts) {
   if (!flight && !opts._scale) {
     const imgTime = Math.max(barDur, D - Math.min(vidT, D * 0.7) - barDur);
     const haveShot = D / Math.max(1, segs.length), wantShot = imgTime / imgN;
-    const scale = Math.max(fr.shotMin / fr.shot, Math.min(3, wantShot / haveShot));
+    // („Beste Auswahl“: nie dichter als das natürliche Tempo – Weglassen ist gewollt, das Tempo gehört dem Song)
+    const scale = Math.max(allOn ? fr.shotMin / fr.shot : 1, Math.min(3, wantShot / haveShot));
     if (Math.abs(scale - 1) > 0.12) { segs = planCuts(an, win, s.pace, scale, shotBase, minShot, calmMin, overrides.taps, cutVary, simpleCut); usedScale = scale; }
   }
 
@@ -204,6 +205,9 @@ function planOnce(opts) {
   }
 
   // Einstieg: Mindestdauer der ersten Einstellung
+  // Startbild, Ortsname, Wort für Wort: der erste Schnitt kommt nach zwei Schlägen (≤ 1,45 s) – wie ein Cutter im Feed;
+  // der Titel bleibt über den Schnitt stehen, bis er gelesen ist
+  const hookCut = Math.min(1.45, Math.max(0.9, beatDur * 2));
   let firstMin = knock || leader || reveal || rush || intro === 'grid' ? 0 : intro === 'city' ? Math.min(D * 0.35, Math.max(2.4, barDur * 1.2)) : intro === 'cinema' ? Math.min(D * 0.35, Math.max(3.2, barDur * 1.6)) : intro === 'type' ? Math.min(D * 0.3, Math.max(1.8, barDur)) : intro === 'split' ? Math.min(D * 0.3, Math.max(2.2, barDur)) : Math.min(Math.max(1.3, barDur * 0.95), 2.8, D * 0.3);
   // der erste Drop/Refrain-Einsatz bleibt ein Schnitt: die erste Einstellung reicht höchstens bis dorthin
   // (der Titel steht trotzdem lange genug – die Einblendung läuft über den Schnitt weiter)
@@ -909,7 +913,9 @@ function planOnce(opts) {
     // „Welcome to…“: zehn Ausschnitte, die zueinander passen (ähnliche Farbe und Helligkeit, Videos bevorzugt), eine
     // weiche Kette vom stärksten aus; danach das weiterlaufende Video; zu den Schriftwechseln weitere passende Bilder
     const hookC = clips.find((c) => c.role === 'hook');
-    const pool = goodMedia(usable, gAll).filter((m) => !hookC || m.id !== hookC.mediaId);
+    const pool0 = goodMedia(usable, gAll).filter((m) => !hookC || m.id !== hookC.mediaId);
+    // Wir-Bilder nicht in die kurzen Ausschnitte (sie stehen später lang und ruhig), solange genug anderes da ist
+    const pool = pool0.filter((m) => !isUs(m)).length >= 12 ? pool0.filter((m) => !isUs(m)) : pool0;
     const dist = (a, b) => (a.avg && b.avg ? Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) : 60) + 120 * Math.abs((a.luma || 0.45) - (b.luma || 0.45));
     const seed = pool.slice().sort((a, b) => (b.score || 0) + (b.kind === 'video' ? 0.1 : 0) - (a.score || 0) - (a.kind === 'video' ? 0.1 : 0))[0];
     const chain = [], left = pool.filter((m) => m !== seed);
@@ -932,7 +938,10 @@ function planOnce(opts) {
     });
   } else if (rushC.length) {
     const hookC = clips.find((c) => c.role === 'hook');
-    const fotos = orderChrono(goodMedia(usable, gAll).filter((m) => m.kind === 'image' && (!hookC || m.id !== hookC.mediaId)));
+    // (Wir-Bilder gehören auf lange, ruhige Plätze – in der Bilderflut wären sie nur Sekundenbruchteile zu sehen)
+    const fotos0 = orderChrono(goodMedia(usable, gAll).filter((m) => m.kind === 'image' && (!hookC || m.id !== hookC.mediaId)));
+    const noUs = fotos0.filter((m) => !isUs(m));
+    const fotos = noUs.length >= Math.min(6, rushC.length) ? noUs : fotos0;
     const src = fotos.length ? fotos : goodMedia(usable, gAll).filter((m) => m.kind === 'image');
     rushC.forEach((c, k) => {
       const m = src.length ? src[Math.floor((k * src.length) / rushC.length) % src.length] : null;
@@ -965,7 +974,9 @@ function planOnce(opts) {
     const unusedFit = fitting.filter((m) => !useCount.get(m.id)), unused = pool2.filter((m) => !useCount.get(m.id));
     const src = (unusedFit.length >= 2 ? unusedFit : unused).slice().sort((a, b) => (b.score || 0) - (a.score || 0));
     // chronologisch: die aufeinanderfolgenden Aufnahmen aus dem Durchlauf
-    const ids = c.splitIds && c.splitIds.length >= 2 ? c.splitIds.slice() : orderChrono(src.slice(0, splitN)).map((m) => m.id);
+    // Split als Einstieg: die stärksten Fotos öffnen den Film (in ihrer zeitlichen Folge)
+    const src2 = si === 0 && intro === 'split' ? goodMedia(usable, gAll).filter((m) => m.kind === 'image' && !m.dupOf).sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, splitN) : src.slice(0, splitN);
+    const ids = c.splitIds && c.splitIds.length >= 2 ? c.splitIds.slice() : orderChrono(src2.length >= 2 ? src2 : src.slice(0, splitN)).map((m) => m.id);
     if (c.splitIds) for (const id of ids) useCount.set(id, (useCount.get(id) || 1) - 1);
     if (ids.length < 2) {
       // zu wenig freie Aufnahmen: normale Einstellung mit der am wenigsten gezeigten Aufnahme – im Reisefilm, wenn
@@ -1132,10 +1143,126 @@ function planOnce(opts) {
     if (cp.retimed || cp.hero) dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Feinschliff: ${[cp.retimed ? `${cp.retimed} Schnitte um ein bis zwei Beats verschoben, damit Totalen und starke Bilder wirken und Details knapp bleiben` : '', cp.hero ? `${cp.hero}× das stärkste Bild aus der Nähe auf den Einsatz bzw. ans Ende gesetzt` : ''].filter(Boolean).join('; ')}.`);
   }
 
-  // Wir-Vorrang zum Schluss: eure Fotos auf die langen Plätze in ihrer Nähe
+  // Atmen im Dauerfeuer: stehen im Drop/Refrain viele Fotos hintereinander je nur einen Schlag, hält der Cutter nach vier,
+  // fünf schnellen Bildern das stärkere von zwei Nachbarn zwei Schläge lang – ein Rhythmus statt eines Maschinengewehrs.
+  // Das schwächere Bild bleibt dafür draußen (nie ein Favorit, nie ein Wir-Foto; bei „Alle Aufnahmen“ nicht).
+  if (!flight && !allOn && !chapters) {
+    const quick = (c) => c && c.mediaId && !c.burst && !c.flash && !c.rush && !c.split && !c.grid && !c.stack && !c.pre && !c.leader && !c.reveal && !c.miniRew && !c.loop && !c.tap && !c.vid && c.role !== 'hook' && !c.replaySeg && byId.get(c.mediaId) && byId.get(c.mediaId).kind === 'image' && (c.label === 'drop' || c.label === 'chorus') && c.end - c.start <= beatDur * 1.15;
+    const locked = (m) => m.fav || isUs(m) || userMoved.has(m.id);
+    let merged = 0;
+    for (let i = 0; i < clips.length; i++) {
+      let j = i;
+      while (j < clips.length && quick(clips[j]) && (j === i || !clips[j].sectionChange)) j++;
+      if (j - i >= 8) {
+        for (let k = i + 3; k + 1 < j; k += 5) {
+          const a = clips[k], b = clips[k + 1], ma = byId.get(a.mediaId), mb = byId.get(b.mediaId);
+          if (b.sectionChange || (locked(ma) && locked(mb))) continue;
+          const keepA = locked(ma) || (!locked(mb) && (ma.score || 0) >= (mb.score || 0));
+          if (!keepA) a.mediaId = b.mediaId;
+          a.end = b.end;
+          b._drop = true;
+          merged++;
+        }
+      }
+      i = Math.max(i, j - 1);
+    }
+    if (merged) {
+      for (let k = clips.length - 1; k >= 0; k--) if (clips[k]._drop) clips.splice(k, 1);
+      clips.forEach((c, k) => { c.i = k; });
+      dir.notes.push(`Rhythmus: im schnellen Teil hält ${merged === 1 ? 'ein starkes Bild' : `${merged}× ein starkes Bild`} zwei Schläge – der Schnitt atmet mit der Musik statt im Dauerfeuer.`);
+    }
+  }
+
+  // Abschnittswechsel sind Schnitte: liegt ein Wechsel (Strophe → Aufbau, Drop → Break, Drop → Outro …) mitten in einer
+  // Einstellung, verlegt der Cutter den nächstgelegenen Schnitt genau auf den Wechsel – der Nachbar bekommt die Zeit.
+  // Beide Einstellungen behalten mindestens einen Takt (Videos laufen weiter mindestens einen Takt).
+  if (!flight) {
+    const fixedX = (c) => !c || c.burst || c.flash || c.rush || c.leader || c.pre || c.knock || c.reveal || c.grid || c.gridMid || c.stack || c.miniRew || c.loop || c.flightAnim || c.welcome || c.recap || c.strip || c.mediaId && userVideoLen(byId.get(c.mediaId));
+    const bounds = (an.sections || []).map((x) => x.start - win.start).filter((t) => t > 0.3 && t < D - 0.3);
+    let moved = 0;
+    for (const b of bounds) {
+      const c = clips.find((x) => x.start < b - 0.05 && x.end > b + 0.05);
+      if (!c || fixedX(c) || c.tap) continue;
+      const pv = clips[c.i - 1], nx = clips[c.i + 1];
+      const minL = (x) => (x && byId.get(x.mediaId) && byId.get(x.mediaId).kind === 'video' ? Math.max(barDur, 1.9) : Math.max(beatDur * 2, 0.9));
+      // lieber den kürzeren Teil an den Nachbarn geben
+      const opts2 = [];
+      // (der Nachbar bekommt höchstens einen Takt dazu und steht danach nicht länger als zwei Takte bzw. ein Video so lang,
+      // wie es reicht – sonst bleibt es, wie es ist)
+      // (ein Drop-/Refrain-Einsatz muss ein Schnitt sein: dort darf der Nachbar bis zu zwei Takte dazubekommen)
+      const peakB = ['drop', 'chorus'].includes(sectionAt(an, win.start + b + 0.02).label) && !['drop', 'chorus'].includes(sectionAt(an, win.start + b - 0.05).label);
+      // (wächst der Nachfolger in einen ausklingenden Teil – Outro, Break –, darf er dort bis zu zweieinhalb Takte dazubekommen:
+      // im Ausklang stehen Bilder ohnehin länger)
+      const calmIn = ['outro', 'break'].includes(sectionAt(an, win.start + b + 0.02).label) && !isCalmLabel(sectionAt(an, win.start + b - 0.05).label);
+      const grows = (x, add, after) => { const cl = after && calmIn; return add <= barDur * (peakB ? 2 : cl ? 2.5 : 1) + 0.05 && (byId.get(x.mediaId) && byId.get(x.mediaId).kind === 'video' ? x.end - x.start + add <= videoSpan(byId.get(x.mediaId)) / Math.max(0.5, x.rate || 1) : x.end - x.start + add <= Math.max(barDur * (cl ? 3.5 : peakB ? 3 : 2), cl ? 6 : 4.5)); };
+      if (pv && !fixedX(pv) && c.end - b >= (peakB ? (byId.get(c.mediaId) && byId.get(c.mediaId).kind === 'video' ? 1.5 : Math.min(minL(c), barDur * 0.5)) : minL(c)) - 0.06 && grows(pv, b - c.start)) opts2.push(['start', b - c.start]);
+      // (ein Foto, das in den Drop/Refrain hineinwächst, steht dort höchstens einen Takt – der Einsatz bleibt schnell)
+      const peakHold = (x, add) => !peakB || !(byId.get(x.mediaId) && byId.get(x.mediaId).kind === 'image') || x.end - x.start + add <= Math.max(barDur, x.end - x.start) + 0.05;
+      if (nx && !fixedX(nx) && b - c.start >= minL(c) - 0.06 && grows(nx, c.end - b, true) && peakHold(nx, c.end - b)) opts2.push(['end', c.end - b]);
+      // ein Video bleibt in dem Teil, der zu ihm passt (bewegt → Drop/Refrain, ruhig → ruhiger Teil): sonst nicht dorthin
+      // verschieben, wo es nicht hingehört – lieber endet es am Wechsel und ein Foto übernimmt den Rest
+      const mvC = byId.get(c.mediaId);
+      if (mvC && mvC.kind === 'video') {
+        const lively = (mvC.motion || 0) > 0.05, fits = (lab) => (lively ? !isCalmLabel(lab) : isCalmLabel(lab));
+        const lb0 = sectionAt(an, win.start + b - 0.05).label, la0 = sectionAt(an, win.start + b + 0.05).label;
+        if (fits(lb0) && !fits(la0)) for (let k = opts2.length - 1; k >= 0; k--) if (opts2[k][0] === 'start') opts2.splice(k, 1);
+      }
+      // die ganze Einstellung rückt auf den Wechsel (gleiche Länge): der Vorgänger wird länger, der Nachfolger kürzer
+      const len0 = c.end - c.start;
+      if (!opts2.length && pv && nx && !fixedX(pv) && !fixedX(nx) && grows(pv, b - c.start) && nx.end - (b + len0) >= minL(nx) - 0.06) opts2.push(['shift', b - c.start]);
+      if (!opts2.length) {
+        // ein Video läuft weit in den nächsten Teil: es endet am Wechsel, den Rest übernimmt ein noch nicht gezeigtes Foto,
+        // das zur Energie des neuen Teils passt (bei „Beste Auswahl“ bleiben genug übrig)
+        const mv0 = byId.get(c.mediaId);
+        if (mv0 && mv0.kind === 'video' && !allOn && b - c.start >= minL(c) && c.end - b >= barDur * 0.95) {
+          const used = new Set(clips.flatMap((x) => [x.mediaId, ...(x.split ? x.split.ids : []), ...(x.stack && x.stack.ids ? x.stack.ids : [])]).filter(Boolean));
+          const lab = sectionAt(an, win.start + b + 0.02).label, want = isCalmLabel(lab) ? (lab === 'build' ? 0.6 : 0.35) : 0.85;
+          const nb = [clips[c.i + 1]].filter(Boolean).map((x) => byId.get(x.mediaId)).filter(Boolean);
+          const cand = goodMedia(usable, gAll).filter((m) => m.kind === 'image' && !used.has(m.id) && !m.dupOf && !nb.some((n) => sameMotif(n, m)))
+            .sort((x, y) => Math.abs(mediaEnergy(x) - want) - (y.score || 0) * 0.3 - (Math.abs(mediaEnergy(y) - want) - (x.score || 0) * 0.3));
+          if (cand[0]) {
+            const nc = { ...c, start: b, mediaId: cand[0].id, vid: null, sectionChange: true, label: lab, role: 'normal' };
+            for (const k of ['srcOffset', 'rate', 'motion', 'dir', 'freezeAt', 'speed', 'voice', 'contain']) delete nc[k];
+            c.end = b;
+            clips.splice(c.i + 1, 0, nc);
+            clips.forEach((x, k) => { x.i = k; });
+            moved++;
+          }
+        }
+        continue;
+      }
+      opts2.sort((x, y) => x[1] - y[1]);
+      if (opts2[0][0] === 'start') { pv.end = b; c.start = b; } else if (opts2[0][0] === 'shift') { pv.end = b; c.start = b; c.end = b + len0; nx.start = c.end; } else { c.end = b; nx.start = b; }
+      moved++;
+    }
+    if (moved) for (const c of clips) { c.sectionChange = c.i > 0 && (an.sections || []).some((x) => Math.abs(x.start - win.start - c.start) < 0.05); if (!fixedX(c)) c.label = sectionAt(an, win.start + c.start + 0.01).label; }
+  }
+
+  // Wir-Vorrang zum Schluss (nach den Abschnitts-Schnitten, die bleiben fest): eure Fotos auf die langen Plätze in ihrer Nähe
   if (usOn && !flight) {
     const ul = usLength(clips, { byId, ovOf, moved: userMoved, blocks: lied ? 'moment' : byTime, beatDur, beats: Array.from(an.beats).map((x) => x - win.start), taps: (overrides.taps || []).map((t) => t - win.start) });
     if (ul) dir.notes.push(`Wir-Vorrang: ${ul}× euer Foto auf den längeren Platz in seiner Nähe gesetzt.`);
+  }
+
+  // Früher Schnitt im Einstieg (Startbild, Ortsname, Wort für Wort): steht das Startbild länger als 1,5 s, schneidet der
+  // Cutter nach etwa zwei Schlägen auf ein zweites starkes, noch nicht gezeigtes Foto; der Titel bleibt darüber stehen.
+  // Als letzter Schritt, damit der übrige Schnitt (Videos an ihren Stellen) unberührt bleibt. Nicht bei wenig Material,
+  // nicht bei „Alle Aufnahmen“ und nicht, wenn der Ortsname hinter den Bergen steht (der braucht das eine Bild)
+  {
+    const c = clips[P], m0 = c && byId.get(c.mediaId);
+    if (!flight && !pre && !allOn && (intro === 'city' || intro === 'hook' || intro === 'type') && c && c.role === 'hook' && T0 < 0.05 && c.end > 1.5 && D >= 8 && m0 && !(intro === 'city' && m0.skyline)) {
+      const b = bts0.filter((t) => t >= hookCut - beatDur * 0.55 && t <= 1.5 && c.end - t >= Math.max(beatDur * 2, 0.9) - 0.03).sort((x, y) => Math.abs(x - hookCut) - Math.abs(y - hookCut))[0];
+      const used = new Set(clips.flatMap((x) => [x.mediaId, ...(x.split ? x.split.ids : []), ...(x.stack && x.stack.ids ? x.stack.ids : [])]).filter(Boolean));
+      const nb = [m0, clips[P + 1] && byId.get(clips[P + 1].mediaId)].filter(Boolean);
+      const cand = b == null ? [] : goodMedia(usable, gAll).filter((m) => m.kind === 'image' && !used.has(m.id) && !m.dupOf && !nb.some((n) => sameMotif(n, m))).sort((x, y) => (y.score || 0) + 0.2 * mediaEnergy(y) - (x.score || 0) - 0.2 * mediaEnergy(x));
+      if (cand[0]) {
+        const nc = { ...c, start: b, mediaId: cand[0].id, role: 'normal', hookNext: true, sectionChange: false };
+        for (const k of ['motion', 'dir', 'punch', 'srcOffset', 'rate', 'freezeAt', 'contain']) delete nc[k];
+        c.end = b;
+        clips.splice(P + 1, 0, nc);
+        clips.forEach((x, k) => { x.i = k; });
+      }
+    }
   }
 
   // Bilderflut füllen: die Aufnahmen, die gleich danach (und davor) lang im Film stehen – ein Blitz-Vorgeschmack auf
@@ -1149,11 +1276,11 @@ function planOnce(opts) {
     const blk = anchor && byTime && !lied ? dayBlock(anchor) : null;
     const take = (c) => {
       if (!c || c.flash || c.grid || c.gridMid || c.recap || c.leader || c.pre) return;
-      for (const id of c.split ? c.split.ids : c.stack ? c.stack.ids : [c.mediaId]) { const m = byId.get(id); if (m && m.kind === 'image' && !ids.includes(id) && (blk == null || dayBlock(m) === blk)) ids.push(id); }
+      for (const id of c.split ? c.split.ids : c.stack ? c.stack.ids : [c.mediaId]) { const m = byId.get(id); if (m && m.kind === 'image' && !isUs(m) && !ids.includes(id) && (blk == null || dayBlock(m) === blk)) ids.push(id); }
     };
     for (let d = 1; ids.length < run.length && d < 40; d++) take(clips[e + d]);
     for (let d = 1; ids.length < run.length && d < 40; d++) take(clips[k - d]);
-    if (ids.length < 2) for (const m of goodMedia(usable, gAll)) if (m.kind === 'image' && ids.length < run.length && !ids.includes(m.id)) ids.push(m.id);
+    if (ids.length < 2) for (const m of goodMedia(usable, gAll)) if (m.kind === 'image' && !isUs(m) && ids.length < run.length && !ids.includes(m.id)) ids.push(m.id);
     run.forEach((c, j) => { const id = ids[j % Math.max(1, ids.length)]; if (id) { c.mediaId = id; c.reuse = true; } });
     if (ids.length) dir.notes.push(`Bilderflut bei ${fmtMS(run[0].start)}: ${run.length} Bilder im Viertelschlag – ein Vorgeschmack auf das, was gleich lang zu sehen ist.`);
     k = e;
@@ -1209,10 +1336,41 @@ function planOnce(opts) {
     const rr = refrainRhyme(clips, { byId, ovOf, moved: userMoved });
     if (rr) dir.notes.push(`Refrain-Reim: ${rr} ${rr === 1 ? 'Einstellung greift' : 'Einstellungen greifen'} im späteren Refrain Aufbau, Größe und Kamerabewegung der ersten Refrain-Bilder auf – der Film erinnert sich an sich selbst.`);
   }
+  // „Neu schneiden“ muss sichtbar anders sein: bei wenig Material (kaum Spielraum für einen anderen Rhythmus) wechseln
+  // die Fotos reihum ihre Plätze – Startbild, Wir-Momente, Favoriten-Plätze und von dir verschobene bleiben
+  if (s.recut && !flight && !chapters) {
+    const free = clips.filter((c) => c.mediaId && !c.split && !c.grid && !c.stack && !c.burst && !c.flash && !c.rush && !c.pre && !c.leader && !c.reveal && !c.miniRew && !c.loop && !c.welcome && c.role !== 'hook' && !c.usMoment && !c.replay && byId.get(c.mediaId) && byId.get(c.mediaId).kind === 'image' && !userMoved.has(c.mediaId) && !(ovOf(c) && ovOf(c).mediaId));
+    if (free.length >= 3 && free.length <= 12) {
+      const ids = free.map((c) => c.mediaId), k = s.recut % ids.length || 1;
+      free.forEach((c, j) => { c.mediaId = ids[(j + k) % ids.length]; });
+    }
+  }
   // Nie zwei gleiche Motive direkt hintereinander (Bildverständnis: Motiv-Fingerabdruck)
   if (!flight) {
     const tw = separateTwins(clips, { byId, ovOf, moved: userMoved, blocks: lied ? 'moment' : byTime });
     if (tw) dir.notes.push(`Abwechslung: ${tw}× ein gleiches Motiv (gleicher Strand, Platz oder Serie) von seinem Nachbarn getrennt.`);
+  }
+  // Wir-Fotos nie im Sekundenbruchteil (nach Reim und Abwechslung, damit kein späterer Tausch sie zurückschiebt)
+  if (usOn && !flight) {
+    // (kein Tausch, der zwei gleiche Motive nebeneinander bringen würde)
+    const twinAt = (i, mm, skip) => [clips[i - 1], clips[i + 1]].some((y) => y && y.i !== skip && y.mediaId && sameMotif(byId.get(y.mediaId), mm));
+    // in der Foto-Serie (halber Schlag je Bild) ist ein Wir-Foto kaum zu sehen: es tauscht mit dem nächsten fremden Foto
+    // auf einem normalen Platz in seiner Nähe (gleicher Tagesabschnitt bzw. Moment)
+    const plainI = (c) => c && !c.burst && !c.flash && !c.rush && !c.split && !c.grid && !c.stack && !c.pre && !c.leader && !c.reveal && !c.miniRew && !c.loop && c.role !== 'hook' && byId.get(c.mediaId) && byId.get(c.mediaId).kind === 'image' && !isUs(byId.get(c.mediaId)) && !userMoved.has(c.mediaId);
+    // ebenso ein Wir-Foto auf einem Platz unter anderthalb Schlägen: es tauscht mit einem nahen fremden Foto, das
+    // mindestens zwei Schläge steht
+    let usSwap = 0;
+    for (const c of clips) {
+      const m = byId.get(c.mediaId);
+      if (!m || !isUs(m) || userMoved.has(m.id) || m.kind !== 'image') continue;
+      const isShort = !c.split && !c.grid && !c.stack && !c.flash && !c.rush && !c.miniRew && !c.pre && !c.loop && c.end - c.start < beatDur * 1.5;
+      if (!c.burst && !isShort) continue;
+      const okLen = (x) => c.burst || x.end - x.start >= beatDur * 2;
+      let best = null;
+      for (let d = 1; d <= (lied ? 14 : 6) && !best; d++) for (const x of [clips[c.i - d], clips[c.i + d]]) if (!best && plainI(x) && okLen(x) && (lied || !byTime || dayBlock(byId.get(x.mediaId)) === dayBlock(m)) && !twinAt(x.i, m, c.i) && !twinAt(c.i, byId.get(x.mediaId), x.i)) best = x;
+      if (best) { const id = best.mediaId; best.mediaId = m.id; c.mediaId = id; usSwap++; }
+    }
+    if (usSwap) dir.notes.push(`Wir-Vorrang: ${usSwap}× euer Foto aus einem sehr kurzen Platz (Foto-Serie, schneller Drop) auf einen längeren in der Nähe gesetzt.`);
   }
 
   // Übergänge: aus dem Songaufbau und aus dem, was das vorige Bild zeigt
@@ -1339,7 +1497,9 @@ function planOnce(opts) {
   // Quellen, Tempo, Bewegung, Farbangleichung
   const voice = [], autoVoice = [];
   const videoCursor = new Map();
-  let prevDir = null;
+  let prevDir = null, dirRun = 0, actDir = null;
+  // (Vorbilder eines Refrain-Reims behalten ihre Bewegung – die spätere Einstellung wiederholt sie)
+  const rhymeModels = new Set(clips.filter((c) => c.rhyme != null).map((c) => c.rhyme));
   // Kameratempo aus dem Song: Energie je Beat, über gut einen Takt geglättet und auf den Film normiert.
   // Strophe ruhig, Refrain etwas zügiger – ohne Sprünge an den Schnitten.
   const bRel = [], bEn = [];
@@ -1495,7 +1655,18 @@ function planOnce(opts) {
       const tempo = tempoAt((c.visStart + c.visEnd) / 2);
       // Refrain-Reim: dieselbe Kamerabewegung wie das Vorbild im ersten Refrain
       const rh = c.rhyme != null && clips[c.rhyme] ? clips[c.rhyme].dir : null;
-      const mo0 = imageMotion(rng, m, outAspect, visDur, role, prevDir, rh || panHint(c), tempo);
+      let mo0 = imageMotion(rng, m, outAspect, visDur, role, prevDir, rh || panHint(c), tempo);
+      // wie ein Cutter: eine Richtung fließt höchstens über zwei Einstellungen, die dritte wechselt (Gegenrichtung oder
+      // Zoom statt Schwenk) – sonst wirkt der Film wie ein Schema (Reim und Video-Anschluss behalten ihre Richtung)
+      if (!rh && !rhymeModels.has(c.i) && !panHint(c) && mo0.dir === actDir && dirRun >= 2) {
+        const OPP = { left: 'right', right: 'left', up: 'down', down: 'up', in: 'out', out: 'in' };
+        const r2 = mulberry32(((s.seed >>> 0) ^ (c.i * 131 + 7)) >>> 0);
+        // nach zwei Zooms abwechselnd seitlich gleiten oder zurückziehen; nach Schwenks die Gegenrichtung
+        const zoom = actDir === 'in' || actDir === 'out';
+        const h = zoom && (r2() < 0.55) ? (r2() < 0.5 ? 'drift-left' : 'drift-right') : OPP[actDir];
+        const alt = imageMotion(r2, m, outAspect, visDur, role, OPP[actDir], h, tempo);
+        if (alt.dir !== actDir) mo0 = alt;
+      }
       let mo = mo0;
       if (ag) {
         const r2 = mulberry32(((s.seed >>> 0) ^ (c.i * 977)) >>> 0);
@@ -1526,8 +1697,14 @@ function planOnce(opts) {
         c.contain = true;
         // gleiches Tempo wie die übrigen Fahrten (Rahmenkanten bewegen sich mit dem Kameratempo)
         const dz = Math.min(0.07, 2 * 0.0125 * tempo * 0.75 * visDur);
-        c.motion = ag ? { from: { s: 0.93 + dz, x: 0, y: 0 }, to: { s: 0.93, x: 0, y: 0 } } : { from: { s: 0.93, x: 0, y: 0 }, to: { s: 0.93 + dz, x: 0, y: 0 } };
+        // mehrere gerahmte Bilder hintereinander: nach zwei wachsenden schwebt das dritte zurück (kein Schema)
+        const shrink = ag ? true : rh ? rh === 'out' : actDir === 'in' && dirRun >= 2;
+        c.motion = shrink ? { from: { s: 0.93 + dz, x: 0, y: 0 }, to: { s: 0.93, x: 0, y: 0 } } : { from: { s: 0.93, x: 0, y: 0 }, to: { s: 0.93 + dz, x: 0, y: 0 } };
+        c.dir = shrink ? 'out' : 'in';
       }
+      // tatsächliche Richtung (auch gerahmt) für die Abwechslung zählen
+      dirRun = c.dir === actDir ? dirRun + 1 : 1;
+      actDir = c.dir;
       let pc = c.matchCut ? clips[c.i - 1] : null;
       // gerahmte Bilder haben keinen Ausschnitt, an den die Bewegung anschließen könnte
       if (pc && (framed || pc.contain)) { c.matchCut = false; pc = null; }
@@ -1606,6 +1783,26 @@ function planOnce(opts) {
     c.motion = { from: { s: 1, x: 0, y: 0 }, to: { s: Math.max(1.04, to.s || 1), x: (to.x || 0) * 0.5, y: (to.y || 0) * 0.5 } };
     c.contain = false;
   }
+  // Startbild im Feed: eine entschlossene Fahrt ins Motiv (schnell an, weich aus) statt eines langsamen Gleitens –
+  // die ersten 1,5 s entscheiden übers Weiterwischen. Ein Video vorn behält seine eigene Bewegung.
+  if ((intro === 'hook' || intro === 'city' || intro === 'type') && !flight && clips[P] && clips[P].motion && !clips[P].split) {
+    const c = clips[P], m = media[c.mediaIndex];
+    // (Ortsname hinter den Bergen: dort trägt die ruhige Fahrt, die Himmelslinie muss durch die Schrift laufen)
+    if (m && m.kind === 'image' && !(intro === 'city' && m.skyline)) {
+      const d = Math.max(0.5, c.visEnd - c.visStart);
+      // gerahmtes Querfoto im Hochformat: als Startbild bildfüllend, die Fahrt zielt aufs Motiv (Ziel der normalen Fahrt)
+      if (c.contain) { c.contain = false; c.motion = imageMotion(mulberry32(((s.seed >>> 0) ^ 0x51ed) >>> 0), m, outAspect, d, 'normal', null, 'in', 1).m; }
+      const to = c.motion.to, z = Math.min(0.13, Math.max(0.07, 0.06 * d + 0.02));
+      c.motion = { from: { s: 1.0, x: (to.x || 0) * 0.6, y: (to.y || 0) * 0.6, r: 0 }, to: { s: Math.max(to.s || 1, 1.0 + z), x: to.x || 0, y: to.y || 0, r: 0 } };
+      c.dir = 'in'; c.ease = 'out'; c.hookPush = true;
+      // schließt das nächste Bild als Match-Cut an, fährt es vom neuen Endpunkt aus weiter (gleiche Bewegung)
+      const nx = clips[c.i + 1];
+      if (nx && nx.matchCut && nx.motion) {
+        const f = nx.motion.from, t = nx.motion.to, e = c.motion.to, cl = (v) => Math.max(-1, Math.min(1, v));
+        nx.motion = { ...nx.motion, from: { ...f, s: e.s, x: e.x, y: e.y }, to: { ...t, s: Math.max(1, e.s + (t.s - f.s)), x: cl(e.x + (t.x - f.x)), y: cl(e.y + (t.y - f.y)) } };
+      }
+    }
+  }
   let eye = null;
   // Blickführung: der Blickpunkt des nächsten Bilds beginnt dort, wo das Auge am Ende des vorigen war
   if (s.eye !== 'off') {
@@ -1616,7 +1813,8 @@ function planOnce(opts) {
   // Tempo-Abgleich: eine Fahrt, die deutlich schneller ist als beide Nachbarn, wird auf deren Tempo gebracht –
   // die Kamera wirkt wie eine durchgehende Bewegung statt wie einzelne Anläufe
   {
-    const plainM = (c) => c && c.motion && !(c.split || c.grid || c.burst || c.rush || c.stack || c.strip || c.miniRew || c.pre || c.reveal || c.revealHit || c.leader || c.flightAnim || c.loop) && media[c.mediaIndex] && media[c.mediaIndex].kind === 'image';
+    // (der Anstoß des Startbilds ist gewollt schneller – er gibt das Tempo für den Einstieg vor und wird nicht gebremst)
+    const plainM = (c) => c && c.motion && !c.hookPush && !(c.split || c.grid || c.burst || c.rush || c.stack || c.strip || c.miniRew || c.pre || c.reveal || c.revealHit || c.leader || c.flightAnim || c.loop) && media[c.mediaIndex] && media[c.mediaIndex].kind === 'image';
     const sp = clips.map((c) => (plainM(c) ? motionSpeed(c.motion, media[c.mediaIndex], outAspect, Math.max(0.25, c.visEnd - c.visStart)) : null));
     const sp0 = clips.map((c, i) => (c._m0 && sp[i] != null ? motionSpeed(c._m0, media[c.mediaIndex], outAspect, Math.max(0.25, c.visEnd - c.visStart)) : sp[i]));
     for (let i = 0; i < clips.length; i++) {

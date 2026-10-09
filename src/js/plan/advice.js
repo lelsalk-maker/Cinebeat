@@ -223,7 +223,8 @@ function hookScore(plan, media, an) {
   const add = (k, label, v, w, tip, kind = 'hinweis') => parts.push({ k, label, v: cl(v), w, tip, kind });
   const c0 = early[0] || clips[0];
   const m0 = c0 && mOf(c0);
-  const wall = c0 && c0.split && c0.split.orient === 'wall' ? c0.split : null;
+  // (Kino-Rollladen und Split-Einstieg: jedes neu erscheinende Feld ist eine Veränderung im Bild)
+  const wall = c0 && c0.split && c0.split.reveal ? c0.split : null;
   // Bewegung ab dem ersten Bild: Kamerafahrt je Sekunde oder bewegtes Video
   let mv = 0;
   if (c0 && c0.motion) {
@@ -233,7 +234,9 @@ function hookScore(plan, media, an) {
   if (m0 && m0.kind === 'video') mv = Math.max(mv, (m0.motion || 0) / 0.04);
   if (plan.intro === 'rush' || plan.intro === 'knockout' || wall) mv = Math.max(mv, 1);
   // frühe Veränderung: Schnitte in den ersten 1,5 s (im Kino-Rollladen zählt jedes neu erscheinende Feld)
-  const cuts = clips.filter((c) => c.start > 0.05 && c.start < W).length + (wall ? wall.reveal.filter((r) => r > 0.05 && r < W).length : 0);
+  // 9er-Raster: jedes Feld, das im Takt farbig wird, ist eine sichtbare Veränderung
+  const grid0 = c0 && c0.grid && c0.grid.colorAt ? c0.grid : null;
+  const cuts = clips.filter((c) => c.start > 0.05 && c.start < W).length + (wall ? wall.reveal.filter((r) => r > 0.05 && r < W).length : 0) + (grid0 ? grid0.colorAt.filter((r) => r > 0.05 && r < W).length : 0);
   // Musik: Energie der ersten Schläge gegenüber dem Song
   const en = Array.from(an.energy || []), bt = Array.from(an.beats || []);
   const med = en.length ? en.slice().sort((a, b) => a - b)[en.length >> 1] : 0.5;
@@ -244,7 +247,9 @@ function hookScore(plan, media, an) {
   // (ein abgedunkeltes Bild unter dem Titel ist kein Schwarz – nur echtes Schwarz bzw. fast schwarz zählt)
   const black = (plan.fx || []).some((f) => (f.type === 'black' || (f.type === 'dim' && (f.amp == null || f.amp >= 0.75))) && f.start < 0.3 && f.end > 0.45);
   const slow = plan.intro === 'cinema' || (plan.win.fadeIn || 0) > 0.3;
-  add('start', 'Kein Anlauf aus Schwarz', black || slow ? 0 : 1, 0, 'Der Film beginnt mit Schwarz oder einer langsamen Aufblende: einen Einstieg ohne Schwarzbild wählen (z. B. Startbild mit Titel).', 'fehler');
+  // (im Kinoformat ist die Titelkarte auf Schwarz ein klassischer, gewollter Anfang – dort nur ein Hinweis)
+  const cine = plan.format === '16:9' || plan.format === '2.39';
+  add('start', 'Kein Anlauf aus Schwarz', black || slow ? 0 : 1, cine ? 0.1 : 0, 'Der Film beginnt mit Schwarz oder einer langsamen Aufblende: einen Einstieg ohne Schwarzbild wählen (z. B. Startbild mit Titel).', cine ? 'hinweis' : 'fehler');
   // (eine ruhige Kamerafahrt ist kein Stillstand – Fehler ist nur: kaum Bewegung und kein Schnitt)
   add('still', 'Sofort etwas los', mv >= 0.1 || cuts >= 1 ? 1 : 0, 0, 'In den ersten 1,5 s bewegt sich nichts und es gibt keinen Schnitt: ein Video oder einen früheren Schnitt vorn.', 'fehler');
   // erstes Bild, das man wirklich sieht (mindestens 0,4 s; Blitzbilder einer Bilderflut zählen nicht)
@@ -260,7 +265,8 @@ function hookScore(plan, media, an) {
   add('change', 'Früher Schnitt', cuts >= 2 ? 1 : cuts === 1 ? 0.8 : 0.3, 0.2, 'Ein zweiter Schnitt in der ersten Sekunde (z. B. Bilderflut-Einstieg) macht neugierig.');
   const used = clips.map(mOf).filter(Boolean).map((m) => m.score || 0).sort((a, b) => a - b);
   const q = (p) => (used.length ? used[Math.min(used.length - 1, Math.floor(p * used.length))] : 0.5);
-  const top = Math.max(0, ...early.map(mOf).filter(Boolean).map((m) => m.score || 0));
+  const byIdx = new Map(media.map((m) => [m.id, m]));
+  const top = Math.max(0, ...early.map(mOf).filter(Boolean).map((m) => m.score || 0), ...(wall ? wall.ids.map((id) => (byIdx.get(id) || {}).score || 0) : []), ...(grid0 ? grid0.ids.map((id) => (byIdx.get(id) || {}).score || 0) : []));
   add('strong', 'Starkes Motiv vorn', (top - q(0.5)) / Math.max(0.02, q(0.92) - q(0.5)), 0.25, 'Vorn steht nicht euer bestes Bild: das stärkste als Startbild nehmen.');
   // Menschen: erkannt (Gesichter/Haut im Bild) oder von dir als „Wir“ markiert
   const ppl = Math.max(0, ...clips.filter((c) => c.visStart < 2).map(mOf).filter(Boolean).map((m) => Math.max(usScore(m), peopleIn(m))));
@@ -291,13 +297,16 @@ async function improveHook(opts, onProgress, only = {}) {
   // only.intros / only.starts: was durchprobiert werden darf (z. B. nur, was der Nutzer auf Auto gelassen hat)
   // Abwechslung über die Reise: Einstiege der anderen Orte werden nicht durchprobiert
   const avoid = s0.avoidIntros || [];
-  const intros = (only.intros || [s0.intro || 'auto', 'rush', 'hook', 'knockout', ...(only.wide ? ['city', 'reveal'] : [])]).filter((v, i, a) => a.indexOf(v) === i && (i === 0 || !avoid.includes(v)));
+  // die Effektstufe gilt auch hier: „schlicht“ probiert nur ruhige Einstiege (Startbild, Ortsname, Wort für Wort)
+  const simple = s0.effekte !== 'dezent' && s0.effekte !== 'kreativ';
+  const intros = (only.intros || [s0.intro || 'auto', ...(simple ? ['hook', 'city', 'type'] : ['hook', 'city', 'split', 'knockout', 'rush', ...(only.wide ? ['type', 'reveal', 'countdown'] : [])])]).filter((v, i, a) => a.indexOf(v) === i && (i === 0 || !avoid.includes(v)));
   const starts = (only.starts || [s0.songStart == null ? 'auto' : s0.songStart, 'hook', 'prehook']).filter((v, i, a) => a.indexOf(v) === i);
   // zuerst Fehler beheben, dann den Stopp-Wert heben
   let best = { h: h0, e: hs0.errors, settings: null, hookId: s0.hookId || null };
   // Schritt für Schritt statt jede Kombination: Startbild, Einstieg, Songstelle – je die beste Wahl behalten, zwei Runden
   // (findet dieselben Verbesserungen mit einem Bruchteil der Rechenzeit; wichtig auf dem Handy)
   let cur = { intro: s0.intro || 'auto', songStart: s0.songStart == null ? 'auto' : s0.songStart, hookId: s0.hookId || null };
+  const cur0 = cur;
   const tried = new Set([JSON.stringify(cur)]);
   const total = 2 * (hooks.length + intros.length + starts.length);
   let k = 0;
@@ -310,7 +319,11 @@ async function improveHook(opts, onProgress, only = {}) {
     let plan;
     try { plan = buildPlan({ ...opts, settings: { ...s0, ...cand } }); } catch (e) { return; }
     const hs = hookScore(plan, opts.media, opts.an), h = hs.score;
-    if (hs.errors > best.e || (hs.errors === best.e && h <= best.h + 2)) return;
+    // ein anderer Einstieg muss deutlich stärker sein (sonst bleibt der, den die Regie zum Song gewählt hat – und nicht jeder
+    // Film beginnt gleich); Startbild und Songstelle dürfen schon bei kleinem Gewinn wechseln
+    // (stoppt der bisherige Einstieg schon beim Scrollen – ab 70 –, braucht ein anderer einen klaren Vorsprung)
+    const need = cand.intro !== (best.settings ? best.settings.intro : cur0.intro) ? (best.h >= 70 && !best.e ? 18 : 10) : 2;
+    if (hs.errors > best.e || (hs.errors === best.e && h <= best.h + need)) return;
     // der Rest des Films darf nicht leiden
     if (planQuality(plan, opts.media) < q0 - Math.max(0.5, Math.abs(q0) * 0.08)) return;
     best = { h, e: hs.errors, settings: { intro: cand.intro, songStart: cand.songStart }, hookId: cand.hookId };

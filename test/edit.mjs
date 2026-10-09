@@ -88,7 +88,7 @@ const wav = readFileSync(`${OUT}/Song.wav`).toString('base64');
       for (const blk of new Set(img.map((c) => dayBlock(media[c.mediaIndex])))) {
         const inB = img.filter((c) => dayBlock(media[c.mediaIndex]) === blk), w = inB.filter((c) => wir.includes(c)), o = inB.filter((c) => !wir.includes(c));
         const mx = (a) => Math.max(0, ...a.map((c) => c.end - c.start));
-        if (w.length && o.length && mx(w) < mx(o) - B * 0.55) f.push(`${nm}: Tagesblock ${blk}: längstes Wir-Foto ${mx(w).toFixed(2)} s, anderes ${mx(o).toFixed(2)} s`);
+        if (w.length && o.length && mx(w) < mx(o) - B * 0.55) f.push(`${nm}: Tagesblock ${blk}: längstes Wir-Foto ${mx(w).toFixed(2)} s, anderes ${mx(o).toFixed(2)} s [${inB.map((c) => `${c.mediaId}${wir.includes(c) ? '*' : ''}:${(c.end - c.start).toFixed(2)}@${c.i}${c.hookNext ? 'H' : ''}${c.sectionChange ? 'S' : ''}`).join(' ')}]`);
       }
       if (avg(wir) < avg(img.filter((c) => !wir.includes(c))) * 1.5) f.push(`${nm}: Wir-Fotos im Mittel nicht deutlich länger (${avg(wir).toFixed(2)} s)`);
       info[nm] = { D: +P0.duration.toFixed(1), wir: `${nTop}/${wir.length}`, wirAvg: +avg(wir).toFixed(2), wl: wir.map((c) => `${c.mediaId}:${(c.end - c.start).toFixed(2)}@${c.i}`).join(' '), top: top.map((c) => `${c.mediaId}:${(c.end - c.start).toFixed(2)}@${c.i}`).join(' ') };
@@ -216,6 +216,8 @@ const wav = readFileSync(`${OUT}/Song.wav`).toString('base64');
   const V = await page.evaluate(() => CineBeat.S.ctx.media.find((m) => m.kind === 'video' && m.duration > 10).id);
   const lenOf = () => page.evaluate((V) => CineBeat.S.plan.clips.filter((c) => c.mediaId === V && !c.split && !c.burst && !c.rush && !c.leader).reduce((a, c) => a + c.end - c.start, 0), V);
   const len0 = await lenOf();
+  // (die automatische Korrektur beim Schnitt kann schon einen ruhigeren Ausschnitt gesetzt haben – Rückgängig führt dorthin zurück)
+  const trim0 = await page.evaluate((V) => CineBeat.S.ctx.media.find((x) => x.id === V).trim || null, V);
   await page.click('[data-tab="material"]');
   await page.click(`#mediaGrid [data-id="${V}"]`);
   await page.evaluate(() => { const i = document.getElementById('trimIn'), l = document.getElementById('trimLen'); l.value = 3; l.dispatchEvent(new Event('input')); i.value = 1; i.dispatchEvent(new Event('input')); i.dispatchEvent(new Event('change')); });
@@ -239,7 +241,7 @@ const wav = readFileSync(`${OUT}/Song.wav`).toString('base64');
   for (let k = 0; k < 2; k++) { await page.click('#undoBtn').catch(() => {}); await page.waitForTimeout(400); }
   await stable();
   const after = await page.evaluate((V) => { const m = CineBeat.S.ctx.media.find((x) => x.id === V); return { trim: m.trim, vlen: m.vlen }; }, V);
-  if (after.trim) fails.push('App: Rückgängig stellt den Ausschnitt nicht wieder her ' + JSON.stringify(after));
+  if (JSON.stringify(after.trim || null) !== JSON.stringify(trim0)) fails.push('App: Rückgängig stellt den Ausschnitt nicht wieder her ' + JSON.stringify({ ...after, vorher: trim0 }));
 }
 await b.close();
 console.log(fails.length ? `FAIL ${fails.length}\n` + fails.slice(0, 30).join('\n') : 'OK edit');

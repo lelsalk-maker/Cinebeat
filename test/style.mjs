@@ -78,7 +78,7 @@ const res = await p.evaluate(async (b64) => {
   for (const o of kn) { const c = pc.clips.find((x) => Math.abs(x.start - o.start) < 0.01); if (!c || c.end < o.end + 0.25 || o.zoomStart - o.start < 1.7) fails.push('Kapitel-Einstellung zu kurz'); }
   // 5b. Bilderflut: viele Bilder in einem Takt, immer schneller, dann Ruhe, im Drop wieder schneller
   const pr = plan({ intro: 'rush', color: 'off', echo: 'off', stack: 'off', mini: 'off', length: 'auto', songStart: 'auto', target: 'story' });
-  const rc = pr.clips.filter((c) => c.rush);
+  const rc = pr.clips.filter((c) => c.rush && !c.loop);
   const hk = pr.clips[rc.length];
   const bursts = pr.clips.filter((c) => c.burst);
   const lens = rc.map((c) => c.end - c.start);

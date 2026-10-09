@@ -93,14 +93,18 @@ function videoSlots(segs, an, win, vids, all, barDur, startAt, endAt, vmax, ramp
       if (special(g) || g.start < startAt - 0.01 || g.end > endAt + 0.01) continue;
       const lab = labelAt(g.start);
       let j = k, end = g.end, cross = 0;
-      // (nie über den Einsatz eines Refrains/Drops hinweg: dort ist immer ein Schnitt)
-      while (end - g.start < want * 0.95 && j + 1 < segs.length - 1 && !special(segs[j + 1]) && !atPeak(segs[j + 1].start) && segs[j + 1].end - g.start <= want * 1.2) {
+      // (nie über den Einsatz eines Refrains/Drops hinweg und nie aus der Kraft hinaus in einen ruhigen Teil: an beiden
+      // Wechseln setzt ein Cutter einen Schnitt)
+      const flip = (q) => isCalmLabel(labelAt(segs[q].start)) !== isCalmLabel(labelAt(segs[q - 1].start))
+        // jeder andere Abschnittswechsel ebenso, sobald das Video gut halb so lang läuft wie gewünscht (dann endet es dort)
+        || (labelAt(segs[q].start) !== labelAt(segs[q - 1].start) && segs[q - 1].end - g.start >= Math.max(minW(v), want * 0.55));
+      while (end - g.start < want * 0.95 && j + 1 < segs.length - 1 && !special(segs[j + 1]) && !atPeak(segs[j + 1].start) && !flip(j + 1) && segs[j + 1].end - g.start <= want * 1.2) {
         j++; end = segs[j].end;
         if (labelAt(segs[j].start) !== lab) cross++;
       }
       // eine Einstellung mehr, wenn das näher an der Länge des Videos liegt (es läuft dann leicht verlangsamt ganz)
       const nx = segs[j + 1];
-      if (end - g.start < want * 0.9 && nx && j + 1 < segs.length - 1 && !special(nx) && !atPeak(nx.start) && nx.end - g.start <= Math.min(want * 1.3, videoSpan(v) / 0.8) && nx.end - g.start - want < want - (end - g.start)) {
+      if (end - g.start < want * 0.9 && nx && j + 1 < segs.length - 1 && !special(nx) && !atPeak(nx.start) && !flip(j + 1) && nx.end - g.start <= Math.min(want * 1.3, videoSpan(v) / 0.8) && nx.end - g.start - want < want - (end - g.start)) {
         j++; end = nx.end;
         if (labelAt(nx.start) !== lab) cross++;
       }
@@ -108,7 +112,7 @@ function videoSlots(segs, an, win, vids, all, barDur, startAt, endAt, vmax, ramp
       if (len < Math.min(want * 0.8, 1.5)) continue;
       const calm = isCalmLabel(lab);
       // zu kurz wiegt schwerer als etwas zu lang: das Video soll nicht abgeschnitten werden
-      const cost = (Math.abs(g.start - target) / span) * 0.8 + (len < want ? 1.2 : 0.6) * Math.abs(len - want) / want + (onBar(g.start) ? 0 : 0.25) + cross * 0.15
+      const cost = (Math.abs(g.start - target) / span) * 0.8 + (len < want ? 1.2 : 0.6) * Math.abs(len - want) / want + (onBar(g.start) ? 0 : 0.25) + cross * 0.45
         + (lively ? (calm ? 0.3 : 0) : (calm ? 0 : 0.6));
       const ramp = rampLeft > 0 && videoSpan(v) > want * 1.15 && (atPeak(end) || atPeak(g.start));
       const c2 = cost - (ramp ? 1.2 : 0);
@@ -453,8 +457,10 @@ function motionSpeed(mo, m, outAspect, dur) {
   if (!mo) return 0;
   const srcAspect = m && m.w && m.h ? m.w / m.h : outAspect;
   const fw = srcAspect > outAspect ? outAspect / srcAspect : 1, fh = srcAspect > outAspect ? 1 : srcAspect / outAspect;
-  const dx = Math.abs((mo.to.x || 0) - (mo.from.x || 0)) * (1 - fw) / 2 / fw;
-  const dy = (Math.abs((mo.to.y || 0) - (mo.from.y || 0)) * (1 - fh) / 2 / fh) / outAspect;
+  // (wie die Engine: der Spielraum für x/y wächst mit dem Zoom – auch ein bildfüllendes Foto gleitet bei s > 1 seitlich)
+  const sm = Math.max(1, ((mo.from.s || 1) + (mo.to.s || 1)) / 2), fwS = fw / sm, fhS = fh / sm;
+  const dx = Math.abs((mo.to.x || 0) - (mo.from.x || 0)) * (1 - fwS) / 2 / fwS;
+  const dy = (Math.abs((mo.to.y || 0) - (mo.from.y || 0)) * (1 - fhS) / 2 / fhS) / outAspect;
   return (dx + dy + Math.abs(mo.to.s - mo.from.s) * 0.5) / Math.max(0.2, dur);
 }
 
@@ -539,6 +545,14 @@ function imageMotionRaw(rng, m, outAspect, visDur, role, prevDir, hint, tempo = 
   // Richtung bleibt meist über zwei Einstellungen gleich: ruhiger Fluss statt Hin und Her
   // (in ruhigen Teilen noch häufiger: die Kamera fließt in eine Richtung statt hin und her)
   const keep = rng() < (role === 'burst' ? 0.55 : 0.72);
+  // seitliches Gleiten (wenn der Ausschnitt kaum Spielraum hat): leicht vergrößert, gleiches Kameratempo – bringt Abwechslung
+  // in eine Folge von Zooms
+  if (hint === 'drift-left' || hint === 'drift-right') {
+    const s0 = 1.07, room = 1 - 1 / s0;
+    const span = Math.min(1.6, (v * dur) / room);
+    const right = hint === 'drift-right', a = Math.max(-1, Math.min(1, px * 0.5 + (right ? -1 : 1) * span / 2));
+    return { dir: right ? 'right' : 'left', m: { from: { s: s0, x: a, y: py * 0.5, r: tilt }, to: { s: s0 + z * 0.2, x: Math.max(-1, Math.min(1, a + (right ? 1 : -1) * span)), y: py * 0.5, r: 0 } } };
+  }
   // Anschluss an ein Video: die Fahrt nimmt dessen Schwenk-Richtung auf
   if (hint === 'left' || hint === 'right' || hint === 'up' || hint === 'down') prevDir = hint;
   if (fh < 0.72) {

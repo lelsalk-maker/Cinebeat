@@ -88,14 +88,22 @@ function smartWindow(an, T, lead = 0, maxLen = Infinity, minFrac = 0.8) {
   const peaks = secs.filter((s) => s.label === 'drop' || s.label === 'chorus');
   const mu = T <= 12 ? 0.05 : T <= 20 ? 0.12 : T <= 40 ? 0.25 : 0.3;
   const ends = bars.concat(secs.map((s) => s.end), [last]);
+  // Trägt die Musik in den ersten 1,5 s? Ein leiser Anfang (Intro-Fläche, Stille) kostet den Einstieg – ein Cutter setzt
+  // dort an, wo der Song da ist (wie hookScore: Energie der ersten Schläge gegenüber dem Median des Songs)
+  const enAll = Array.from(an.energy || []), med = enAll.length ? enAll.slice().sort((a, b) => a - b)[enAll.length >> 1] : 0.5;
+  const startE = (s) => { let e = 0, n = 0; for (let i = 0; i < an.beats.length; i++) { const b = an.beats[i]; if (b >= s - 0.05 && b < s + 1.5) { e += enAll[i] || 0; n++; } else if (b >= s + 1.5) break; } return (n ? e / n : med) / Math.max(0.05, med); };
   let best = null;
   const cands = [first].concat(bars.filter((b) => b > first + 0.05));
+  // erster Takt, an dem die Musik trägt: dort darf der Ausschnitt etwas kürzer werden (lieber ein paar Sekunden leises
+  // Intro weglassen als leise anfangen)
+  const loud0 = startE(first) < 0.35 ? cands.find((b) => b - first < barDur * 16 && startE(b) >= 0.6) : null;
   for (const s of cands) {
-    if (s + T * 0.75 > last + 0.01) break;
+    if (s + T * 0.75 > last + 0.01 && s !== loud0) break;
+    const mf = s === loud0 ? Math.min(minFrac, 0.85) : minFrac;
     // bestes Ende in der Nähe von s + T
     let e = null, eScore = -Infinity;
     for (const x of ends) {
-      if (x < s + T * minFrac || x > s + T * 1.25 || x > last + 0.01 || x - s > maxLen + 0.01) continue;
+      if (x < s + T * mf || x > s + T * 1.25 || x > last + 0.01 || x - s > maxLen + 0.01) continue;
       let sc = -Math.abs(x - (s + T)) / T;
       if (near(x, secStarts, 0.1) || Math.abs(x - last) < 0.3) sc += 0.3;
       else if (near(x, phraseStarts, 0.1)) sc += 0.15;
@@ -128,6 +136,8 @@ function smartWindow(an, T, lead = 0, maxLen = Infinity, minFrac = 0.8) {
     sc += eScore * 0.8;
     const startSec = sectionAt(an, s + 0.05);
     if (startSec.label === 'outro' || startSec.label === 'break') sc -= 0.3;
+    const eRel = startE(s);
+    if (eRel < 0.35) sc -= 0.6; else if (eRel < 0.6) sc -= 0.15;
     if (!best || sc > best.sc + 1e-6) best = { s, e, sc };
   }
   if (!best) best = { s: first, e: Math.min(last, first + T) };
@@ -271,7 +281,7 @@ function autoLookMaterial(list, format) {
  * und mischen mit eigenem Zufall, damit Bewegungen und Übergänge wirklich anders ausfallen.
  */
 const VARIANTS = {
-  ruhig: { label: 'Ruhig', set: { pace: 'ruhig', echo: 'off', mini: 'off', accent: 'off', drift: 'on', color: 'bloom', stack: 'on' }, intro: 'cinema', seed: 0x5a17 },
+  ruhig: { label: 'Ruhig', set: { pace: 'ruhig', echo: 'off', mini: 'off', accent: 'off', drift: 'on', color: 'bloom', stack: 'on' }, intro: 'city', seed: 0x5a17 },
   ausgewogen: { label: 'Ausgewogen', set: {}, seed: 0 },
   energisch: { label: 'Energisch', set: { pace: 'schnell', echo: 'on', mini: 'on', accent: 'kick', drift: 'off', color: 'pop', stack: 'off' }, intro: 'rush', burst: true, seed: 0x3e9b },
 };
@@ -371,10 +381,12 @@ function direct(an, media, s, chapters, flight) {
     // Raster und Countdown: der Übergang ins erste Vollbild soll auf dem Drop/Refrain landen
     const step = an.beatPeriod < 0.42 ? 2 : 1;
     const preLead = s.pre === 'countdown' && s.intro !== 'countdown' ? 3 : s.pre === 'rewind' ? 4 : 0;
-    const willReveal = s.intro === 'reveal' || (s.intro === 'auto' && autoReveal(an, chapters, flight, fr));
+    const willReveal = s.intro === 'reveal';
     const lead = (s.intro === 'shutter' ? SHUTTER.end * shutterStep(an) * an.beatPeriod : s.intro === 'welcome' ? WELCOME.end * shutterStep(an) * an.beatPeriod : 0) + (willReveal ? revealBeats(an) * an.beatPeriod : 0) + (s.intro === 'grid' && list.length >= 4 ? (list.length >= 9 ? 9 : 4) * step * an.beatPeriod : s.intro === 'countdown' ? 3 * step * an.beatPeriod : 0) + (flight || s.intro === 'split' ? 0 : preLead * step * an.beatPeriod);
     // Nachplanung für mehr Material: das Ende darf nicht wieder auf dieselbe kürzere Stelle einrasten
-    win = smartWindow(an, T, lead, hardCap ? fr.max : Infinity, s._minT ? 0.97 : 0.8);
+    // (bei Länge „Auto“ gilt auch deren Obergrenze – z. B. Reel 90 s –, nicht nur die harte Grenze des Formats)
+    const capLen = Math.min(hardCap ? fr.max : Infinity, s.length === 'auto' && !(chapters && chapters.length) ? Math.max(T, autoMax(s)) : Infinity);
+    win = smartWindow(an, T, lead, capLen, s._minT ? 0.97 : 0.8);
   } else {
     win = pickWindow(an, { length: T, songStart: s.songStart });
   }
@@ -441,17 +453,29 @@ function direct(an, media, s, chapters, flight) {
   else rs.split = 'off';
 
   // Einstieg & Ende
-  const pick = (opts) => opts[(hashStr((s.title || '') + ':' + s.seed) >>> 0) % opts.length];
+  // (je Lied und je Entscheidung anders gewürfelt – sonst wählt derselbe Ort bei jedem Lied dasselbe)
+  const pick = (opts, salt = '') => opts[(hashStr((s.title || '') + ':' + s.seed + ':' + Math.round((an.duration || 0) * 10) + ':' + Math.round((an.beatPeriod || 0) * 1000) + salt) >>> 0) % opts.length];
   const hasTitle = !!(s.title && s.title.trim()) && s.showTitle !== false;
   if (s.intro === 'auto') {
     // Standard: Aufblende, wenn der Höhepunkt im Ausschnitt genau nach dem kurzen Aufbau kommt
     const peakAt = win.start + revealBeats(an) * an.beatPeriod;
     const fits = autoReveal(an, chapters, flight, fr) && (an.sections || []).some((x) => (x.label === 'drop' || x.label === 'chorus') && Math.abs(x.start - peakAt) < an.beatPeriod * 0.6);
     // schlicht: immer derselbe ruhige Einstieg – euer stärkstes Bild mit dem Ort (im Film eine Titelkarte)
-    if (effectsOf(s) === 'schlicht') rs.intro = chapters && chapters.length ? 'cinema' : fr.kind === 'film' && D >= 25 ? 'cinema' : hasTitle ? 'city' : 'hook';
-    else if (fits) rs.intro = 'reveal';
+    // schlicht: der Einstieg richtet sich nach dem Liedanfang – setzt der Ausschnitt kräftig ein (Refrain/Drop, laut), eröffnet
+    // das stärkste Bild mit Schwung (der Titel dezent); ruhiger, gleichmäßiger Anfang: der Ortsname groß; ein Lied mit klaren
+    // Schlägen und mittlerer Kraft: der Titel Wort für Wort im Takt. So beginnt nicht jeder Film gleich.
+    const sec0 = sectionAt(an, win.start + 0.05), e0 = sec0.energy != null ? sec0.energy : 0.5;
+    const strongStart = sec0.label === 'drop' || sec0.label === 'chorus' || e0 >= 0.7;
+    const words = hasTitle ? s.title.trim().split(/\s+/).length : 0;
+    const kicks0 = Array.from(an.kicks || []).filter((t) => t >= win.start && t < win.end).length;
+    const typeFit = hasTitle && words >= 2 && words <= 4 && kicks0 >= 8 && !strongStart && e0 >= 0.35;
+    const simpleIntro = !hasTitle ? 'hook' : strongStart ? 'hook' : typeFit && (hashStr((s.title || '') + ':t') & 1) ? 'type' : 'city';
+    // (die Titelkarte auf Schwarz und die ruhige Aufblende bleiben wählbar; automatisch beginnt ein Film mit Bewegung und
+    // einem frühen Schnitt – nur der Reisefilm aus mehreren Orten eröffnet mit der Titelkarte)
+    if (effectsOf(s) === 'schlicht') rs.intro = chapters && chapters.length ? 'cinema' : simpleIntro;
     else if (chapters && chapters.length) rs.intro = 'cinema';
-    else if (fr.kind === 'film') rs.intro = D >= 25 ? 'cinema' : 'type';
+    else if (fits && fr.kind !== 'film' && strongStart) rs.intro = 'reveal';
+    else if (fr.kind === 'film') rs.intro = !hasTitle ? 'hook' : strongStart ? 'hook' : pick(['knockout', 'hook', ...(typeFit ? ['type'] : []), ...(list.length >= 12 && rs.pace !== 'ruhig' ? ['rush'] : [])]);
     else if (D <= 18) rs.intro = hasTitle ? 'city' : 'hook';
     else rs.intro = pick([hasTitle ? 'city' : 'hook', 'hook', 'type', ...(rs.split !== 'off' ? ['split'] : []), ...(list.length >= 12 && rs.pace !== 'ruhig' ? ['rush'] : [])]);
     // Abwechslung über die Reise: haben die anderen Orte schon diesen Einstieg, nimmt dieser Ort einen anderen,
@@ -478,9 +502,17 @@ function direct(an, media, s, chapters, flight) {
   if (rs.intro === 'welcome' && (list.length < 4 || flight || !hasTitle || D < WELCOME.end * shutterStep(an) * an.beatPeriod + Math.max(3, an.beatPeriod * 8))) rs.intro = hasTitle ? 'city' : 'hook';
   if (rs.intro === 'welcome') rs.pre = 'off';
   if (s.outro === 'auto') {
-    if (fr.kind === 'film' || (chapters && chapters.length)) rs.outro = 'credits';
+    // Das Ende folgt dem Lied: klingt es aus (Outro, ruhiger Teil, Songende), blendet der Film mit Schlusstitel ab; hört der
+    // Ausschnitt mitten in der Kraft auf, schließt eine Story/ein Reel als Endlosschleife (Instagram spielt sie wieder ab),
+    // ein Film mit einem Standbild – statt immer derselben Abblende
+    const endSec = sectionAt(an, win.end - 0.1);
+    const songEnds = an.lastSound != null && win.end >= an.lastSound - an.beatPeriod * 4;
+    const calmEnd = songEnds || isCalmLabel(endSec.label) || (endSec.energy != null && endSec.energy < 0.45);
+    if (chapters && chapters.length) rs.outro = 'credits';
+    else if (fr.kind === 'film') rs.outro = effectsOf(s) === 'schlicht' ? 'credits' : calmEnd ? pick(['credits', 'freeze'], ':o') : 'freeze';
     else if (D <= 25) rs.outro = 'loop';
-    else rs.outro = effectsOf(s) === 'schlicht' ? 'credits' : pick(['freeze', 'credits', 'loop']);
+    else if (calmEnd) rs.outro = effectsOf(s) === 'schlicht' ? 'credits' : pick(['credits', 'freeze'], ':o');
+    else rs.outro = effectsOf(s) === 'schlicht' || D <= 60 ? 'loop' : pick(['loop', 'freeze', 'strip'], ':o');
   }
   if (flight && s.outro === 'auto') rs.outro = 'freeze';
   if (rs.outro === 'split' && splitPool < 3) rs.outro = 'credits';

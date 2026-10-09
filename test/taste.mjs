@@ -30,7 +30,9 @@ const r = await p.evaluate(async () => {
   const p2 = buildPlan({ an, media: strong, settings: S0, overrides: { texts: [], stickers: [] }, taste });
   // Videolänge: deutlich längere eigene Längen → längere automatische Videos
   const vid = { id: 'v1', kind: 'video', name: 'V', w: 1920, h: 1080, duration: 20, time: T0, score: 0.6, highlights: [{ t: 9, score: 0.7 }], hits: [], hash: [1, 2], focus: [0.5, 0.45], fps: 30 };
-  const vlen = (t) => { const pl = buildPlan({ an, media: [...media.slice(0, 8).map((m) => ({ ...m })), { ...vid }], settings: { ...S0, format: '16:9', target: undefined, allMedia: 'off' }, overrides: { texts: [], stickers: [] }, taste: t }); return pl.clips.filter((c) => c.mediaId === 'v1').reduce((a, c) => a + c.end - c.start, 0); };
+  // (in einem ruhigen Lied mit langen Teilen – zwischen zwei Drop-Einsätzen darf ein Video nicht beliebig wachsen)
+  const anV = (await beatSong(beatRecipe('lofi', {}, { seed: 3, form: 'story' }))).an;
+  const vlen = (t) => { const pl = buildPlan({ an: anV, media: [...media.slice(0, 8).map((m) => ({ ...m })), { ...vid }], settings: { ...S0, format: '16:9', target: undefined, allMedia: 'off' }, overrides: { texts: [], stickers: [] }, taste: t }); return pl.clips.filter((c) => c.mediaId === 'v1').reduce((a, c) => a + c.end - c.start, 0); };
   return { share0: +pplShare(p0).toFixed(2), share1: +pplShare(p1).toFixed(2), strongIn: used(p2).has('t3'), w: taste.w.map((x) => +x.toFixed(2)), summary: tasteSummary(taste), v0: +vlen(null).toFixed(2), v1: +vlen({ ...taste, vlenF: 1.4 }).toFixed(2), bonus: +tasteBonus(taste, media[0]).toFixed(3) };
 });
 console.log(JSON.stringify(r));

@@ -21,7 +21,8 @@ function cutterPolish(clips, ctx) {
   // eigene Entscheidungen bleiben: eigenes Motiv und von dir verschobene Aufnahmen (samt ihrem Ziel)
   const own = (c) => { const o = ovOf(c); return !!(o && o.mediaId) || moved.has(c.mediaId); };
   const img = (c) => { const m = byId.get(c.mediaId); return m && m.kind === 'image' ? m : null; };
-  const plain = (c) => c && !special(c) && !!img(c);
+  // (das Startbild hat seine Länge vom Einstieg: erster Schnitt nach zwei Schlägen – nicht verschieben)
+  const plain = (c) => c && !special(c) && c.role !== 'hook' && !!img(c);
   let retimed = 0, hero = 0;
 
   // 1. Standzeit nach Bildinhalt: in einer Folge ruhiger Einstellungen eines Abschnitts verschiebt sich jede Grenze
@@ -183,6 +184,8 @@ function eyeTrace(clips, { media, outAspect }) {
   for (let i = 1; i < clips.length; i++) {
     const A = clips[i - 1], B = clips[i];
     if (!plain(A) || !plain(B)) continue;
+    // (schließt das nächste Bild als Match-Cut an B an, ist B's Endpunkt fest)
+    if (clips[i + 1] && clips[i + 1].matchCut) continue;
     const tr = B.tin;
     if (tr && tr.type !== TR.CUT && tr.type !== TR.DISSOLVE && tr.type !== TR.LUMA) continue;
     const mA = media[A.mediaIndex], mB = media[B.mediaIndex];

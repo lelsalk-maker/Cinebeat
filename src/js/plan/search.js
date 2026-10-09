@@ -57,10 +57,12 @@ function searchPlan(opts) {
     // Bisektion über die Schnittlänge bei dieser Filmlänge
     let lb = cur;
     const m0 = cur._m;
-    let lo = m0.floor, hi = 5, cand = m0.scale;
+    let lo = pick ? Math.max(1, Math.min(m0.floor, m0.scale)) : m0.floor, hi = 5, cand = m0.scale;
     if (m0.repeats) lo = m0.scale; else hi = m0.scale;
     let pLo = cur._m.repeats ? cur : null, pHi = cur._m.repeats ? null : cur;
-    for (let it = 0; it < 8 && bad(lb); it++) {
+    // (weitersuchen, auch wenn schon eine Länge ohne Wiederholung gefunden ist: die kürzeste davon ist die richtige –
+    // sonst bliebe der Film bei der ersten, viel zu ruhigen Probe stehen)
+    for (let it = 0; it < 8; it++) {
       cand = (lo + hi) / 2;
       const p = planOnce({ ...opts, settings: m0.settings, _scale: cand });
       if (better(p, lb)) lb = p;

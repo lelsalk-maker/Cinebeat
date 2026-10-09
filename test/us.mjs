@@ -49,7 +49,8 @@ const r = await p.evaluate(async (b64) => {
   for (const grp of [true, false]) if (inv(ids, grp) > inv(ids0, grp) + 6) fails.push(`Reihenfolge ${grp}: ${inv(ids, grp)} vs ${inv(ids0, grp)}`);
   // Schlussbild ist eine Wir-Aufnahme (wenn eine in der Nähe ist)
   const last = on.clips.filter((c) => !c.loop && byId.get(c.mediaId)).pop();
-  if (last && !byId.get(last.mediaId).us) fails.push('Schlussbild nicht wir');
+  // (bei der Endlosschleife ist das Schlussbild der Rücksprung zum ersten Bild – dort gilt die Regel nicht)
+  if (last && on.outro !== 'loop' && !byId.get(last.mediaId).us) fails.push('Schlussbild nicht wir');
   if (!on.notes.some((n) => /Wir-Vorrang|Tageszeit/.test(n))) fails.push('keine Notiz');
   // Wir-Moment: markierte Aufnahmen bekommen einen eigenen Moment (ruhige Kamera, weiches Scharfwerden)
   const mom = on.clips.filter((c) => c.usMoment);

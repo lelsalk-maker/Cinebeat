@@ -60,8 +60,10 @@ const res = await p.evaluate(async ([b64, SDBG]) => {
       const srcA = it.w && it.h ? it.w / it.h : outA;
       const fw = srcA > outA ? outA / srcA : 1, fh = srcA > outA ? 1 : srcA / outA;
       const dur = Math.max(0.2, c.visEnd - c.visStart);
-      const dispW = W / fw, dispH = (W / outA) / fh;
-      const px = Math.abs(mo.to.x - mo.from.x) * (1 - fw) / 2 * dispW + Math.abs(mo.to.y - mo.from.y) * (1 - fh) / 2 * dispH;
+      // (wie die Engine: bei Zoom > 1 wächst der Spielraum für x/y – auch ein bildfüllendes Foto gleitet seitlich)
+      const sm = Math.max(1, (mo.from.s + mo.to.s) / 2), fwS = fw / sm, fhS = fh / sm;
+      const dispW = W / fwS, dispH = (W / outA) / fhS;
+      const px = Math.abs(mo.to.x - mo.from.x) * (1 - fwS) / 2 * dispW + Math.abs(mo.to.y - mo.from.y) * (1 - fhS) / 2 * dispH;
       const zp = Math.abs(mo.to.s - mo.from.s) * W * 0.5;
       return (px + zp) / dur * easeD(c, u);
     };

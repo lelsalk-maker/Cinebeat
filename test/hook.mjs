@@ -42,8 +42,8 @@ const pl = await p2.evaluate(async () => {
   const part = (h, k) => h.parts.find((p) => p.k === k).v;
   return { cin: cin.score, rush: rush.score, hook: hook.score, dark: dark.score, errs: [rush.errors, hook.errors, cin.errors, dark.errors], cinStartErr: part(cin, 'start') < 0.5, darkQualErr: part(dark, 'quality') < 0.5, cinMotion: part(cin, 'motion'), rushMotion: part(rush, 'motion'), rushChange: part(rush, 'change'), cinChange: part(cin, 'change') };
 });
-// trennt: schneller Einstieg > ruhiges Startbild > Kino-Aufblende (Fehler: Anlauf aus Schwarz) > dunkles Startbild (Fehler)
-if (!(pl.rush > pl.hook && pl.hook > pl.cin && pl.cin > pl.dark)) fails.push(`Reihenfolge der Einstiege falsch ${JSON.stringify(pl)}`);
+// trennt: schneller Einstieg > Startbild (mit Anstoß) > beide Fehlerfälle (Kino-Aufblende: Anlauf aus Schwarz; dunkles Startbild)
+if (!(pl.rush > pl.hook && pl.hook > pl.cin && pl.hook > pl.dark + 20)) fails.push(`Reihenfolge der Einstiege falsch ${JSON.stringify(pl)}`);
 if (pl.errs[0] || pl.errs[1] || !pl.cinStartErr || !pl.darkQualErr) fails.push('Fehler falsch erkannt ' + JSON.stringify(pl));
 if (!(pl.rushMotion >= pl.cinMotion) || !(pl.rushChange >= pl.cinChange)) fails.push('Faktoren ' + JSON.stringify(pl));
 if (process.argv.includes('-v')) console.log(JSON.stringify(pl));

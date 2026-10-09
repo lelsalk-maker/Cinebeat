@@ -21,9 +21,10 @@ await page.waitForTimeout(600); await idle();
 await page.click('[data-tab="format"]');
 await page.click('#lenChips [data-v="15"]');
 await page.waitForTimeout(600); await idle();
-const st = () => page.evaluate(() => { const S = CineBeat.S; return { dropped: S.plan.capacity.droppedIds.slice(), media: S.ctx.media.map((m) => ({ id: m.id, fav: !!m.fav, ex: !!m.excluded })), seed: S.ctx.rec.settings.seed, clips: S.plan.clips.map((c) => c.mediaId).join(',') }; });
+const st = () => page.evaluate(() => { const S = CineBeat.S; return { dropped: S.plan.capacity.droppedIds.slice(), media: S.ctx.media.map((m) => ({ id: m.id, fav: !!m.fav, ex: !!m.excluded })), seed: S.ctx.rec.settings.seed, clips: S.plan.clips.map((c) => c.mediaId).join(','), cuts: S.plan.clips.map((c) => c.start.toFixed(2)).join(',') }; });
 // (ruhiges Tempo: lange Einstellungen – in 15 s passen dann sicher nicht alle sechs Bilder)
-await page.evaluate(() => { CineBeat.S.ctx.rec.settings.pace = 'ruhig'; return CineBeat.rebuild(); });
+// (mit 8 s bleiben sicher Bilder draußen – die Regie verdichtet bei „Beste Auswahl“ nicht über das Tempo hinaus)
+await page.evaluate(() => { CineBeat.S.ctx.rec.settings.pace = 'ruhig'; CineBeat.S.ctx.rec.settings.length = 8; return CineBeat.rebuild(); });
 await page.waitForTimeout(400); await idle();
 let s0 = await st();
 console.log('draußen', s0.dropped.length, 'von', s0.media.length);
@@ -86,7 +87,8 @@ if (s5.seed === s4.seed) fails.push('Neu schneiden: kein neuer Schnitt');
 if (favs.some((id) => s5.dropped.includes(id))) fails.push('Neu schneiden: Favorit verloren');
 if (excl.some((id) => !s5.media.find((m) => m.id === id).ex)) fails.push('Neu schneiden: Ausschluss verloren');
 if (!/Neu geschnitten/.test(toast5)) fails.push('Neu schneiden: keine Rückmeldung');
-if (s5.clips === s4.clips) fails.push('Neu schneiden: gleiche Zusammensetzung');
+// (bei wenigen Bildern darf die Folge gleich bleiben – dann muss sich der Rhythmus ändern)
+if (s5.clips === s4.clips && s5.cuts === s4.cuts) fails.push('Neu schneiden: gleiche Zusammensetzung und gleicher Rhythmus');
 console.log(JSON.stringify({ toast1, toast5: toast5.slice(0, 120), same: s5.clips === s4.clips }));
 if (errs.length) fails.push(...errs.slice(0, 3));
 console.log(fails.length ? 'FAIL ' + fails.join('; ') : 'OK select');
