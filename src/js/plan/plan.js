@@ -438,7 +438,9 @@ function planOnce(opts) {
   const lastMin = outro === 'strip' ? Math.min(D * 0.32, Math.max(3.8, barDur * 2)) : outro === 'credits' ? Math.min(D * 0.3, Math.max(3.4, barDur * 1.5)) : outro === 'freeze' ? Math.min(D * 0.3, Math.max(2.6, barDur)) : outro === 'split' ? Math.min(D * 0.3, Math.max(2.2, barDur)) : 0;
   if (!flight && lastMin && segs.length > 2 && segs[segs.length - 1].end - segs[segs.length - 1].start < lastMin) {
     let k = segs.length - 1;
-    while (k > 1 && D - segs[k].start < lastMin) k--;
+    // (nie über einen Refrain-/Drop-Einsatz hinweg: das Ende beginnt dann genau auf dem Einsatz)
+    const peakIn = (t) => (an.sections || []).some((x) => (x.label === 'drop' || x.label === 'chorus') && x.start - win.start > t + 0.05 && x.start - win.start < D - 0.05);
+    while (k > 1 && D - segs[k].start < lastMin && !peakIn(segs[k - 1].start)) k--;
     segs = [...segs.slice(0, k), { start: segs[k].start, end: D, w: segs[k].w }];
   }
   // Feinabstimmung aus buildPlan: nach dem Einstieg und vor einem langen Schluss, Videoplätze bleiben unberührt
@@ -876,8 +878,10 @@ function planOnce(opts) {
       const back = [];
       for (let i = clips.length - 1; i >= P; i--) { const m = byId.get(clips[i].mediaId); if (m && m.kind === 'image' && !back.includes(m) && m !== tease) back.push(m); }
       const n = P - 1;
+      // reicht das nicht für jeden Schlag, kommen weitere Fotos dazu; notfalls im Kreis – nie zweimal dasselbe Bild direkt nacheinander
+      for (const m of main.concat(pool)) if (back.length < n && m && m.kind === 'image' && !m.excluded && !m.bad && m !== tease && !back.includes(m)) back.push(m);
       for (let i = 0; i < n; i++) {
-        const m = back.length ? back[Math.min(back.length - 1, Math.floor((i * back.length) / n))] : tease;
+        const m = back.length ? (back.length >= n ? back[Math.floor((i * back.length) / n)] : back[i % back.length]) : tease;
         clips[1 + i].mediaId = m ? m.id : null; clips[1 + i].role = 'rew';
       }
     }
@@ -893,7 +897,7 @@ function planOnce(opts) {
       // nur Fotos: ein Video würde hier nur als Standbild vorbeirauschen
       if (x.mediaId && !x.grid && !x.split && !x.stack && !x.strip && !x.flightAnim && byId.get(x.mediaId) && byId.get(x.mediaId).kind === 'image') back.push(x.mediaId);
     }
-    miniC.forEach((c, k) => { c.mediaId = back.length ? back[Math.min(k, back.length - 1)] : c.mediaId; c.role = 'rew'; });
+    miniC.forEach((c, k) => { c.mediaId = back.length ? back[k % back.length] : c.mediaId; c.role = 'rew'; });
     const hit = clips[f + miniC.length];
     const best = [hook, ...pool.filter((m) => m.kind === 'image' && !m.excluded && !m.bad).sort((a, b) => (b.score || 0) - (a.score || 0))].find((m) => m && m.kind === 'image');
     if (hit && best && !hit.vid && !hit.split && !hit.grid && !hit.stack) { hit.mediaId = best.id; hit.replay = true; }
@@ -1724,16 +1728,37 @@ function planOnce(opts) {
   const colorFx = [];
   const colorMode = s.color && s.color !== 'off' && !flight ? s.color : null;
   if (colorMode) {
-    // Einsätze nach einem ruhigeren Teil; schwarzweiß darf schon ab dem Filmanfang sein (nicht während eines festen Einstiegs)
-    const colHits = secsRel.filter((x) => isPeakSec(x) && x.rel > fixedEndAll + barDur * 0.9 && x.rel < D - barDur && !isPeakSec(sectionAt(an, x.start - 0.05))).map((x) => x.rel);
-    let hs = colHits.slice(0, s.colorAuto ? 1 : 2);
+    // Einsätze nach einem ruhigeren Teil; schwarzweiß darf schon ab dem Filmanfang sein (nicht während eines festen Einstiegs).
+    // Gewählt wird nach Wucht: Energiesprung zum Teil davor plus Steigerung (Riser) davor – die Farbe kommt mit dem stärksten Drop
+    const secArr = an.sections || [];
+    const riseTo = (x) => (an.rises || []).find((r) => Math.abs(r.end - x.start) < 0.3);
+    const punchOf = (x) => { const k = secArr.indexOf(x), pv = secArr[k - 1]; const r = riseTo(x); return (x.energy || 0) - (pv ? pv.energy || 0 : 0) + (r ? r.gain * 0.6 : 0) + (x.label === 'drop' ? 0.08 : 0); };
+    const colCands = secsRel.filter((x) => isPeakSec(x) && x.rel > fixedEndAll + barDur * 0.9 && x.rel < D - barDur && !isPeakSec(sectionAt(an, x.start - 0.05)));
+    const ranked = colCands.slice().sort((a, b) => punchOf(b) - punchOf(a));
+    // zwei Farbmomente nur auf Wunsch und nur, wenn der zweite Einsatz kaum schwächer ist und weit genug weg liegt
+    let hs = ranked.slice(0, 1).map((x) => x.rel);
+    if (!s.colorAuto && ranked[1] && punchOf(ranked[1]) > punchOf(ranked[0]) * 0.75 && Math.abs(ranked[1].rel - ranked[0].rel) > barDur * 8) hs.push(ranked[1].rel);
+    hs.sort((a, b) => a - b);
     // Aufblende: der Aufbau bleibt schwarzweiß, auf dem Höhepunkt kehrt mit dem Bild die Farbe zurück
     const revHit = reveal && clips.some((c) => c.reveal) ? reveal.end : null;
     if (revHit != null && (!hs.length || s.colorAuto)) hs = [revHit, ...hs.slice(0, s.colorAuto ? 0 : 1)];
     if (!hs.length) {
-      // kein Drop nach ruhigem Teil im Ausschnitt: ein Taktanfang gut zwei Takte nach dem Einstieg
-      const b = (an.barStart || []).map((x) => x - win.start).find((x) => x > fixedEndAll + barDur * 2 && x < D - barDur * 2);
-      if (b != null) hs = [b];
+      // kein Drop nach ruhigem Teil im Ausschnitt: das Ende der stärksten Steigerung oder der stärkste Akzent auf einem Schnitt
+      // auf einer Takt-Eins – nie eine beliebige Stelle. Gibt der Song keinen solchen Moment her, bleibt der Film farbig.
+      const downs = (an.barStart || []).map((x) => x - win.start);
+      const onCutBar = (t) => clips.some((c) => Math.abs(c.start - t) < 0.04) && downs.some((b) => Math.abs(b - t) < 0.04);
+      const ok = (t) => t > fixedEndAll + barDur * 2 && t < D - barDur * 2 && onCutBar(t);
+      const rs0 = (an.rises || []).map((r) => ({ t: r.end - win.start, w: r.gain })).filter((r) => ok(r.t)).sort((a, b) => b.w - a.w);
+      const im0 = (an.impacts || []).map((x) => ({ t: (x.t != null ? x.t : x) - win.start, w: x.v != null ? x.v : 0.5 })).filter((x) => ok(x.t)).sort((a, b) => b.w - a.w);
+      const b = rs0[0] || im0[0];
+      if (b) hs = [b.t];
+      else if (!s.colorAuto) {
+        // ausdrücklich gewünscht: die Takt-Eins auf einem Schnitt mit dem größten Energiesprung
+        let best = null, bw0 = -Infinity;
+        const eAt0 = songEnergyAt(an, win);
+        for (const t of downs) if (ok(t)) { const w = eAt0(t + barDur) - eAt0(t - barDur); if (w > bw0) { bw0 = w; best = t; } }
+        if (best != null) hs = [best];
+      }
     }
     // Stroboskop: in den zwei Takten vor dem Einsatz wechseln Farbe und Schwarzweiß, erst alle zwei Beats, dann jeden Beat,
     // zuletzt auf halben Beats; direkt vor dem Einsatz ist das Bild schwarzweiß
@@ -1765,12 +1790,27 @@ function planOnce(opts) {
         colorFx.push({ mode: colorMode, start: r0.start, hit: h, dur: d0, end: h + Math.max(d0, 0.05), steps: colSteps(h), decay: beatDur * 0.45, popAmp: popOf[colorMode], popDur: beatDur * 1.5 });
         continue;
       }
-      const before = clips.filter((c) => c.start >= Math.max(fixedEndAll, h - barDur * 4) - 0.05 && c.start <= h - barDur * 0.9 + 0.05 && !c.grid);
-      let start = before.length ? before[0].start : Math.max(fixedEndAll, h - barDur * 2);
+      // Schwarzweiß beginnt mit dem Aufbau: am Beginn der Steigerung (Riser) oder des Teils vor dem Einsatz, 2 bis 8 Takte
+      // davor, auf einem Schnitt (sonst einer Takt-Eins) – so gehört die Farbe zum Lied: Spannung ohne Farbe, Erlösung mit Farbe
+      const lo = Math.max(fixedEndAll, h - barDur * 8) - 0.05, hi = h - barDur * 2 + 0.05;
+      const want = [];
+      for (const r of an.rises || []) if (Math.abs(r.end - win.start - h) < 0.3) want.push(r.start - win.start);
+      const sPrev = sectionAt(an, win.start + h - 0.05);
+      if (sPrev && !isPeakSec(sPrev)) want.push(sPrev.start - win.start);
+      want.push(h - barDur * 4);
+      const cutsIn = clips.filter((c) => c.start >= lo && c.start <= hi && !c.grid && !c.pre && !c.leader).map((c) => c.start);
+      const downsIn = (an.barStart || []).map((x) => x - win.start).filter((t) => t >= lo && t <= hi);
+      const target = want.find((t) => t >= lo - barDur && t <= hi + barDur) ?? h - barDur * 4;
+      const near = (l) => l.reduce((b, t) => (b == null || Math.abs(t - target) < Math.abs(b - target) ? t : b), null);
+      let start = near(cutsIn), onCut = start != null && Math.abs(start - target) <= barDur * 1.1;
+      if (!onCut) { const d = near(downsIn); if (d != null) start = d; else if (start == null) start = Math.max(fixedEndAll, h - barDur * 2); }
       if (colorMode === 'strobe' || colorMode === 'pulse') start = Math.max(fixedEndAll, Math.min(start, h - barDur * 2));
       if (h - start < barDur * 0.85) continue;
+      onCut = clips.some((c) => Math.abs(c.start - start) < 0.04);
+      // weicher Übergang hinein: auf einem Schnitt kurz, mitten in einer Einstellung zieht die Farbe über einen Takt heraus
+      const fadeIn = onCut ? Math.min(0.3, beatDur * 0.6) : Math.min(barDur, (h - start) * 0.4);
       const dur = colorMode === 'bloom' ? Math.min(beatDur * 2, 1.1) : colorMode === 'sweep' ? Math.min(beatDur * 1.5, 0.85) : 0;
-      colorFx.push({ mode: colorMode, start, hit: h, dur, end: h + Math.max(dur, 0.05), steps: colSteps(h), decay: beatDur * 0.45, popAmp: popOf[colorMode], popDur: beatDur * 1.5 });
+      colorFx.push({ mode: colorMode, start, hit: h, dur, end: h + Math.max(dur, 0.05), fadeIn, steps: colSteps(h), decay: beatDur * 0.45, popAmp: popOf[colorMode], popDur: beatDur * 1.5 });
       if (colorMode === 'drop' || colorMode === 'steps' || colorMode === 'pop') fx.push({ type: 'flash', start: h, end: h + 0.2, amp: 0.18 });
       fx.push({ type: 'punch', start: h, end: h + 0.45, amp: colorMode === 'drop' ? 0.6 : 0.35 });
     }

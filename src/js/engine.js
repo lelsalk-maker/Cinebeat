@@ -986,7 +986,8 @@ class Engine {
   colorState(t, foc) {
     for (const f of this.plan.colorFx || []) {
       if (t < f.start || t >= f.end) continue;
-      const fade = clamp01((t - f.start) / 0.35);
+      // Farbe weicht weich (über f.fadeIn: auf einem Schnitt kurz, mitten in einer Einstellung über einen Takt)
+      const fade = smooth(clamp01((t - f.start) / Math.max(0.05, f.fadeIn || 0.35)));
       let p;
       if (t < f.hit) {
         p = 0;
@@ -1314,7 +1315,10 @@ class Engine {
     ]);
     if (token !== this._token) return;
     if (this.ac.state !== 'running') { try { await this.ac.resume(); } catch (e) { /* ignore */ } }
-    if (!this.exporting && this.scale > this.playMax) this._setScale(this.playMax);
+    // gleich mit der Auflösung starten, die beim letzten Abspielen flüssig lief: ein Umschalten statt einer Kaskade
+    // (jedes Umschalten der Leinwand kostet einen kurzen Hänger)
+    if (!this.exporting && this.scale > this.playMax) this._setScale(Math.min(this.playMax, this._playScale || this.playMax));
+    this._warm = 1;
     this._lastDraw = 0;
     clearTimeout(this._acSleep);
     this._startAudio(t0, this.master);
@@ -1501,10 +1505,14 @@ class Engine {
     const avg = sum / d.length;
     this._dts = [];
     const floor = this.playMax * 0.6;
+    // die ersten Auswertungen nach dem Start zählen nicht: Bilder laden und Videos springen an, das ist kein Dauerzustand
+    if (this._warm > 0) { this._warm--; return; }
     // im Flüssig-Modus zuerst die Bildrate zurücknehmen (und für diese Sitzung dabei bleiben), erst dann die Auflösung
     if (this._fps60 && avg > base * 1.45) { this._fps60 = false; this._no60 = true; return; }
-    if (avg > base * 1.45 && this.scale > floor) { this._setScale(Math.max(floor, +(this.scale * 0.8).toFixed(2))); this._calm = 0; }
+    // zu langsam: in einem Schritt auf die Stufe, die zur gemessenen Last passt (Arbeit wächst mit der Pixelzahl)
+    if (avg > base * 1.45 && this.scale > floor) { this._setScale(Math.max(floor, Math.min(+(this.scale * 0.8).toFixed(2), +(this.scale * Math.sqrt((base * 1.15) / avg)).toFixed(2)))); this._calm = 0; }
     else if (avg < base * 1.12 && this.scale < this.playMax && ++this._calm >= 3) { this._setScale(Math.min(this.playMax, +(this.scale * 1.15).toFixed(2))); this._calm = 0; }
+    this._playScale = this.scale;
   }
 
   _loop(now) {

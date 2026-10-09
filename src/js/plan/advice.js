@@ -189,7 +189,11 @@ async function bestCut(opts, n = 8, onProgress) {
     const audit = opts.an ? planAudit(plan, opts.media, opts.an).concat(planSyncAudit(plan, opts.an)) : [];
     // „Neu schneiden“: eine Variante, die fast wie der bisherige Schnitt aussieht, zählt deutlich weniger
     const same = opts.avoid ? cutSimilarity(plan, opts.avoid) : 0;
-    const score = planQuality(plan, opts.media, false, opts.an) - audit.length * 4 - (same > 0.7 ? 30 * (same - 0.7) / 0.3 + 10 : 0);
+    // was der Film-Check bemängeln würde (gleiche Motive, Schnitte ins Wort, zu dünnes Material), zählt gleich mit –
+    // so steht nach dem Schneiden schon die Variante, die nichts zu korrigieren hat
+    let chkBad = 0;
+    if (opts.an) try { chkBad = filmCheck(plan, opts.media, opts.an).filter((x) => !x.ok && x.key !== 'hook' && x.key !== 'takt').length; } catch (e) { chkBad = 0; }
+    const score = planQuality(plan, opts.media, false, opts.an) - audit.length * 4 - chkBad * 3 - (same > 0.7 ? 30 * (same - 0.7) / 0.3 + 10 : 0);
     tried.push({ seed: seeds[k], score, audit: audit.length });
     // bei Gleichstand bleibt die bisherige Variante (die aktuelle zuerst)
     if (!best || score > best.score + 1e-6) { best = { plan, seed: seeds[k], score, audit }; stale = 0; } else stale++;
@@ -279,29 +283,47 @@ async function improveHook(opts, onProgress, only = {}) {
   const base = buildPlan(opts);
   const hs0 = hookScore(base, opts.media, opts.an), h0 = hs0.score, q0 = planQuality(base, opts.media);
   const imgs = opts.media.filter((m) => m.kind === 'image' && !m.bad && !m.excluded);
+  // Startbilder: die stärksten, dazu die mit dem meisten Sog im Feed (Menschen, Kraft) – nicht nur das „beste“ Foto
+  const pull = (m) => (m.score || 0) + 0.25 * peopleIn(m) + 0.2 * mediaEnergy(m) + (isUs(m) ? 0.1 : 0);
+  const byPull = imgs.slice().sort((a, b) => pull(b) - pull(a)).slice(0, only.wide ? 5 : 3).map((m) => m.id);
   const byScore = imgs.slice().sort((a, b) => (b.score || 0) - (a.score || 0));
-  const bestUs = imgs.filter((m) => isUs(m)).sort((a, b) => (b.score || 0) - (a.score || 0))[0];
-  const hooks = [s0.hookId || null, byScore[0] && byScore[0].id, bestUs && bestUs.id].filter((v, i, a) => a.indexOf(v) === i);
+  const hooks = [s0.hookId || null, byScore[0] && byScore[0].id, ...byPull].filter((v, i, a) => a.indexOf(v) === i);
   // only.intros / only.starts: was durchprobiert werden darf (z. B. nur, was der Nutzer auf Auto gelassen hat)
   // Abwechslung über die Reise: Einstiege der anderen Orte werden nicht durchprobiert
   const avoid = s0.avoidIntros || [];
-  const intros = (only.intros || [s0.intro || 'auto', 'rush', 'hook', 'knockout']).filter((v, i, a) => a.indexOf(v) === i && (i === 0 || !avoid.includes(v)));
+  const intros = (only.intros || [s0.intro || 'auto', 'rush', 'hook', 'knockout', ...(only.wide ? ['city', 'reveal'] : [])]).filter((v, i, a) => a.indexOf(v) === i && (i === 0 || !avoid.includes(v)));
   const starts = (only.starts || [s0.songStart == null ? 'auto' : s0.songStart, 'hook', 'prehook']).filter((v, i, a) => a.indexOf(v) === i);
   // zuerst Fehler beheben, dann den Stopp-Wert heben
   let best = { h: h0, e: hs0.errors, settings: null, hookId: s0.hookId || null };
-  const total = intros.length * starts.length * hooks.length;
+  // Schritt für Schritt statt jede Kombination: Startbild, Einstieg, Songstelle – je die beste Wahl behalten, zwei Runden
+  // (findet dieselben Verbesserungen mit einem Bruchteil der Rechenzeit; wichtig auf dem Handy)
+  let cur = { intro: s0.intro || 'auto', songStart: s0.songStart == null ? 'auto' : s0.songStart, hookId: s0.hookId || null };
+  const tried = new Set([JSON.stringify(cur)]);
+  const total = 2 * (hooks.length + intros.length + starts.length);
   let k = 0;
-  for (const intro of intros) for (const songStart of starts) for (const hookId of hooks) {
+  const tryOne = async (cand) => {
     k++;
-    if (onProgress) { onProgress(k, total); await new Promise((r) => setTimeout(r, 0)); }
-    const settings = { ...s0, intro, songStart, hookId };
+    if (onProgress) { onProgress(Math.min(k, total), total); await new Promise((r) => setTimeout(r, 0)); }
+    const key = JSON.stringify(cand);
+    if (tried.has(key)) return;
+    tried.add(key);
     let plan;
-    try { plan = buildPlan({ ...opts, settings }); } catch (e) { continue; }
+    try { plan = buildPlan({ ...opts, settings: { ...s0, ...cand } }); } catch (e) { return; }
     const hs = hookScore(plan, opts.media, opts.an), h = hs.score;
-    if (hs.errors > best.e || (hs.errors === best.e && h <= best.h + 2)) continue;
+    if (hs.errors > best.e || (hs.errors === best.e && h <= best.h + 2)) return;
     // der Rest des Films darf nicht leiden
-    if (planQuality(plan, opts.media) < q0 - Math.max(0.5, Math.abs(q0) * 0.08)) continue;
-    best = { h, e: hs.errors, settings: { intro, songStart }, hookId };
+    if (planQuality(plan, opts.media) < q0 - Math.max(0.5, Math.abs(q0) * 0.08)) return;
+    best = { h, e: hs.errors, settings: { intro: cand.intro, songStart: cand.songStart }, hookId: cand.hookId };
+  };
+  for (let round = 0; round < 2; round++) {
+    const before = best.h - best.e * 100;
+    for (const hookId of hooks) await tryOne({ ...cur, hookId });
+    if (best.settings) cur = { ...best.settings, hookId: best.hookId };
+    for (const intro of intros) await tryOne({ ...cur, intro });
+    if (best.settings) cur = { ...best.settings, hookId: best.hookId };
+    for (const songStart of starts) await tryOne({ ...cur, songStart });
+    if (best.settings) cur = { ...best.settings, hookId: best.hookId };
+    if (best.h - best.e * 100 <= before) break;
   }
   return { from: h0, to: best.h, errorsFrom: hs0.errors, errorsTo: best.e, settings: best.settings, hookId: best.hookId };
 }
@@ -404,18 +426,37 @@ function planAudit(plan, media, an) {
  * gegen den Song), Abwechslung (keine gleichen Motive hintereinander), Lesbarkeit der Titel, ruhige Videostellen,
  * Schnitte und Gesang (nicht mitten in eine Zeile in ruhigen Teilen).
  */
-function filmCheck(plan, media, an, hook) {
+/**
+ * Trägt das Material die Filmlänge? Dünn ist ein Film, wenn sich Aufnahmen wiederholen müssen oder im Refrain/Drop ein
+ * Foto länger als neun Sekunden steht. suggest = Länge, die das Material gut trägt (Fotos ≈ 3 s, Videos ganz).
+ */
+function materialFit(plan, media) {
+  const ok = media.filter((m) => !m.bad && !m.excluded);
+  const fr = formatRule(plan.resolved || {});
+  const have = ok.reduce((a, m) => a + (m.kind === 'video' ? Math.min(videoSpan(m), fr.vmax || 10) : m.dupOf ? 0 : 3), 0);
+  const longPeak = plan.clips.some((c) => !c.loop && !c.vid && (c.label === 'drop' || c.label === 'chorus') && c.end - c.start > 9 && !(media[c.mediaIndex] && media[c.mediaIndex].kind === 'video'));
+  const thin = ((plan.capacity && plan.capacity.repeats) || 0) > 0 && have < plan.duration * 0.9 || longPeak;
+  return { thin, n: ok.filter((m) => !m.dupOf).length, have, suggest: Math.max(Math.min(plan.duration, 12), Math.round(Math.min(plan.duration, have))) };
+}
+
+function filmCheck(plan, media, an, hook, opt = {}) {
   const byId = new Map(media.map((m) => [m.id, m]));
   const out = [];
   const h = hook || hookScore(plan, media, an);
-  out.push({ key: 'hook', ok: !h.errors && h.score >= 70, label: !h.errors && h.score >= 70 ? 'Einstieg stoppt beim Scrollen' : h.errors ? 'Einstieg hat einen Fehler' : 'Einstieg kann stärker sein', detail: h.errors ? 'Schwarzbild, Standbild oder schwaches erstes Bild am Anfang.' : 'Bewegung, früher Schnitt und ein starkes Motiv in den ersten 1,5 s.' });
+  // Hat die Auto-Regie den Einstieg schon ausgereizt (alle Startbilder, Einstiege, Songstellen durchprobiert), ist das
+  // kein offener Fehler mehr, sondern das Beste aus diesem Material – mit dem einen Tipp, der noch etwas bringen würde
+  const tip = (h.parts || []).filter((x) => x.kind !== 'fehler' && x.v < 0.6).sort((a, b) => b.w * (1 - b.v) - a.w * (1 - a.v))[0];
+  if (!h.errors && h.score < 70 && opt.hookMaxed) out.push({ key: 'hook', ok: true, best: true, label: 'Einstieg: das Stärkste aus deinem Material', detail: tip ? tip.tip : 'Alle Startbilder, Einstiege und Songstellen sind durchprobiert.' });
+  else out.push({ key: 'hook', ok: !h.errors && h.score >= 70, label: !h.errors && h.score >= 70 ? 'Einstieg stoppt beim Scrollen' : h.errors ? 'Einstieg hat einen Fehler' : 'Einstieg kann stärker sein', detail: h.errors ? ((h.parts || []).find((x) => x.kind === 'fehler' && x.v < 0.5) || {}).tip || 'Schwarzbild, Standbild oder schwaches erstes Bild am Anfang.' : 'Bewegung, früher Schnitt und ein starkes Motiv in den ersten 1,5 s.', maxed: !!opt.hookMaxed });
   let audit = [];
   try { audit = planAudit(plan, media, an).concat(planSyncAudit(plan, an)); } catch (e) { audit = []; }
-  out.push({ key: 'takt', ok: !audit.length, label: audit.length ? `${audit.length} ${audit.length === 1 ? 'Stelle weicht' : 'Stellen weichen'} vom Song ab` : 'Jeder Schnitt sitzt im Takt', detail: audit.length ? audit[0].msg : 'Schnitte, Effekte und Einblendungen auf Schlag, Takt oder Einsatz.' });
-  const plain = plan.clips.filter((c) => c.mediaId && !c.split && !c.flash && !c.rush && !c.burst && !c.welcome && !c.grid && !c.stack && !c.loop && !c.recap);
+  out.push({ key: 'takt', n: audit.length, ok: !audit.length, label: audit.length ? `${audit.length} ${audit.length === 1 ? 'Stelle weicht' : 'Stellen weichen'} vom Song ab` : 'Jeder Schnitt sitzt im Takt', detail: audit.length ? audit[0].msg : 'Schnitte, Effekte und Einblendungen auf Schlag, Takt oder Einsatz.' });
+  const plain = plan.clips.filter((c) => c.mediaId && !c.split && !c.flash && !c.rush && !c.burst && !c.pre && !c.leader && !c.miniRew && !c.welcome && !c.grid && !c.stack && !c.loop && !c.recap);
   let twins = 0;
-  for (let i = 1; i < plain.length; i++) if (sameMotif(byId.get(plain[i - 1].mediaId), byId.get(plain[i].mediaId))) twins++;
-  out.push({ key: 'motiv', ok: !twins, label: twins ? `${twins}× gleiches Motiv hintereinander` : 'Nie zwei gleiche Motive hintereinander', detail: twins ? 'Dein Material hat hier zu wenig Abwechslung – Neu schneiden oder ein ähnliches Bild ausschließen.' : 'Ähnliche Strände, Plätze und Serien stehen nie direkt nebeneinander.' });
+  // (gewollte Fortsetzung derselben Einstellung zählt nicht: Aufblende → Enthüllung, Bild läuft in den Abspann-Streifen)
+  const cont = (a, b) => a.mediaId === b.mediaId && b.i === a.i + 1 && (b.reveal || b.revealHit || b.strip || a.reveal);
+  for (let i = 1; i < plain.length; i++) if (!cont(plain[i - 1], plain[i]) && sameMotif(byId.get(plain[i - 1].mediaId), byId.get(plain[i].mediaId))) twins++;
+  out.push({ key: 'motiv', n: twins, ok: !twins, label: twins ? `${twins}× gleiches Motiv hintereinander` : 'Nie zwei gleiche Motive hintereinander', detail: twins ? 'Dein Material hat hier zu wenig Abwechslung – Neu schneiden oder ein ähnliches Bild ausschließen.' : 'Ähnliche Strände, Plätze und Serien stehen nie direkt nebeneinander.' });
   const titles = plan.overlays.filter((o) => ['city', 'lower', 'chapter'].includes(o.type) && o.text);
   const weak = titles.filter((o) => !o.place).length;
   out.push({ key: 'text', ok: !weak, label: !titles.length ? 'Keine Titel im Film' : weak ? 'Titel ohne Kontrastprüfung' : titles.some((o) => o.behind) ? 'Ortsname hinter den Bergen, gut lesbar' : 'Titel an ruhiger Stelle, gut lesbar', detail: 'Schriftfarbe und Abdunklung nach dem Bild darunter (Kontrast ≥ 4,5 : 1).' });
@@ -426,12 +467,17 @@ function filmCheck(plan, media, an, hook) {
     const a = c.srcOffset, z = a + (c.visEnd - c.visStart) * (c.rate || 1);
     if (m.shakes.some((x) => x.t >= a - 0.2 && x.t <= z && x.j > 0.6)) shaky++;
   }
-  out.push({ key: 'video', ok: !shaky, label: shaky ? `${shaky} Videostelle${shaky === 1 ? '' : 'n'} wackelig` : 'Videos an ruhigen, starken Stellen', detail: shaky ? 'Im Material antippen und einen ruhigeren Ausschnitt wählen.' : 'Bewegungshöhepunkte, Lachen und Menschen zuerst; kein Wackeln, kein Start-Ruck.' });
+  out.push({ key: 'video', n: shaky, ok: !shaky, label: shaky ? `${shaky} Videostelle${shaky === 1 ? '' : 'n'} wackelig` : 'Videos an ruhigen, starken Stellen', detail: shaky ? 'Im Material antippen und einen ruhigeren Ausschnitt wählen.' : 'Bewegungshöhepunkte, Lachen und Menschen zuerst; kein Wackeln, kein Start-Ruck.' });
+  // Länge zum Material: reicht es nicht, wiederholen sich Bilder oder ein Bild steht im Höhepunkt ewig
+  {
+    const fit = materialFit(plan, media);
+    out.push({ key: 'laenge', ok: !fit.thin, label: fit.thin ? `Zu wenig Aufnahmen für ${fmtMS(plan.duration)}` : 'Länge passt zum Material', detail: fit.thin ? `Mit ${fit.n} Aufnahmen trägt ein Film von etwa ${fmtMS(fit.suggest)} – sonst stehen Bilder sehr lange oder wiederholen sich.` : 'Jedes Bild steht so lange, wie es wirkt; nichts wiederholt sich.', suggest: fit.suggest });
+  }
   const lines = an.vocalLines || [], w0 = plan.win.start, bd = plan.beatDur || an.beatPeriod || 0.5;
   let inWord = 0;
   for (const c of plan.clips.slice(1)) {
     const abs = c.start + w0, lab = c.label;
-    if (lab === 'drop' || lab === 'chorus' || lab === 'build' || c.flash || c.rush || c.burst) continue;
+    if (lab === 'drop' || lab === 'chorus' || lab === 'build' || c.flash || c.rush || c.burst || c.pre || c.leader || c.miniRew) continue;
     if (Array.from(an.barStart || []).some((b) => Math.abs(b - abs) < 0.04)) continue;
     if (lines.some(([a, e]) => abs > a + bd * 0.4 && abs < e - bd * 0.3)) inWord++;
   }

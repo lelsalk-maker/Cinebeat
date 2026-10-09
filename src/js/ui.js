@@ -2107,12 +2107,15 @@ async function cutFilm(n = 8, avoid = null) {
     const hr = await improveHook(opts, (k, N) => busy(`Suche den stärksten Einstieg … ${k} von ${N}`), {
       intros: !st.intro || st.intro === 'auto' ? null : [st.intro],
       starts: st.songStart == null || st.songStart === 'auto' ? null : [st.songStart],
+      wide: true,
     });
     if (S.ctx === ctx && hr && hr.settings && (hr.errorsTo < hr.errorsFrom || hr.to >= hr.from + 8)) {
       Object.assign(st, hr.settings);
       ctx.rec.hookId = hr.hookId;
       hookMsg = ' Einstieg verstärkt.';
     }
+    // was jetzt steht, ist das Beste, was die Regie gefunden hat
+    if (S.ctx === ctx && hr) ctx.rec.hookMax = hookKey(ctx);
   } catch (e) { console.error(e); }
   busy(null);
   if (S.ctx !== ctx) return;
@@ -2122,6 +2125,10 @@ async function cutFilm(n = 8, avoid = null) {
   $('flowStage').hidden = true;
   engine.t = 0;
   await rebuild({ fresh: true });
+  // Film-Check gleich mit: was sich beheben lässt, ohne deine Wünsche zu übergehen, behebt die Regie selbst
+  let fixed = null;
+  try { fixed = await autoFixNow({ quiet: true }); } catch (e) { console.error(e); }
+  if (fixed && fixed.length) hookMsg += ` Film-Check korrigiert: ${fixed.join(', ')}.`;
   toast(`Fertig: der beste von ${res.tried.length} geprüften Schnitten. ${res.audit && res.audit.length ? `${res.audit.length} Stelle${res.audit.length === 1 ? '' : 'n'} weicht vom Song ab.` : 'Stimmig: jeder Schnitt passt zum Song.'}${hookMsg}`);
 }
 
@@ -3419,17 +3426,21 @@ function renderRegie() {
   }
   // Film-Check statt einer Punktzahl: was messbar stimmt, mit Häkchen; was nicht, mit Hinweis und „Verbessern“
   let chk = [];
-  if (good && S.hook && S.ctx.song && S.ctx.song.an) { try { chk = filmCheck(p, filmMedia(S.ctx), S.ctx.song.an, S.hook); } catch (e) { chk = []; } }
+  if (good && S.hook && S.ctx.song && S.ctx.song.an) { try { chk = filmCheck(p, filmMedia(S.ctx), S.ctx.song.an, S.hook, { hookMaxed: S.ctx.rec.hookMax === hookKey(S.ctx) }); } catch (e) { chk = []; } }
   S.check = chk;
   const okN = chk.filter((x) => x.ok).length;
   const hookCard = chk.length ? `<div class="check-card${okN === chk.length ? ' good' : ''}">
       <div class="check-head"><span class="hook-k">Film-Check</span><b>${okN} von ${chk.length}</b>
-        ${chk.some((x) => x.key === 'hook' && !x.ok) ? '<button type="button" class="btn small primary-outline hook-fix" id="hookFix">Einstieg verbessern</button>' : ''}</div>
+        ${chk.some((x) => !x.ok && !(x.key === 'hook' && x.maxed)) ? `<button type="button" class="btn small primary-outline hook-fix" id="hookFix">${chk.filter((x) => !x.ok).length === 1 && chk.find((x) => x.key === 'hook' && !x.ok) ? 'Einstieg verbessern' : 'Automatisch korrigieren'}</button>` : ''}</div>
       <ul class="check-list">${chk.map((x) => `<li><button type="button" class="chk${x.ok ? ' ok' : ''}" data-go="${x.key === 'hook' ? 'hook' : 'check'}" title="${esc(x.detail)}"><i aria-hidden="true">${x.ok ? '✓' : '!'}</i><span>${esc(x.label)}</span></button></li>`).join('')}</ul>
     </div>` : '';
-  dec.innerHTML = hookCard + items.map(([k, l, v, sub]) => `<button type="button" class="dec" data-go="${k}"><span>${l}</span><b>${esc(v)}</b>${sub ? `<i>${esc(sub)}</i>` : ''}</button>`).join('');
+  let ideas = [];
+  if (good) { try { ideas = regieIdeas(p, S.ctx); } catch (e) { ideas = []; } }
+  S.ideas = ideas;
+  const ideaCard = ideas.length ? `<div class="idea-card"><span class="hook-k">Möglichkeiten</span><div class="idea-row">${ideas.map((x) => `<button type="button" class="idea" data-idea="${x.id}" title="${esc(x.why || '')}"><b>${esc(x.label)}</b>${x.sub ? `<i>${esc(x.sub)}</i>` : ''}</button>`).join('')}</div></div>` : '';
+  dec.innerHTML = hookCard + ideaCard + items.map(([k, l, v, sub]) => `<button type="button" class="dec" data-go="${k}"><span>${l}</span><b>${esc(v)}</b>${sub ? `<i>${esc(sub)}</i>` : ''}</button>`).join('');
   const hf = $('hookFix');
-  if (hf) hf.addEventListener('click', improveHookNow);
+  if (hf) hf.addEventListener('click', autoFixNow);
   const notes = good ? p.notes : ['Wähle Fotos und Videos. Die Auto-Regie bestimmt dann Filmlänge, Songausschnitt, Schnitt, Look und Farbangleichung.'];
   const open = ul.dataset.open === '1' || !good;
   ul.innerHTML = (open ? notes.map((n) => `<li>${esc(n)}</li>`).join('') : '') + (good ? `<li class="more-toggle"><button type="button" id="regieMore">${open ? 'Begründung ausblenden' : `Warum so? ${notes.length} Entscheidungen im Klartext`}</button></li>` : '');
@@ -3460,14 +3471,14 @@ function openCheckSheet() {
     <p class="hint">Gemessen am fertigen Schnitt – kein Geschmack, sondern was im Feed und zur Musik zählt.</p>
     <ul class="hook-parts">${chk.map((x) => `<li class="${x.ok ? 'ok' : 'low'}"><span>${x.ok ? '✓' : '!'} ${esc(x.label)}</span><small>${esc(x.detail)}</small></li>`).join('')}</ul>
     <div class="sheet-actions">
-      ${chk.some((x) => x.key === 'hook' && !x.ok) ? '<button class="btn primary" data-act="improve" type="button">Einstieg verbessern</button>' : ''}
+      ${chk.some((x) => !x.ok && !(x.key === 'hook' && x.maxed)) ? '<button class="btn primary" data-act="improve" type="button">Automatisch korrigieren</button>' : ''}
       <button class="btn ghost" data-act="close" type="button">Schließen</button>
     </div>`);
   body.addEventListener('click', (e) => {
     const a = e.target.closest('[data-act]');
     if (!a) return;
     closeSheet();
-    if (a.dataset.act === 'improve') improveHookNow();
+    if (a.dataset.act === 'improve') autoFixNow();
   });
 }
 
@@ -3498,17 +3509,166 @@ function openHookSheet() {
 }
 
 /** Hook automatisch verbessern: Einstiege, Songstart und Startbild durchprobieren, ohne den Rest des Films zu verschlechtern. */
+/* Film-Check korrigiert selbst: probiert für jeden offenen Punkt die Eingriffe, die ihn beheben können (kürzere Länge,
+ * andere Variante des Schnitts, ein Stil-Mittel weniger, stärkerer Einstieg), behält nur, was den Check verbessert
+ * und den Film nicht schlechter macht, und sagt in Klartext, was geändert wurde. Rückgängig mit ↶. */
+const FIX_DE = { length: (v) => `Länge auf ${fmtClock(+v)} (dafür reicht dein Material)`, seed: () => 'andere Variante des Schnitts', pre: () => 'ohne Vorspann', midGrid: () => 'ohne Raster im Film', stack: () => 'ohne Polaroid-Stapel', burst: () => 'ohne Foto-Serie', mini: () => 'ohne Mini-Rewind', echo: () => 'ohne Echo', intro: () => 'Einstieg automatisch', outro: () => 'Ende automatisch', pace: () => 'etwas ruhiger geschnitten (mehr Zeit je Bild)', order: (v) => (v === 'tageszeit' ? 'Reihenfolge nach Tagen (statt streng nach Uhrzeit)' : 'Reihenfolge zum Lied') };
+async function autoFixNow(opt = {}) {
+  // opt.quiet: direkt nach dem Schneiden – nur Eingriffe, die keinem ausdrücklichen Wunsch widersprechen, keine Meldung
+  const ctx = S.ctx;
+  if (!ctx || !S.plan || S.exporting) return null;
+  engine.pause();
+  const media = filmMedia(ctx), an = ctx.song.an;
+  const base = planOpts(ctx, media);
+  const evalS = (patch, ovPatch = null, trims = null) => {
+    const settings = { ...base.settings, ...patch };
+    const overrides = ovPatch ? { ...base.overrides, media: { ...(base.overrides.media || {}), ...ovPatch } } : base.overrides;
+    const med = trims ? media.map((m) => (trims[m.id] ? { ...m, trim: trims[m.id] } : m)) : media;
+    const plan = buildPlan({ ...base, media: med, settings, overrides });
+    const chk = filmCheck(plan, med, an, hookScore(plan, med, an), {});
+    // offene Punkte zählen zuerst, innerhalb davon die Zahl der Stellen (3 → 1 Motiv-Doppel ist auch ein Fortschritt)
+    const open = chk.filter((x) => !x.ok && x.key !== 'hook');
+    const bad = open.length * 10 + Math.min(8, open.reduce((a, x) => a + (x.n || 0), 0)) * 0.1 + (chk.find((x) => x.key === 'hook' && !x.ok) ? 1 : 0);
+    return { patch, plan, chk, bad, q: planQuality(plan, media, false, an) };
+  };
+  // wacklige Videostelle: der ruhigste Ausschnitt gleicher Länge (wie du ihn im Material wählen würdest)
+  // gibt es keinen ruhigen Ausschnitt in voller Länge, wird das Video auf seine längste ruhige Strecke (≥ 1 s) gekürzt
+  const trims = {};
+  const calmVideos = (plan) => {
+    const out = {};
+    for (const c of plan.clips) {
+      const m = media[c.mediaIndex];
+      if (!m || m.kind !== 'video' || !m.shakes || !m.shakes.length || c.srcOffset == null) continue;
+      const need = (c.visEnd - c.visStart) * (c.rate || 1), span = videoSpan(m), t0 = m.trim && m.trim[1] > m.trim[0] ? m.trim[0] : 0;
+      const worst = (a) => m.shakes.filter((x) => x.t >= a - 0.2 && x.t <= a + need).reduce((w, x) => Math.max(w, x.j), 0);
+      if (worst(c.srcOffset) <= 0.6) continue;
+      let best = null;
+      for (let a = t0; a <= t0 + Math.max(0, span - need) + 1e-6; a += 0.2) { const w = worst(a); if (!best || w < best.w - 1e-6) best = { a, w }; }
+      if (best && best.w <= 0.6) { out[m.id] = { ...((ctx.rec.overrides.media || {})[m.id] || {}), srcOffset: +best.a.toFixed(2) }; continue; }
+      // längste ruhige Strecke: zwischen zwei wackligen Stellen (mit 0,2 s Abstand)
+      const bad = m.shakes.filter((x) => x.j > 0.6).map((x) => x.t).sort((a, b) => a - b);
+      let run = null;
+      [t0 - 0.2, ...bad, t0 + span + 0.2].reduce((p, q) => { const a = p + 0.2, z = q - 0.2; if (z - a > (run ? run[1] - run[0] : 0)) run = [a, z]; return q; });
+      if (run && run[1] - run[0] >= 1) trims[m.id] = [+Math.max(t0, run[0]).toFixed(2), +Math.min(t0 + span, run[1]).toFixed(2)];
+    }
+    return out;
+  };
+  busy('Film-Check korrigiert …');
+  await new Promise((r) => setTimeout(r, 30));
+  let cur;
+  try { cur = evalS({}); } catch (e) { busy(null); if (!opt.quiet) toast('Der Film-Check konnte gerade nicht rechnen – bitte noch einmal versuchen.'); return null; }
+  const start = cur.bad;
+  const applied = {};
+  for (let step = 0; step < 4 && cur.bad >= 10; step++) {
+    const st = { ...base.settings, ...applied };
+    const fails = cur.chk.filter((x) => !x.ok).map((x) => x.key);
+    const cands = [];
+    const lenItem = cur.chk.find((x) => x.key === 'laenge' && !x.ok);
+    if (lenItem && lenItem.suggest && (!opt.quiet || st.length === 'auto')) cands.push({ length: Math.round(lenItem.suggest) });
+    if (fails.some((k) => ['motiv', 'gesang', 'takt', 'video', 'laenge'].includes(k))) for (let k = 1; k <= 4; k++) cands.push({ seed: ((Math.imul((st.seed >>> 0) + k * 7919, 2654435761) >>> 0) % 1000000) + 1 });
+    if (!opt.quiet && fails.includes('motiv') && st.order === 'streng') cands.push({ order: 'tageszeit' });
+    // zu wenig Abwechslung für so viele Schnitte: ruhiger schneiden oder kürzer – was den Check behebt, gewinnt
+    if ((fails.includes('motiv') || fails.includes('gesang')) && st.pace === 'schnell' && !opt.quiet) cands.push({ pace: 'mittel' });
+    if (fails.includes('motiv') && (!opt.quiet || st.length === 'auto')) { const L = Math.round(cur.plan.duration * 0.75); if (L >= 8) cands.push({ length: L }); }
+    if (!opt.quiet && (fails.includes('takt') || fails.includes('laenge'))) {
+      for (const k of ['pre', 'midGrid', 'stack', 'burst', 'mini', 'echo']) if (st[k] && st[k] !== 'off' && st[k] !== 'auto') cands.push({ [k]: 'off' });
+      if (st.intro && st.intro !== 'auto') cands.push({ intro: 'auto' });
+      if (st.outro && st.outro !== 'auto') cands.push({ outro: 'auto' });
+    }
+    let best = null;
+    for (const c of cands) {
+      busy(`Film-Check korrigiert … ${cands.indexOf(c) + 1} von ${cands.length}`);
+      await new Promise((r) => setTimeout(r, 0));
+      let r;
+      try { r = evalS({ ...applied, ...c }); } catch (e) { continue; }
+      if (r.bad < cur.bad && r.q >= cur.q - Math.max(1, Math.abs(cur.q) * 0.15) && (!best || r.bad < best.bad || (r.bad === best.bad && r.q > best.q))) best = { ...r, c };
+    }
+    if (!best) break;
+    Object.assign(applied, best.c);
+    cur = best;
+  }
+  // Videos: ruhigere Ausschnitte, wenn der Check wacklige Stellen meldet
+  let calm = null;
+  if (cur.chk.some((x) => x.key === 'video' && !x.ok)) {
+    const ov = calmVideos(cur.plan);
+    if (Object.keys(ov).length || Object.keys(trims).length) {
+      try { const r = evalS(applied, ov, Object.keys(trims).length ? trims : null); if (r.bad < cur.bad) { calm = ov; cur = r; } else for (const k in trims) delete trims[k]; } catch (e) { for (const k in trims) delete trims[k]; }
+    }
+  }
+  busy(null);
+  const changes = Object.entries(applied).map(([k, v]) => (FIX_DE[k] ? FIX_DE[k](v) : k));
+  if (calm) {
+    const n = Object.keys(calm).length + Object.keys(trims).length;
+    changes.push(n === 1 ? 'ruhigerer Videoausschnitt' : `${n} ruhigere Videoausschnitte`);
+    ctx.rec.overrides.media = { ...(ctx.rec.overrides.media || {}), ...calm };
+    for (const m of ctx.media) if (trims[m.id]) { m.trim = trims[m.id]; saveMediaFlags(m); }
+  }
+  if (Object.keys(applied).length || calm) { Object.assign(ctx.rec.settings, applied); commit(); savePlaceSoon(); renderEditor(); engine.t = 0; await rebuild(); }
+  if (opt.quiet) return changes;
+  // der Einstieg zuletzt (er hängt am übrigen Schnitt)
+  const hookOpen = (S.check || []).some((x) => x.key === 'hook' && !x.ok && !x.maxed);
+  if (hookOpen) { await improveHookNow(); if (!changes.length) return; }
+  const left = (S.check || []).filter((x) => !x.ok);
+  if (changes.length) toast(`Korrigiert: ${changes.join(', ')}.${left.length ? ` Offen: ${left.map((x) => x.label).join(', ')}.` : ' Film-Check: alles stimmt.'} Rückgängig mit ↶.`);
+  else if (!hookOpen) toast(start >= 10 ? `Geprüft: ${left.map((x) => x.label).join(', ')} – dafür braucht es anderes Material (z. B. mehr Aufnahmen oder ein anderes Startbild).` : 'Film-Check: alles stimmt.');
+}
+
+/* Möglichkeiten: wenige Vorschläge, die zu diesem Song und Material passen (nie mehr als vier). Ein Tipp übernimmt den
+ * Vorschlag und schneidet neu; ↶ nimmt ihn zurück. Was schon an ist oder der Song nicht hergibt, wird nicht angeboten. */
+function regieIdeas(p, ctx) {
+  const st = ctx.rec.settings, an = ctx.song && ctx.song.an, out = [];
+  if (!an || isFlight(ctx.rec)) return out;
+  const w0 = p.win.start, D = p.duration, bar = p.beatDur * 4;
+  const secs = an.sections || [];
+  const peak = (x) => x && (x.label === 'drop' || x.label === 'chorus');
+  const drops = secs.filter((x, k) => peak(x) && !peak(secs[k - 1]) && x.start - w0 > bar * 2 && x.start - w0 < D - bar);
+  if (!(p.colorFx || []).length && st.look !== 'noir' && drops.length) out.push({ id: 'color', label: 'Schwarzweiß bis zum Drop', sub: `Farbe ab ${fmtClock(drops[0].start - w0)}`, why: 'Der Aufbau vor dem Drop läuft schwarzweiß, auf dem Einsatz kehrt die Farbe zurück.', patch: { color: 'drop' }, at: drops[0].start - w0 - bar * 4 });
+  if (st.reim !== 'on' && refrainCount(an) >= 2) out.push({ id: 'reim', label: 'Refrain-Reim', sub: 'gleiche Bildfolge je Refrain', why: 'Jeder Refrain beginnt mit derselben Bildfolge – wie ein Reim im Lied.', patch: { reim: 'on' } });
+  if (st.otone === 'off' && ctx.media.some((m) => m.kind === 'video' && m.snd && (m.snd.list || []).some((e) => e[3] >= 0.5))) out.push({ id: 'otone', label: 'Originalton', sub: 'nur wo es passt', why: 'Kurze, passende Stimmen-Momente aus deinen Videos – nur in ruhigen Stellen des Songs.', patch: { otone: 'auto' } });
+  const songDur = (ctx.song.buffer && ctx.song.buffer.duration) || an.duration || 0;
+  if (st.length !== 'full' && songDur > D + 10) {
+    const fit = materialFit(p, filmMedia(ctx));
+    if (fit.have >= songDur * 0.9) out.push({ id: 'full', label: 'Ganzer Song', sub: fmtClock(songDur), why: 'Dein Material reicht für den ganzen Song ohne Wiederholungen.', patch: { length: 'full' } });
+  }
+  out.push({ id: 'cmp', label: 'Varianten vergleichen', sub: 'ruhig · ausgewogen · energisch', why: 'Drei Schnitte nebeneinander ansehen und den besten nehmen.' });
+  return out.slice(0, 4);
+}
+async function tryIdea(id) {
+  const it = (S.ideas || []).find((x) => x.id === id);
+  if (!it || !S.ctx || S.exporting) return;
+  if (id === 'cmp') { openCompare(); return; }
+  Object.assign(S.ctx.rec.settings, it.patch);
+  commit(); savePlaceSoon(); renderEditor();
+  engine.t = Math.max(0, it.at || 0);
+  await rebuild();
+  toast(`${it.label}: übernommen. ${it.why} Rückgängig mit ↶.`);
+}
+
+/** Kennung des Einstiegs-Stands: ändert sich etwas daran, prüft die Regie neu. */
+function hookKey(ctx) {
+  const st = ctx.rec.settings;
+  return JSON.stringify([st.seed, st.intro, st.songStart, ctx.rec.hookId || null, st.format, st.target, st.length, st.variant, filmMedia(ctx).length, ctx.song && ctx.song.id]);
+}
 async function improveHookNow() {
   if (!S.ctx || !S.plan || S.exporting) return;
   const ctx = S.ctx, media = filmMedia(ctx);
   engine.pause();
   busy('Probiere Einstiege, Songstart und Startbild …');
   let r;
-  try { r = await improveHook(planOpts(ctx, media), (k, n) => busy(`Probiere Einstiege, Songstart und Startbild … ${k} von ${n}`)); } catch (err) { console.error(err); r = null; }
+  try { r = await improveHook(planOpts(ctx, media), (k, n) => busy(`Probiere Einstiege, Songstart und Startbild … ${k} von ${n}`), { wide: true }); } catch (err) { console.error(err); r = null; }
   busy(null);
-  if (!r || !r.settings) { toast(r ? (r.errorsFrom ? 'Den Fehler im Einstieg kann ich mit deinem Material nicht automatisch beheben – ein anderes Startbild hilft (im Material „Als Startbild“).' : 'Der Einstieg ist schon der stärkste, den dein Material hergibt, ohne den übrigen Film zu verschlechtern.') : 'Konnte den Einstieg nicht prüfen.'); return; }
+  if (!r) { toast('Den Einstieg konnte ich gerade nicht prüfen – bitte noch einmal versuchen.'); return; }
+  if (!r.settings) {
+    // nichts Besseres gefunden: das ist das Stärkste aus diesem Material – der Check zeigt jetzt den Tipp statt eines Fehlers
+    ctx.rec.hookMax = hookKey(ctx);
+    savePlaceSoon();
+    renderRegie();
+    toast(r.errorsFrom ? 'Alle Startbilder, Einstiege und Songstellen geprüft: den Fehler kann nur ein anderes Startbild beheben (im Material „Als Startbild“).' : 'Alle Startbilder, Einstiege und Songstellen geprüft – das ist der stärkste Einstieg aus deinem Material.');
+    return;
+  }
   Object.assign(ctx.rec.settings, r.settings);
   ctx.rec.hookId = r.hookId;
+  ctx.rec.hookMax = hookKey(ctx);
   commit(); savePlaceSoon();
   engine.t = 0;
   await rebuild();
@@ -4423,7 +4583,7 @@ async function init() {
   for (const id of ['fileMedia', 'fileMedia2']) $(id).addEventListener('change', (e) => { const fl = Array.from(e.target.files || []); e.target.value = ''; addFiles(fl); });
   $('micSong').addEventListener('click', () => openMicSheet());
   $('beatSong').addEventListener('click', openBeatSheet);
-  $('regieDecisions').addEventListener('click', (e) => { const b = e.target.closest('[data-go]'); if (b) goDecision(b.dataset.go); });
+  $('regieDecisions').addEventListener('click', (e) => { const i = e.target.closest('[data-idea]'); if (i) { tryIdea(i.dataset.idea); return; } const b = e.target.closest('[data-go]'); if (b) goDecision(b.dataset.go); });
   $('flowStage').addEventListener('click', async (e) => {
     const t = e.target.closest('[data-flow],[data-target]');
     if (!t || !S.ctx) return;
@@ -4591,7 +4751,7 @@ async function init() {
 window.CineBeat = {
   get S() { return S; },
   get engine() { return engine; },
-  openPlace, openBestof, addFiles, ingestFiles, scoreWorkers, perfLog, scoreImage, _trips: { tripForStop, tripRange, autoTripName, switchTrip, renderTrip }, rebuild, newPlace, importSong, getSong, openBeatSheet,
+  openPlace, openBestof, addFiles, ingestFiles, scoreWorkers, perfLog, scoreImage, planAudit, planSyncAudit, filmMedia, sameMotif, _trips: { tripForStop, tripRange, autoTripName, switchTrip, renderTrip }, rebuild, newPlace, importSong, getSong, openBeatSheet,
 };
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

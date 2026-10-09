@@ -257,6 +257,13 @@ textarea.text-in { resize: vertical; min-height: 70px; }
 .regie h2 svg { width: 17px; height: 17px; }
 .decisions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .check-card { grid-column: 1 / -1; display: grid; gap: 8px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line-2); background: rgba(11, 11, 13, 0.45); }
+.idea-card { grid-column: 1 / -1; display: grid; gap: 6px; }
+.idea-row { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+.idea-row::-webkit-scrollbar { display: none; }
+.idea { flex: 0 0 auto; display: grid; gap: 1px; text-align: left; padding: 7px 11px; border-radius: 10px; border: 1px solid rgba(47, 107, 255, 0.4); background: rgba(47, 107, 255, 0.08); color: var(--text); cursor: pointer; max-width: 210px; }
+.idea b { font-size: 13px; font-weight: 600; white-space: nowrap; }
+.idea i { font-style: normal; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.idea:active { transform: scale(0.98); }
 .check-card.good { border-color: rgba(47, 107, 255, 0.45); }
 .check-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .check-head .hook-k { white-space: nowrap; }
@@ -4436,7 +4443,7 @@ function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0
       // darf der Schnitt auf dem Schlag bleiben, wenn das Tempo es verlangt
       // Atempause vor dem Einsatz: das Bild steht durch die Stille bis auf den Einsatz
       if (pts[j].gap) c += 3;
-      if (pts[j].inLine) { const lj = sectionAt(an, win.start + pts[j].t + 0.01).label; c += lj === 'drop' || lj === 'chorus' || lj === 'build' ? 0.8 : 2; }
+      if (pts[j].inLine) { const lj = sectionAt(an, win.start + pts[j].t + 0.01).label; c += lj === 'drop' || lj === 'chorus' || lj === 'build' ? 0.8 : 6; }
       // Songdynamik: ruhige Teile (Intro, Strophe, Break, Outro) behalten auch bei viel Material längere Einstellungen
       const lab = sectionAt(an, win.start + pts[i].t + 0.01).label;
       const lo = g < minLen ? beatMin : calmMin && (lab === 'intro' || lab === 'verse' || lab === 'break' || lab === 'outro') ? Math.max(minLen, calmMin) : minLen;
@@ -6071,7 +6078,9 @@ function planOnce(opts) {
   const lastMin = outro === 'strip' ? Math.min(D * 0.32, Math.max(3.8, barDur * 2)) : outro === 'credits' ? Math.min(D * 0.3, Math.max(3.4, barDur * 1.5)) : outro === 'freeze' ? Math.min(D * 0.3, Math.max(2.6, barDur)) : outro === 'split' ? Math.min(D * 0.3, Math.max(2.2, barDur)) : 0;
   if (!flight && lastMin && segs.length > 2 && segs[segs.length - 1].end - segs[segs.length - 1].start < lastMin) {
     let k = segs.length - 1;
-    while (k > 1 && D - segs[k].start < lastMin) k--;
+    // (nie über einen Refrain-/Drop-Einsatz hinweg: das Ende beginnt dann genau auf dem Einsatz)
+    const peakIn = (t) => (an.sections || []).some((x) => (x.label === 'drop' || x.label === 'chorus') && x.start - win.start > t + 0.05 && x.start - win.start < D - 0.05);
+    while (k > 1 && D - segs[k].start < lastMin && !peakIn(segs[k - 1].start)) k--;
     segs = [...segs.slice(0, k), { start: segs[k].start, end: D, w: segs[k].w }];
   }
   // Feinabstimmung aus buildPlan: nach dem Einstieg und vor einem langen Schluss, Videoplätze bleiben unberührt
@@ -6509,8 +6518,10 @@ function planOnce(opts) {
       const back = [];
       for (let i = clips.length - 1; i >= P; i--) { const m = byId.get(clips[i].mediaId); if (m && m.kind === 'image' && !back.includes(m) && m !== tease) back.push(m); }
       const n = P - 1;
+      // reicht das nicht für jeden Schlag, kommen weitere Fotos dazu; notfalls im Kreis – nie zweimal dasselbe Bild direkt nacheinander
+      for (const m of main.concat(pool)) if (back.length < n && m && m.kind === 'image' && !m.excluded && !m.bad && m !== tease && !back.includes(m)) back.push(m);
       for (let i = 0; i < n; i++) {
-        const m = back.length ? back[Math.min(back.length - 1, Math.floor((i * back.length) / n))] : tease;
+        const m = back.length ? (back.length >= n ? back[Math.floor((i * back.length) / n)] : back[i % back.length]) : tease;
         clips[1 + i].mediaId = m ? m.id : null; clips[1 + i].role = 'rew';
       }
     }
@@ -6526,7 +6537,7 @@ function planOnce(opts) {
       // nur Fotos: ein Video würde hier nur als Standbild vorbeirauschen
       if (x.mediaId && !x.grid && !x.split && !x.stack && !x.strip && !x.flightAnim && byId.get(x.mediaId) && byId.get(x.mediaId).kind === 'image') back.push(x.mediaId);
     }
-    miniC.forEach((c, k) => { c.mediaId = back.length ? back[Math.min(k, back.length - 1)] : c.mediaId; c.role = 'rew'; });
+    miniC.forEach((c, k) => { c.mediaId = back.length ? back[k % back.length] : c.mediaId; c.role = 'rew'; });
     const hit = clips[f + miniC.length];
     const best = [hook, ...pool.filter((m) => m.kind === 'image' && !m.excluded && !m.bad).sort((a, b) => (b.score || 0) - (a.score || 0))].find((m) => m && m.kind === 'image');
     if (hit && best && !hit.vid && !hit.split && !hit.grid && !hit.stack) { hit.mediaId = best.id; hit.replay = true; }
@@ -7357,16 +7368,37 @@ function planOnce(opts) {
   const colorFx = [];
   const colorMode = s.color && s.color !== 'off' && !flight ? s.color : null;
   if (colorMode) {
-    // Einsätze nach einem ruhigeren Teil; schwarzweiß darf schon ab dem Filmanfang sein (nicht während eines festen Einstiegs)
-    const colHits = secsRel.filter((x) => isPeakSec(x) && x.rel > fixedEndAll + barDur * 0.9 && x.rel < D - barDur && !isPeakSec(sectionAt(an, x.start - 0.05))).map((x) => x.rel);
-    let hs = colHits.slice(0, s.colorAuto ? 1 : 2);
+    // Einsätze nach einem ruhigeren Teil; schwarzweiß darf schon ab dem Filmanfang sein (nicht während eines festen Einstiegs).
+    // Gewählt wird nach Wucht: Energiesprung zum Teil davor plus Steigerung (Riser) davor – die Farbe kommt mit dem stärksten Drop
+    const secArr = an.sections || [];
+    const riseTo = (x) => (an.rises || []).find((r) => Math.abs(r.end - x.start) < 0.3);
+    const punchOf = (x) => { const k = secArr.indexOf(x), pv = secArr[k - 1]; const r = riseTo(x); return (x.energy || 0) - (pv ? pv.energy || 0 : 0) + (r ? r.gain * 0.6 : 0) + (x.label === 'drop' ? 0.08 : 0); };
+    const colCands = secsRel.filter((x) => isPeakSec(x) && x.rel > fixedEndAll + barDur * 0.9 && x.rel < D - barDur && !isPeakSec(sectionAt(an, x.start - 0.05)));
+    const ranked = colCands.slice().sort((a, b) => punchOf(b) - punchOf(a));
+    // zwei Farbmomente nur auf Wunsch und nur, wenn der zweite Einsatz kaum schwächer ist und weit genug weg liegt
+    let hs = ranked.slice(0, 1).map((x) => x.rel);
+    if (!s.colorAuto && ranked[1] && punchOf(ranked[1]) > punchOf(ranked[0]) * 0.75 && Math.abs(ranked[1].rel - ranked[0].rel) > barDur * 8) hs.push(ranked[1].rel);
+    hs.sort((a, b) => a - b);
     // Aufblende: der Aufbau bleibt schwarzweiß, auf dem Höhepunkt kehrt mit dem Bild die Farbe zurück
     const revHit = reveal && clips.some((c) => c.reveal) ? reveal.end : null;
     if (revHit != null && (!hs.length || s.colorAuto)) hs = [revHit, ...hs.slice(0, s.colorAuto ? 0 : 1)];
     if (!hs.length) {
-      // kein Drop nach ruhigem Teil im Ausschnitt: ein Taktanfang gut zwei Takte nach dem Einstieg
-      const b = (an.barStart || []).map((x) => x - win.start).find((x) => x > fixedEndAll + barDur * 2 && x < D - barDur * 2);
-      if (b != null) hs = [b];
+      // kein Drop nach ruhigem Teil im Ausschnitt: das Ende der stärksten Steigerung oder der stärkste Akzent auf einem Schnitt
+      // auf einer Takt-Eins – nie eine beliebige Stelle. Gibt der Song keinen solchen Moment her, bleibt der Film farbig.
+      const downs = (an.barStart || []).map((x) => x - win.start);
+      const onCutBar = (t) => clips.some((c) => Math.abs(c.start - t) < 0.04) && downs.some((b) => Math.abs(b - t) < 0.04);
+      const ok = (t) => t > fixedEndAll + barDur * 2 && t < D - barDur * 2 && onCutBar(t);
+      const rs0 = (an.rises || []).map((r) => ({ t: r.end - win.start, w: r.gain })).filter((r) => ok(r.t)).sort((a, b) => b.w - a.w);
+      const im0 = (an.impacts || []).map((x) => ({ t: (x.t != null ? x.t : x) - win.start, w: x.v != null ? x.v : 0.5 })).filter((x) => ok(x.t)).sort((a, b) => b.w - a.w);
+      const b = rs0[0] || im0[0];
+      if (b) hs = [b.t];
+      else if (!s.colorAuto) {
+        // ausdrücklich gewünscht: die Takt-Eins auf einem Schnitt mit dem größten Energiesprung
+        let best = null, bw0 = -Infinity;
+        const eAt0 = songEnergyAt(an, win);
+        for (const t of downs) if (ok(t)) { const w = eAt0(t + barDur) - eAt0(t - barDur); if (w > bw0) { bw0 = w; best = t; } }
+        if (best != null) hs = [best];
+      }
     }
     // Stroboskop: in den zwei Takten vor dem Einsatz wechseln Farbe und Schwarzweiß, erst alle zwei Beats, dann jeden Beat,
     // zuletzt auf halben Beats; direkt vor dem Einsatz ist das Bild schwarzweiß
@@ -7398,12 +7430,27 @@ function planOnce(opts) {
         colorFx.push({ mode: colorMode, start: r0.start, hit: h, dur: d0, end: h + Math.max(d0, 0.05), steps: colSteps(h), decay: beatDur * 0.45, popAmp: popOf[colorMode], popDur: beatDur * 1.5 });
         continue;
       }
-      const before = clips.filter((c) => c.start >= Math.max(fixedEndAll, h - barDur * 4) - 0.05 && c.start <= h - barDur * 0.9 + 0.05 && !c.grid);
-      let start = before.length ? before[0].start : Math.max(fixedEndAll, h - barDur * 2);
+      // Schwarzweiß beginnt mit dem Aufbau: am Beginn der Steigerung (Riser) oder des Teils vor dem Einsatz, 2 bis 8 Takte
+      // davor, auf einem Schnitt (sonst einer Takt-Eins) – so gehört die Farbe zum Lied: Spannung ohne Farbe, Erlösung mit Farbe
+      const lo = Math.max(fixedEndAll, h - barDur * 8) - 0.05, hi = h - barDur * 2 + 0.05;
+      const want = [];
+      for (const r of an.rises || []) if (Math.abs(r.end - win.start - h) < 0.3) want.push(r.start - win.start);
+      const sPrev = sectionAt(an, win.start + h - 0.05);
+      if (sPrev && !isPeakSec(sPrev)) want.push(sPrev.start - win.start);
+      want.push(h - barDur * 4);
+      const cutsIn = clips.filter((c) => c.start >= lo && c.start <= hi && !c.grid && !c.pre && !c.leader).map((c) => c.start);
+      const downsIn = (an.barStart || []).map((x) => x - win.start).filter((t) => t >= lo && t <= hi);
+      const target = want.find((t) => t >= lo - barDur && t <= hi + barDur) ?? h - barDur * 4;
+      const near = (l) => l.reduce((b, t) => (b == null || Math.abs(t - target) < Math.abs(b - target) ? t : b), null);
+      let start = near(cutsIn), onCut = start != null && Math.abs(start - target) <= barDur * 1.1;
+      if (!onCut) { const d = near(downsIn); if (d != null) start = d; else if (start == null) start = Math.max(fixedEndAll, h - barDur * 2); }
       if (colorMode === 'strobe' || colorMode === 'pulse') start = Math.max(fixedEndAll, Math.min(start, h - barDur * 2));
       if (h - start < barDur * 0.85) continue;
+      onCut = clips.some((c) => Math.abs(c.start - start) < 0.04);
+      // weicher Übergang hinein: auf einem Schnitt kurz, mitten in einer Einstellung zieht die Farbe über einen Takt heraus
+      const fadeIn = onCut ? Math.min(0.3, beatDur * 0.6) : Math.min(barDur, (h - start) * 0.4);
       const dur = colorMode === 'bloom' ? Math.min(beatDur * 2, 1.1) : colorMode === 'sweep' ? Math.min(beatDur * 1.5, 0.85) : 0;
-      colorFx.push({ mode: colorMode, start, hit: h, dur, end: h + Math.max(dur, 0.05), steps: colSteps(h), decay: beatDur * 0.45, popAmp: popOf[colorMode], popDur: beatDur * 1.5 });
+      colorFx.push({ mode: colorMode, start, hit: h, dur, end: h + Math.max(dur, 0.05), fadeIn, steps: colSteps(h), decay: beatDur * 0.45, popAmp: popOf[colorMode], popDur: beatDur * 1.5 });
       if (colorMode === 'drop' || colorMode === 'steps' || colorMode === 'pop') fx.push({ type: 'flash', start: h, end: h + 0.2, amp: 0.18 });
       fx.push({ type: 'punch', start: h, end: h + 0.45, amp: colorMode === 'drop' ? 0.6 : 0.35 });
     }
@@ -8981,7 +9028,11 @@ async function bestCut(opts, n = 8, onProgress) {
     const audit = opts.an ? planAudit(plan, opts.media, opts.an).concat(planSyncAudit(plan, opts.an)) : [];
     // „Neu schneiden“: eine Variante, die fast wie der bisherige Schnitt aussieht, zählt deutlich weniger
     const same = opts.avoid ? cutSimilarity(plan, opts.avoid) : 0;
-    const score = planQuality(plan, opts.media, false, opts.an) - audit.length * 4 - (same > 0.7 ? 30 * (same - 0.7) / 0.3 + 10 : 0);
+    // was der Film-Check bemängeln würde (gleiche Motive, Schnitte ins Wort, zu dünnes Material), zählt gleich mit –
+    // so steht nach dem Schneiden schon die Variante, die nichts zu korrigieren hat
+    let chkBad = 0;
+    if (opts.an) try { chkBad = filmCheck(plan, opts.media, opts.an).filter((x) => !x.ok && x.key !== 'hook' && x.key !== 'takt').length; } catch (e) { chkBad = 0; }
+    const score = planQuality(plan, opts.media, false, opts.an) - audit.length * 4 - chkBad * 3 - (same > 0.7 ? 30 * (same - 0.7) / 0.3 + 10 : 0);
     tried.push({ seed: seeds[k], score, audit: audit.length });
     // bei Gleichstand bleibt die bisherige Variante (die aktuelle zuerst)
     if (!best || score > best.score + 1e-6) { best = { plan, seed: seeds[k], score, audit }; stale = 0; } else stale++;
@@ -9071,29 +9122,47 @@ async function improveHook(opts, onProgress, only = {}) {
   const base = buildPlan(opts);
   const hs0 = hookScore(base, opts.media, opts.an), h0 = hs0.score, q0 = planQuality(base, opts.media);
   const imgs = opts.media.filter((m) => m.kind === 'image' && !m.bad && !m.excluded);
+  // Startbilder: die stärksten, dazu die mit dem meisten Sog im Feed (Menschen, Kraft) – nicht nur das „beste“ Foto
+  const pull = (m) => (m.score || 0) + 0.25 * peopleIn(m) + 0.2 * mediaEnergy(m) + (isUs(m) ? 0.1 : 0);
+  const byPull = imgs.slice().sort((a, b) => pull(b) - pull(a)).slice(0, only.wide ? 5 : 3).map((m) => m.id);
   const byScore = imgs.slice().sort((a, b) => (b.score || 0) - (a.score || 0));
-  const bestUs = imgs.filter((m) => isUs(m)).sort((a, b) => (b.score || 0) - (a.score || 0))[0];
-  const hooks = [s0.hookId || null, byScore[0] && byScore[0].id, bestUs && bestUs.id].filter((v, i, a) => a.indexOf(v) === i);
+  const hooks = [s0.hookId || null, byScore[0] && byScore[0].id, ...byPull].filter((v, i, a) => a.indexOf(v) === i);
   // only.intros / only.starts: was durchprobiert werden darf (z. B. nur, was der Nutzer auf Auto gelassen hat)
   // Abwechslung über die Reise: Einstiege der anderen Orte werden nicht durchprobiert
   const avoid = s0.avoidIntros || [];
-  const intros = (only.intros || [s0.intro || 'auto', 'rush', 'hook', 'knockout']).filter((v, i, a) => a.indexOf(v) === i && (i === 0 || !avoid.includes(v)));
+  const intros = (only.intros || [s0.intro || 'auto', 'rush', 'hook', 'knockout', ...(only.wide ? ['city', 'reveal'] : [])]).filter((v, i, a) => a.indexOf(v) === i && (i === 0 || !avoid.includes(v)));
   const starts = (only.starts || [s0.songStart == null ? 'auto' : s0.songStart, 'hook', 'prehook']).filter((v, i, a) => a.indexOf(v) === i);
   // zuerst Fehler beheben, dann den Stopp-Wert heben
   let best = { h: h0, e: hs0.errors, settings: null, hookId: s0.hookId || null };
-  const total = intros.length * starts.length * hooks.length;
+  // Schritt für Schritt statt jede Kombination: Startbild, Einstieg, Songstelle – je die beste Wahl behalten, zwei Runden
+  // (findet dieselben Verbesserungen mit einem Bruchteil der Rechenzeit; wichtig auf dem Handy)
+  let cur = { intro: s0.intro || 'auto', songStart: s0.songStart == null ? 'auto' : s0.songStart, hookId: s0.hookId || null };
+  const tried = new Set([JSON.stringify(cur)]);
+  const total = 2 * (hooks.length + intros.length + starts.length);
   let k = 0;
-  for (const intro of intros) for (const songStart of starts) for (const hookId of hooks) {
+  const tryOne = async (cand) => {
     k++;
-    if (onProgress) { onProgress(k, total); await new Promise((r) => setTimeout(r, 0)); }
-    const settings = { ...s0, intro, songStart, hookId };
+    if (onProgress) { onProgress(Math.min(k, total), total); await new Promise((r) => setTimeout(r, 0)); }
+    const key = JSON.stringify(cand);
+    if (tried.has(key)) return;
+    tried.add(key);
     let plan;
-    try { plan = buildPlan({ ...opts, settings }); } catch (e) { continue; }
+    try { plan = buildPlan({ ...opts, settings: { ...s0, ...cand } }); } catch (e) { return; }
     const hs = hookScore(plan, opts.media, opts.an), h = hs.score;
-    if (hs.errors > best.e || (hs.errors === best.e && h <= best.h + 2)) continue;
+    if (hs.errors > best.e || (hs.errors === best.e && h <= best.h + 2)) return;
     // der Rest des Films darf nicht leiden
-    if (planQuality(plan, opts.media) < q0 - Math.max(0.5, Math.abs(q0) * 0.08)) continue;
-    best = { h, e: hs.errors, settings: { intro, songStart }, hookId };
+    if (planQuality(plan, opts.media) < q0 - Math.max(0.5, Math.abs(q0) * 0.08)) return;
+    best = { h, e: hs.errors, settings: { intro: cand.intro, songStart: cand.songStart }, hookId: cand.hookId };
+  };
+  for (let round = 0; round < 2; round++) {
+    const before = best.h - best.e * 100;
+    for (const hookId of hooks) await tryOne({ ...cur, hookId });
+    if (best.settings) cur = { ...best.settings, hookId: best.hookId };
+    for (const intro of intros) await tryOne({ ...cur, intro });
+    if (best.settings) cur = { ...best.settings, hookId: best.hookId };
+    for (const songStart of starts) await tryOne({ ...cur, songStart });
+    if (best.settings) cur = { ...best.settings, hookId: best.hookId };
+    if (best.h - best.e * 100 <= before) break;
   }
   return { from: h0, to: best.h, errorsFrom: hs0.errors, errorsTo: best.e, settings: best.settings, hookId: best.hookId };
 }
@@ -9196,18 +9265,37 @@ function planAudit(plan, media, an) {
  * gegen den Song), Abwechslung (keine gleichen Motive hintereinander), Lesbarkeit der Titel, ruhige Videostellen,
  * Schnitte und Gesang (nicht mitten in eine Zeile in ruhigen Teilen).
  */
-function filmCheck(plan, media, an, hook) {
+/**
+ * Trägt das Material die Filmlänge? Dünn ist ein Film, wenn sich Aufnahmen wiederholen müssen oder im Refrain/Drop ein
+ * Foto länger als neun Sekunden steht. suggest = Länge, die das Material gut trägt (Fotos ≈ 3 s, Videos ganz).
+ */
+function materialFit(plan, media) {
+  const ok = media.filter((m) => !m.bad && !m.excluded);
+  const fr = formatRule(plan.resolved || {});
+  const have = ok.reduce((a, m) => a + (m.kind === 'video' ? Math.min(videoSpan(m), fr.vmax || 10) : m.dupOf ? 0 : 3), 0);
+  const longPeak = plan.clips.some((c) => !c.loop && !c.vid && (c.label === 'drop' || c.label === 'chorus') && c.end - c.start > 9 && !(media[c.mediaIndex] && media[c.mediaIndex].kind === 'video'));
+  const thin = ((plan.capacity && plan.capacity.repeats) || 0) > 0 && have < plan.duration * 0.9 || longPeak;
+  return { thin, n: ok.filter((m) => !m.dupOf).length, have, suggest: Math.max(Math.min(plan.duration, 12), Math.round(Math.min(plan.duration, have))) };
+}
+
+function filmCheck(plan, media, an, hook, opt = {}) {
   const byId = new Map(media.map((m) => [m.id, m]));
   const out = [];
   const h = hook || hookScore(plan, media, an);
-  out.push({ key: 'hook', ok: !h.errors && h.score >= 70, label: !h.errors && h.score >= 70 ? 'Einstieg stoppt beim Scrollen' : h.errors ? 'Einstieg hat einen Fehler' : 'Einstieg kann stärker sein', detail: h.errors ? 'Schwarzbild, Standbild oder schwaches erstes Bild am Anfang.' : 'Bewegung, früher Schnitt und ein starkes Motiv in den ersten 1,5 s.' });
+  // Hat die Auto-Regie den Einstieg schon ausgereizt (alle Startbilder, Einstiege, Songstellen durchprobiert), ist das
+  // kein offener Fehler mehr, sondern das Beste aus diesem Material – mit dem einen Tipp, der noch etwas bringen würde
+  const tip = (h.parts || []).filter((x) => x.kind !== 'fehler' && x.v < 0.6).sort((a, b) => b.w * (1 - b.v) - a.w * (1 - a.v))[0];
+  if (!h.errors && h.score < 70 && opt.hookMaxed) out.push({ key: 'hook', ok: true, best: true, label: 'Einstieg: das Stärkste aus deinem Material', detail: tip ? tip.tip : 'Alle Startbilder, Einstiege und Songstellen sind durchprobiert.' });
+  else out.push({ key: 'hook', ok: !h.errors && h.score >= 70, label: !h.errors && h.score >= 70 ? 'Einstieg stoppt beim Scrollen' : h.errors ? 'Einstieg hat einen Fehler' : 'Einstieg kann stärker sein', detail: h.errors ? ((h.parts || []).find((x) => x.kind === 'fehler' && x.v < 0.5) || {}).tip || 'Schwarzbild, Standbild oder schwaches erstes Bild am Anfang.' : 'Bewegung, früher Schnitt und ein starkes Motiv in den ersten 1,5 s.', maxed: !!opt.hookMaxed });
   let audit = [];
   try { audit = planAudit(plan, media, an).concat(planSyncAudit(plan, an)); } catch (e) { audit = []; }
-  out.push({ key: 'takt', ok: !audit.length, label: audit.length ? `${audit.length} ${audit.length === 1 ? 'Stelle weicht' : 'Stellen weichen'} vom Song ab` : 'Jeder Schnitt sitzt im Takt', detail: audit.length ? audit[0].msg : 'Schnitte, Effekte und Einblendungen auf Schlag, Takt oder Einsatz.' });
-  const plain = plan.clips.filter((c) => c.mediaId && !c.split && !c.flash && !c.rush && !c.burst && !c.welcome && !c.grid && !c.stack && !c.loop && !c.recap);
+  out.push({ key: 'takt', n: audit.length, ok: !audit.length, label: audit.length ? `${audit.length} ${audit.length === 1 ? 'Stelle weicht' : 'Stellen weichen'} vom Song ab` : 'Jeder Schnitt sitzt im Takt', detail: audit.length ? audit[0].msg : 'Schnitte, Effekte und Einblendungen auf Schlag, Takt oder Einsatz.' });
+  const plain = plan.clips.filter((c) => c.mediaId && !c.split && !c.flash && !c.rush && !c.burst && !c.pre && !c.leader && !c.miniRew && !c.welcome && !c.grid && !c.stack && !c.loop && !c.recap);
   let twins = 0;
-  for (let i = 1; i < plain.length; i++) if (sameMotif(byId.get(plain[i - 1].mediaId), byId.get(plain[i].mediaId))) twins++;
-  out.push({ key: 'motiv', ok: !twins, label: twins ? `${twins}× gleiches Motiv hintereinander` : 'Nie zwei gleiche Motive hintereinander', detail: twins ? 'Dein Material hat hier zu wenig Abwechslung – Neu schneiden oder ein ähnliches Bild ausschließen.' : 'Ähnliche Strände, Plätze und Serien stehen nie direkt nebeneinander.' });
+  // (gewollte Fortsetzung derselben Einstellung zählt nicht: Aufblende → Enthüllung, Bild läuft in den Abspann-Streifen)
+  const cont = (a, b) => a.mediaId === b.mediaId && b.i === a.i + 1 && (b.reveal || b.revealHit || b.strip || a.reveal);
+  for (let i = 1; i < plain.length; i++) if (!cont(plain[i - 1], plain[i]) && sameMotif(byId.get(plain[i - 1].mediaId), byId.get(plain[i].mediaId))) twins++;
+  out.push({ key: 'motiv', n: twins, ok: !twins, label: twins ? `${twins}× gleiches Motiv hintereinander` : 'Nie zwei gleiche Motive hintereinander', detail: twins ? 'Dein Material hat hier zu wenig Abwechslung – Neu schneiden oder ein ähnliches Bild ausschließen.' : 'Ähnliche Strände, Plätze und Serien stehen nie direkt nebeneinander.' });
   const titles = plan.overlays.filter((o) => ['city', 'lower', 'chapter'].includes(o.type) && o.text);
   const weak = titles.filter((o) => !o.place).length;
   out.push({ key: 'text', ok: !weak, label: !titles.length ? 'Keine Titel im Film' : weak ? 'Titel ohne Kontrastprüfung' : titles.some((o) => o.behind) ? 'Ortsname hinter den Bergen, gut lesbar' : 'Titel an ruhiger Stelle, gut lesbar', detail: 'Schriftfarbe und Abdunklung nach dem Bild darunter (Kontrast ≥ 4,5 : 1).' });
@@ -9218,12 +9306,17 @@ function filmCheck(plan, media, an, hook) {
     const a = c.srcOffset, z = a + (c.visEnd - c.visStart) * (c.rate || 1);
     if (m.shakes.some((x) => x.t >= a - 0.2 && x.t <= z && x.j > 0.6)) shaky++;
   }
-  out.push({ key: 'video', ok: !shaky, label: shaky ? `${shaky} Videostelle${shaky === 1 ? '' : 'n'} wackelig` : 'Videos an ruhigen, starken Stellen', detail: shaky ? 'Im Material antippen und einen ruhigeren Ausschnitt wählen.' : 'Bewegungshöhepunkte, Lachen und Menschen zuerst; kein Wackeln, kein Start-Ruck.' });
+  out.push({ key: 'video', n: shaky, ok: !shaky, label: shaky ? `${shaky} Videostelle${shaky === 1 ? '' : 'n'} wackelig` : 'Videos an ruhigen, starken Stellen', detail: shaky ? 'Im Material antippen und einen ruhigeren Ausschnitt wählen.' : 'Bewegungshöhepunkte, Lachen und Menschen zuerst; kein Wackeln, kein Start-Ruck.' });
+  // Länge zum Material: reicht es nicht, wiederholen sich Bilder oder ein Bild steht im Höhepunkt ewig
+  {
+    const fit = materialFit(plan, media);
+    out.push({ key: 'laenge', ok: !fit.thin, label: fit.thin ? `Zu wenig Aufnahmen für ${fmtMS(plan.duration)}` : 'Länge passt zum Material', detail: fit.thin ? `Mit ${fit.n} Aufnahmen trägt ein Film von etwa ${fmtMS(fit.suggest)} – sonst stehen Bilder sehr lange oder wiederholen sich.` : 'Jedes Bild steht so lange, wie es wirkt; nichts wiederholt sich.', suggest: fit.suggest });
+  }
   const lines = an.vocalLines || [], w0 = plan.win.start, bd = plan.beatDur || an.beatPeriod || 0.5;
   let inWord = 0;
   for (const c of plan.clips.slice(1)) {
     const abs = c.start + w0, lab = c.label;
-    if (lab === 'drop' || lab === 'chorus' || lab === 'build' || c.flash || c.rush || c.burst) continue;
+    if (lab === 'drop' || lab === 'chorus' || lab === 'build' || c.flash || c.rush || c.burst || c.pre || c.leader || c.miniRew) continue;
     if (Array.from(an.barStart || []).some((b) => Math.abs(b - abs) < 0.04)) continue;
     if (lines.some(([a, e]) => abs > a + bd * 0.4 && abs < e - bd * 0.3)) inWord++;
   }
@@ -14495,7 +14588,8 @@ class Engine {
   colorState(t, foc) {
     for (const f of this.plan.colorFx || []) {
       if (t < f.start || t >= f.end) continue;
-      const fade = clamp01((t - f.start) / 0.35);
+      // Farbe weicht weich (über f.fadeIn: auf einem Schnitt kurz, mitten in einer Einstellung über einen Takt)
+      const fade = smooth(clamp01((t - f.start) / Math.max(0.05, f.fadeIn || 0.35)));
       let p;
       if (t < f.hit) {
         p = 0;
@@ -14823,7 +14917,10 @@ class Engine {
     ]);
     if (token !== this._token) return;
     if (this.ac.state !== 'running') { try { await this.ac.resume(); } catch (e) { /* ignore */ } }
-    if (!this.exporting && this.scale > this.playMax) this._setScale(this.playMax);
+    // gleich mit der Auflösung starten, die beim letzten Abspielen flüssig lief: ein Umschalten statt einer Kaskade
+    // (jedes Umschalten der Leinwand kostet einen kurzen Hänger)
+    if (!this.exporting && this.scale > this.playMax) this._setScale(Math.min(this.playMax, this._playScale || this.playMax));
+    this._warm = 1;
     this._lastDraw = 0;
     clearTimeout(this._acSleep);
     this._startAudio(t0, this.master);
@@ -15010,10 +15107,14 @@ class Engine {
     const avg = sum / d.length;
     this._dts = [];
     const floor = this.playMax * 0.6;
+    // die ersten Auswertungen nach dem Start zählen nicht: Bilder laden und Videos springen an, das ist kein Dauerzustand
+    if (this._warm > 0) { this._warm--; return; }
     // im Flüssig-Modus zuerst die Bildrate zurücknehmen (und für diese Sitzung dabei bleiben), erst dann die Auflösung
     if (this._fps60 && avg > base * 1.45) { this._fps60 = false; this._no60 = true; return; }
-    if (avg > base * 1.45 && this.scale > floor) { this._setScale(Math.max(floor, +(this.scale * 0.8).toFixed(2))); this._calm = 0; }
+    // zu langsam: in einem Schritt auf die Stufe, die zur gemessenen Last passt (Arbeit wächst mit der Pixelzahl)
+    if (avg > base * 1.45 && this.scale > floor) { this._setScale(Math.max(floor, Math.min(+(this.scale * 0.8).toFixed(2), +(this.scale * Math.sqrt((base * 1.15) / avg)).toFixed(2)))); this._calm = 0; }
     else if (avg < base * 1.12 && this.scale < this.playMax && ++this._calm >= 3) { this._setScale(Math.min(this.playMax, +(this.scale * 1.15).toFixed(2))); this._calm = 0; }
+    this._playScale = this.scale;
   }
 
   _loop(now) {
@@ -17849,12 +17950,15 @@ async function cutFilm(n = 8, avoid = null) {
     const hr = await improveHook(opts, (k, N) => busy(`Suche den stärksten Einstieg … ${k} von ${N}`), {
       intros: !st.intro || st.intro === 'auto' ? null : [st.intro],
       starts: st.songStart == null || st.songStart === 'auto' ? null : [st.songStart],
+      wide: true,
     });
     if (S.ctx === ctx && hr && hr.settings && (hr.errorsTo < hr.errorsFrom || hr.to >= hr.from + 8)) {
       Object.assign(st, hr.settings);
       ctx.rec.hookId = hr.hookId;
       hookMsg = ' Einstieg verstärkt.';
     }
+    // was jetzt steht, ist das Beste, was die Regie gefunden hat
+    if (S.ctx === ctx && hr) ctx.rec.hookMax = hookKey(ctx);
   } catch (e) { console.error(e); }
   busy(null);
   if (S.ctx !== ctx) return;
@@ -17864,6 +17968,10 @@ async function cutFilm(n = 8, avoid = null) {
   $('flowStage').hidden = true;
   engine.t = 0;
   await rebuild({ fresh: true });
+  // Film-Check gleich mit: was sich beheben lässt, ohne deine Wünsche zu übergehen, behebt die Regie selbst
+  let fixed = null;
+  try { fixed = await autoFixNow({ quiet: true }); } catch (e) { console.error(e); }
+  if (fixed && fixed.length) hookMsg += ` Film-Check korrigiert: ${fixed.join(', ')}.`;
   toast(`Fertig: der beste von ${res.tried.length} geprüften Schnitten. ${res.audit && res.audit.length ? `${res.audit.length} Stelle${res.audit.length === 1 ? '' : 'n'} weicht vom Song ab.` : 'Stimmig: jeder Schnitt passt zum Song.'}${hookMsg}`);
 }
 
@@ -19161,17 +19269,21 @@ function renderRegie() {
   }
   // Film-Check statt einer Punktzahl: was messbar stimmt, mit Häkchen; was nicht, mit Hinweis und „Verbessern“
   let chk = [];
-  if (good && S.hook && S.ctx.song && S.ctx.song.an) { try { chk = filmCheck(p, filmMedia(S.ctx), S.ctx.song.an, S.hook); } catch (e) { chk = []; } }
+  if (good && S.hook && S.ctx.song && S.ctx.song.an) { try { chk = filmCheck(p, filmMedia(S.ctx), S.ctx.song.an, S.hook, { hookMaxed: S.ctx.rec.hookMax === hookKey(S.ctx) }); } catch (e) { chk = []; } }
   S.check = chk;
   const okN = chk.filter((x) => x.ok).length;
   const hookCard = chk.length ? `<div class="check-card${okN === chk.length ? ' good' : ''}">
       <div class="check-head"><span class="hook-k">Film-Check</span><b>${okN} von ${chk.length}</b>
-        ${chk.some((x) => x.key === 'hook' && !x.ok) ? '<button type="button" class="btn small primary-outline hook-fix" id="hookFix">Einstieg verbessern</button>' : ''}</div>
+        ${chk.some((x) => !x.ok && !(x.key === 'hook' && x.maxed)) ? `<button type="button" class="btn small primary-outline hook-fix" id="hookFix">${chk.filter((x) => !x.ok).length === 1 && chk.find((x) => x.key === 'hook' && !x.ok) ? 'Einstieg verbessern' : 'Automatisch korrigieren'}</button>` : ''}</div>
       <ul class="check-list">${chk.map((x) => `<li><button type="button" class="chk${x.ok ? ' ok' : ''}" data-go="${x.key === 'hook' ? 'hook' : 'check'}" title="${esc(x.detail)}"><i aria-hidden="true">${x.ok ? '✓' : '!'}</i><span>${esc(x.label)}</span></button></li>`).join('')}</ul>
     </div>` : '';
-  dec.innerHTML = hookCard + items.map(([k, l, v, sub]) => `<button type="button" class="dec" data-go="${k}"><span>${l}</span><b>${esc(v)}</b>${sub ? `<i>${esc(sub)}</i>` : ''}</button>`).join('');
+  let ideas = [];
+  if (good) { try { ideas = regieIdeas(p, S.ctx); } catch (e) { ideas = []; } }
+  S.ideas = ideas;
+  const ideaCard = ideas.length ? `<div class="idea-card"><span class="hook-k">Möglichkeiten</span><div class="idea-row">${ideas.map((x) => `<button type="button" class="idea" data-idea="${x.id}" title="${esc(x.why || '')}"><b>${esc(x.label)}</b>${x.sub ? `<i>${esc(x.sub)}</i>` : ''}</button>`).join('')}</div></div>` : '';
+  dec.innerHTML = hookCard + ideaCard + items.map(([k, l, v, sub]) => `<button type="button" class="dec" data-go="${k}"><span>${l}</span><b>${esc(v)}</b>${sub ? `<i>${esc(sub)}</i>` : ''}</button>`).join('');
   const hf = $('hookFix');
-  if (hf) hf.addEventListener('click', improveHookNow);
+  if (hf) hf.addEventListener('click', autoFixNow);
   const notes = good ? p.notes : ['Wähle Fotos und Videos. Die Auto-Regie bestimmt dann Filmlänge, Songausschnitt, Schnitt, Look und Farbangleichung.'];
   const open = ul.dataset.open === '1' || !good;
   ul.innerHTML = (open ? notes.map((n) => `<li>${esc(n)}</li>`).join('') : '') + (good ? `<li class="more-toggle"><button type="button" id="regieMore">${open ? 'Begründung ausblenden' : `Warum so? ${notes.length} Entscheidungen im Klartext`}</button></li>` : '');
@@ -19202,14 +19314,14 @@ function openCheckSheet() {
     <p class="hint">Gemessen am fertigen Schnitt – kein Geschmack, sondern was im Feed und zur Musik zählt.</p>
     <ul class="hook-parts">${chk.map((x) => `<li class="${x.ok ? 'ok' : 'low'}"><span>${x.ok ? '✓' : '!'} ${esc(x.label)}</span><small>${esc(x.detail)}</small></li>`).join('')}</ul>
     <div class="sheet-actions">
-      ${chk.some((x) => x.key === 'hook' && !x.ok) ? '<button class="btn primary" data-act="improve" type="button">Einstieg verbessern</button>' : ''}
+      ${chk.some((x) => !x.ok && !(x.key === 'hook' && x.maxed)) ? '<button class="btn primary" data-act="improve" type="button">Automatisch korrigieren</button>' : ''}
       <button class="btn ghost" data-act="close" type="button">Schließen</button>
     </div>`);
   body.addEventListener('click', (e) => {
     const a = e.target.closest('[data-act]');
     if (!a) return;
     closeSheet();
-    if (a.dataset.act === 'improve') improveHookNow();
+    if (a.dataset.act === 'improve') autoFixNow();
   });
 }
 
@@ -19240,17 +19352,166 @@ function openHookSheet() {
 }
 
 /** Hook automatisch verbessern: Einstiege, Songstart und Startbild durchprobieren, ohne den Rest des Films zu verschlechtern. */
+/* Film-Check korrigiert selbst: probiert für jeden offenen Punkt die Eingriffe, die ihn beheben können (kürzere Länge,
+ * andere Variante des Schnitts, ein Stil-Mittel weniger, stärkerer Einstieg), behält nur, was den Check verbessert
+ * und den Film nicht schlechter macht, und sagt in Klartext, was geändert wurde. Rückgängig mit ↶. */
+const FIX_DE = { length: (v) => `Länge auf ${fmtClock(+v)} (dafür reicht dein Material)`, seed: () => 'andere Variante des Schnitts', pre: () => 'ohne Vorspann', midGrid: () => 'ohne Raster im Film', stack: () => 'ohne Polaroid-Stapel', burst: () => 'ohne Foto-Serie', mini: () => 'ohne Mini-Rewind', echo: () => 'ohne Echo', intro: () => 'Einstieg automatisch', outro: () => 'Ende automatisch', pace: () => 'etwas ruhiger geschnitten (mehr Zeit je Bild)', order: (v) => (v === 'tageszeit' ? 'Reihenfolge nach Tagen (statt streng nach Uhrzeit)' : 'Reihenfolge zum Lied') };
+async function autoFixNow(opt = {}) {
+  // opt.quiet: direkt nach dem Schneiden – nur Eingriffe, die keinem ausdrücklichen Wunsch widersprechen, keine Meldung
+  const ctx = S.ctx;
+  if (!ctx || !S.plan || S.exporting) return null;
+  engine.pause();
+  const media = filmMedia(ctx), an = ctx.song.an;
+  const base = planOpts(ctx, media);
+  const evalS = (patch, ovPatch = null, trims = null) => {
+    const settings = { ...base.settings, ...patch };
+    const overrides = ovPatch ? { ...base.overrides, media: { ...(base.overrides.media || {}), ...ovPatch } } : base.overrides;
+    const med = trims ? media.map((m) => (trims[m.id] ? { ...m, trim: trims[m.id] } : m)) : media;
+    const plan = buildPlan({ ...base, media: med, settings, overrides });
+    const chk = filmCheck(plan, med, an, hookScore(plan, med, an), {});
+    // offene Punkte zählen zuerst, innerhalb davon die Zahl der Stellen (3 → 1 Motiv-Doppel ist auch ein Fortschritt)
+    const open = chk.filter((x) => !x.ok && x.key !== 'hook');
+    const bad = open.length * 10 + Math.min(8, open.reduce((a, x) => a + (x.n || 0), 0)) * 0.1 + (chk.find((x) => x.key === 'hook' && !x.ok) ? 1 : 0);
+    return { patch, plan, chk, bad, q: planQuality(plan, media, false, an) };
+  };
+  // wacklige Videostelle: der ruhigste Ausschnitt gleicher Länge (wie du ihn im Material wählen würdest)
+  // gibt es keinen ruhigen Ausschnitt in voller Länge, wird das Video auf seine längste ruhige Strecke (≥ 1 s) gekürzt
+  const trims = {};
+  const calmVideos = (plan) => {
+    const out = {};
+    for (const c of plan.clips) {
+      const m = media[c.mediaIndex];
+      if (!m || m.kind !== 'video' || !m.shakes || !m.shakes.length || c.srcOffset == null) continue;
+      const need = (c.visEnd - c.visStart) * (c.rate || 1), span = videoSpan(m), t0 = m.trim && m.trim[1] > m.trim[0] ? m.trim[0] : 0;
+      const worst = (a) => m.shakes.filter((x) => x.t >= a - 0.2 && x.t <= a + need).reduce((w, x) => Math.max(w, x.j), 0);
+      if (worst(c.srcOffset) <= 0.6) continue;
+      let best = null;
+      for (let a = t0; a <= t0 + Math.max(0, span - need) + 1e-6; a += 0.2) { const w = worst(a); if (!best || w < best.w - 1e-6) best = { a, w }; }
+      if (best && best.w <= 0.6) { out[m.id] = { ...((ctx.rec.overrides.media || {})[m.id] || {}), srcOffset: +best.a.toFixed(2) }; continue; }
+      // längste ruhige Strecke: zwischen zwei wackligen Stellen (mit 0,2 s Abstand)
+      const bad = m.shakes.filter((x) => x.j > 0.6).map((x) => x.t).sort((a, b) => a - b);
+      let run = null;
+      [t0 - 0.2, ...bad, t0 + span + 0.2].reduce((p, q) => { const a = p + 0.2, z = q - 0.2; if (z - a > (run ? run[1] - run[0] : 0)) run = [a, z]; return q; });
+      if (run && run[1] - run[0] >= 1) trims[m.id] = [+Math.max(t0, run[0]).toFixed(2), +Math.min(t0 + span, run[1]).toFixed(2)];
+    }
+    return out;
+  };
+  busy('Film-Check korrigiert …');
+  await new Promise((r) => setTimeout(r, 30));
+  let cur;
+  try { cur = evalS({}); } catch (e) { busy(null); if (!opt.quiet) toast('Der Film-Check konnte gerade nicht rechnen – bitte noch einmal versuchen.'); return null; }
+  const start = cur.bad;
+  const applied = {};
+  for (let step = 0; step < 4 && cur.bad >= 10; step++) {
+    const st = { ...base.settings, ...applied };
+    const fails = cur.chk.filter((x) => !x.ok).map((x) => x.key);
+    const cands = [];
+    const lenItem = cur.chk.find((x) => x.key === 'laenge' && !x.ok);
+    if (lenItem && lenItem.suggest && (!opt.quiet || st.length === 'auto')) cands.push({ length: Math.round(lenItem.suggest) });
+    if (fails.some((k) => ['motiv', 'gesang', 'takt', 'video', 'laenge'].includes(k))) for (let k = 1; k <= 4; k++) cands.push({ seed: ((Math.imul((st.seed >>> 0) + k * 7919, 2654435761) >>> 0) % 1000000) + 1 });
+    if (!opt.quiet && fails.includes('motiv') && st.order === 'streng') cands.push({ order: 'tageszeit' });
+    // zu wenig Abwechslung für so viele Schnitte: ruhiger schneiden oder kürzer – was den Check behebt, gewinnt
+    if ((fails.includes('motiv') || fails.includes('gesang')) && st.pace === 'schnell' && !opt.quiet) cands.push({ pace: 'mittel' });
+    if (fails.includes('motiv') && (!opt.quiet || st.length === 'auto')) { const L = Math.round(cur.plan.duration * 0.75); if (L >= 8) cands.push({ length: L }); }
+    if (!opt.quiet && (fails.includes('takt') || fails.includes('laenge'))) {
+      for (const k of ['pre', 'midGrid', 'stack', 'burst', 'mini', 'echo']) if (st[k] && st[k] !== 'off' && st[k] !== 'auto') cands.push({ [k]: 'off' });
+      if (st.intro && st.intro !== 'auto') cands.push({ intro: 'auto' });
+      if (st.outro && st.outro !== 'auto') cands.push({ outro: 'auto' });
+    }
+    let best = null;
+    for (const c of cands) {
+      busy(`Film-Check korrigiert … ${cands.indexOf(c) + 1} von ${cands.length}`);
+      await new Promise((r) => setTimeout(r, 0));
+      let r;
+      try { r = evalS({ ...applied, ...c }); } catch (e) { continue; }
+      if (r.bad < cur.bad && r.q >= cur.q - Math.max(1, Math.abs(cur.q) * 0.15) && (!best || r.bad < best.bad || (r.bad === best.bad && r.q > best.q))) best = { ...r, c };
+    }
+    if (!best) break;
+    Object.assign(applied, best.c);
+    cur = best;
+  }
+  // Videos: ruhigere Ausschnitte, wenn der Check wacklige Stellen meldet
+  let calm = null;
+  if (cur.chk.some((x) => x.key === 'video' && !x.ok)) {
+    const ov = calmVideos(cur.plan);
+    if (Object.keys(ov).length || Object.keys(trims).length) {
+      try { const r = evalS(applied, ov, Object.keys(trims).length ? trims : null); if (r.bad < cur.bad) { calm = ov; cur = r; } else for (const k in trims) delete trims[k]; } catch (e) { for (const k in trims) delete trims[k]; }
+    }
+  }
+  busy(null);
+  const changes = Object.entries(applied).map(([k, v]) => (FIX_DE[k] ? FIX_DE[k](v) : k));
+  if (calm) {
+    const n = Object.keys(calm).length + Object.keys(trims).length;
+    changes.push(n === 1 ? 'ruhigerer Videoausschnitt' : `${n} ruhigere Videoausschnitte`);
+    ctx.rec.overrides.media = { ...(ctx.rec.overrides.media || {}), ...calm };
+    for (const m of ctx.media) if (trims[m.id]) { m.trim = trims[m.id]; saveMediaFlags(m); }
+  }
+  if (Object.keys(applied).length || calm) { Object.assign(ctx.rec.settings, applied); commit(); savePlaceSoon(); renderEditor(); engine.t = 0; await rebuild(); }
+  if (opt.quiet) return changes;
+  // der Einstieg zuletzt (er hängt am übrigen Schnitt)
+  const hookOpen = (S.check || []).some((x) => x.key === 'hook' && !x.ok && !x.maxed);
+  if (hookOpen) { await improveHookNow(); if (!changes.length) return; }
+  const left = (S.check || []).filter((x) => !x.ok);
+  if (changes.length) toast(`Korrigiert: ${changes.join(', ')}.${left.length ? ` Offen: ${left.map((x) => x.label).join(', ')}.` : ' Film-Check: alles stimmt.'} Rückgängig mit ↶.`);
+  else if (!hookOpen) toast(start >= 10 ? `Geprüft: ${left.map((x) => x.label).join(', ')} – dafür braucht es anderes Material (z. B. mehr Aufnahmen oder ein anderes Startbild).` : 'Film-Check: alles stimmt.');
+}
+
+/* Möglichkeiten: wenige Vorschläge, die zu diesem Song und Material passen (nie mehr als vier). Ein Tipp übernimmt den
+ * Vorschlag und schneidet neu; ↶ nimmt ihn zurück. Was schon an ist oder der Song nicht hergibt, wird nicht angeboten. */
+function regieIdeas(p, ctx) {
+  const st = ctx.rec.settings, an = ctx.song && ctx.song.an, out = [];
+  if (!an || isFlight(ctx.rec)) return out;
+  const w0 = p.win.start, D = p.duration, bar = p.beatDur * 4;
+  const secs = an.sections || [];
+  const peak = (x) => x && (x.label === 'drop' || x.label === 'chorus');
+  const drops = secs.filter((x, k) => peak(x) && !peak(secs[k - 1]) && x.start - w0 > bar * 2 && x.start - w0 < D - bar);
+  if (!(p.colorFx || []).length && st.look !== 'noir' && drops.length) out.push({ id: 'color', label: 'Schwarzweiß bis zum Drop', sub: `Farbe ab ${fmtClock(drops[0].start - w0)}`, why: 'Der Aufbau vor dem Drop läuft schwarzweiß, auf dem Einsatz kehrt die Farbe zurück.', patch: { color: 'drop' }, at: drops[0].start - w0 - bar * 4 });
+  if (st.reim !== 'on' && refrainCount(an) >= 2) out.push({ id: 'reim', label: 'Refrain-Reim', sub: 'gleiche Bildfolge je Refrain', why: 'Jeder Refrain beginnt mit derselben Bildfolge – wie ein Reim im Lied.', patch: { reim: 'on' } });
+  if (st.otone === 'off' && ctx.media.some((m) => m.kind === 'video' && m.snd && (m.snd.list || []).some((e) => e[3] >= 0.5))) out.push({ id: 'otone', label: 'Originalton', sub: 'nur wo es passt', why: 'Kurze, passende Stimmen-Momente aus deinen Videos – nur in ruhigen Stellen des Songs.', patch: { otone: 'auto' } });
+  const songDur = (ctx.song.buffer && ctx.song.buffer.duration) || an.duration || 0;
+  if (st.length !== 'full' && songDur > D + 10) {
+    const fit = materialFit(p, filmMedia(ctx));
+    if (fit.have >= songDur * 0.9) out.push({ id: 'full', label: 'Ganzer Song', sub: fmtClock(songDur), why: 'Dein Material reicht für den ganzen Song ohne Wiederholungen.', patch: { length: 'full' } });
+  }
+  out.push({ id: 'cmp', label: 'Varianten vergleichen', sub: 'ruhig · ausgewogen · energisch', why: 'Drei Schnitte nebeneinander ansehen und den besten nehmen.' });
+  return out.slice(0, 4);
+}
+async function tryIdea(id) {
+  const it = (S.ideas || []).find((x) => x.id === id);
+  if (!it || !S.ctx || S.exporting) return;
+  if (id === 'cmp') { openCompare(); return; }
+  Object.assign(S.ctx.rec.settings, it.patch);
+  commit(); savePlaceSoon(); renderEditor();
+  engine.t = Math.max(0, it.at || 0);
+  await rebuild();
+  toast(`${it.label}: übernommen. ${it.why} Rückgängig mit ↶.`);
+}
+
+/** Kennung des Einstiegs-Stands: ändert sich etwas daran, prüft die Regie neu. */
+function hookKey(ctx) {
+  const st = ctx.rec.settings;
+  return JSON.stringify([st.seed, st.intro, st.songStart, ctx.rec.hookId || null, st.format, st.target, st.length, st.variant, filmMedia(ctx).length, ctx.song && ctx.song.id]);
+}
 async function improveHookNow() {
   if (!S.ctx || !S.plan || S.exporting) return;
   const ctx = S.ctx, media = filmMedia(ctx);
   engine.pause();
   busy('Probiere Einstiege, Songstart und Startbild …');
   let r;
-  try { r = await improveHook(planOpts(ctx, media), (k, n) => busy(`Probiere Einstiege, Songstart und Startbild … ${k} von ${n}`)); } catch (err) { console.error(err); r = null; }
+  try { r = await improveHook(planOpts(ctx, media), (k, n) => busy(`Probiere Einstiege, Songstart und Startbild … ${k} von ${n}`), { wide: true }); } catch (err) { console.error(err); r = null; }
   busy(null);
-  if (!r || !r.settings) { toast(r ? (r.errorsFrom ? 'Den Fehler im Einstieg kann ich mit deinem Material nicht automatisch beheben – ein anderes Startbild hilft (im Material „Als Startbild“).' : 'Der Einstieg ist schon der stärkste, den dein Material hergibt, ohne den übrigen Film zu verschlechtern.') : 'Konnte den Einstieg nicht prüfen.'); return; }
+  if (!r) { toast('Den Einstieg konnte ich gerade nicht prüfen – bitte noch einmal versuchen.'); return; }
+  if (!r.settings) {
+    // nichts Besseres gefunden: das ist das Stärkste aus diesem Material – der Check zeigt jetzt den Tipp statt eines Fehlers
+    ctx.rec.hookMax = hookKey(ctx);
+    savePlaceSoon();
+    renderRegie();
+    toast(r.errorsFrom ? 'Alle Startbilder, Einstiege und Songstellen geprüft: den Fehler kann nur ein anderes Startbild beheben (im Material „Als Startbild“).' : 'Alle Startbilder, Einstiege und Songstellen geprüft – das ist der stärkste Einstieg aus deinem Material.');
+    return;
+  }
   Object.assign(ctx.rec.settings, r.settings);
   ctx.rec.hookId = r.hookId;
+  ctx.rec.hookMax = hookKey(ctx);
   commit(); savePlaceSoon();
   engine.t = 0;
   await rebuild();
@@ -20165,7 +20426,7 @@ async function init() {
   for (const id of ['fileMedia', 'fileMedia2']) $(id).addEventListener('change', (e) => { const fl = Array.from(e.target.files || []); e.target.value = ''; addFiles(fl); });
   $('micSong').addEventListener('click', () => openMicSheet());
   $('beatSong').addEventListener('click', openBeatSheet);
-  $('regieDecisions').addEventListener('click', (e) => { const b = e.target.closest('[data-go]'); if (b) goDecision(b.dataset.go); });
+  $('regieDecisions').addEventListener('click', (e) => { const i = e.target.closest('[data-idea]'); if (i) { tryIdea(i.dataset.idea); return; } const b = e.target.closest('[data-go]'); if (b) goDecision(b.dataset.go); });
   $('flowStage').addEventListener('click', async (e) => {
     const t = e.target.closest('[data-flow],[data-target]');
     if (!t || !S.ctx) return;
@@ -20333,7 +20594,7 @@ async function init() {
 window.CineBeat = {
   get S() { return S; },
   get engine() { return engine; },
-  openPlace, openBestof, addFiles, ingestFiles, scoreWorkers, perfLog, scoreImage, _trips: { tripForStop, tripRange, autoTripName, switchTrip, renderTrip }, rebuild, newPlace, importSong, getSong, openBeatSheet,
+  openPlace, openBestof, addFiles, ingestFiles, scoreWorkers, perfLog, scoreImage, planAudit, planSyncAudit, filmMedia, sameMotif, _trips: { tripForStop, tripRange, autoTripName, switchTrip, renderTrip }, rebuild, newPlace, importSong, getSong, openBeatSheet,
 };
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

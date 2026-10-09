@@ -124,7 +124,7 @@ function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0
       // darf der Schnitt auf dem Schlag bleiben, wenn das Tempo es verlangt
       // Atempause vor dem Einsatz: das Bild steht durch die Stille bis auf den Einsatz
       if (pts[j].gap) c += 3;
-      if (pts[j].inLine) { const lj = sectionAt(an, win.start + pts[j].t + 0.01).label; c += lj === 'drop' || lj === 'chorus' || lj === 'build' ? 0.8 : 2; }
+      if (pts[j].inLine) { const lj = sectionAt(an, win.start + pts[j].t + 0.01).label; c += lj === 'drop' || lj === 'chorus' || lj === 'build' ? 0.8 : 6; }
       // Songdynamik: ruhige Teile (Intro, Strophe, Break, Outro) behalten auch bei viel Material längere Einstellungen
       const lab = sectionAt(an, win.start + pts[i].t + 0.01).label;
       const lo = g < minLen ? beatMin : calmMin && (lab === 'intro' || lab === 'verse' || lab === 'break' || lab === 'outro') ? Math.max(minLen, calmMin) : minLen;
