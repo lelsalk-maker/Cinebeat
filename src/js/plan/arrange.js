@@ -97,7 +97,16 @@ function arrangeBlocks(clips, { byId, ovOf = () => null, moved: userMoved = new 
     // Match-Cut (Übergangswahl ab 0,78): unsichtbarer Schnitt, Kamerafahrt läuft weiter – nur bildfüllend möglich
     // (ein gerahmtes Querfoto im Hochformat hat keinen Ausschnitt, an den die Bewegung anschließen könnte)
     else if (sim > 0.78 && !framed(a) && !framed(b)) p += 0.7;
-    if (a.kind === 'image' && b.kind === 'image' && sizeOf(a) === sizeOf(b)) p -= 0.08;
+    // Einstellungsgrößen wie ein Cutter: innerhalb einer Szene von weit nach nah (Totale → Halbnah → Detail),
+    // eine neue Szene beginnt mit einer Totale (Orientierung), gleiche Größe hintereinander springt
+    if (a.kind === 'image' && b.kind === 'image') {
+      const sa = sizeOf(a), sb = sizeOf(b);
+      const sameScene = momentOf.size ? momentOf.has(a.id) && momentOf.get(a.id) === momentOf.get(b.id) : a.time && b.time && Math.abs(a.time - b.time) <= 10 * 60000;
+      if (sa === sb) p -= 0.12;
+      if (sameScene && sb === sa + 1) p += 0.18;
+      if (!sameScene && sb === 0) p += 0.15;
+      if (!sameScene && sb === 2) p -= 0.08;
+    }
     // Hoch- und Querformat im Wechsel: die Kamera müsste zwischen Schwenk und Zoom springen – ruhiger gleich bei gleich
     const land = (m) => (m.w && m.h ? (m.w > m.h * 1.1 ? 1 : m.h > m.w * 1.1 ? -1 : 0) : 0);
     if (land(a) * land(b) < 0) p -= 0.35;
@@ -145,6 +154,13 @@ function arrangeBlocks(clips, { byId, ovOf = () => null, moved: userMoved = new 
         edges.add(k - 1); edges.add(k);
       }
       for (const e of edges) if (e >= 0) v += pair(mediaAt(e), mediaAt(e + 1));
+      // drei gleiche Einstellungsgrößen hintereinander wirken eintönig
+      const tri = new Set();
+      for (const k of set) for (let q = k - 2; q <= k; q++) if (q >= 0) tri.add(q);
+      for (const q of tri) {
+        const ms = [mediaAt(q), mediaAt(q + 1), mediaAt(q + 2)];
+        if (ms.every((m) => m && m.kind === 'image') && sizeOf(ms[0]) === sizeOf(ms[1]) && sizeOf(ms[1]) === sizeOf(ms[2])) v -= 0.25;
+      }
       return v;
     };
     // „Zum Lied“: Momente bleiben am Stück – getauscht werden ganze Läufe gleicher Länge (eine Szene an eine besser
@@ -168,6 +184,28 @@ function arrangeBlocks(clips, { byId, ovOf = () => null, moved: userMoved = new 
         };
         for (const r of runs) for (let a = 0; a < r.length; a++) for (let b = a + 1; b < r.length; b++) tryMove([r[a]], [r[b]]);
         for (let a = 0; a < runs.length; a++) for (let b = a + 1; b < runs.length; b++) if (runs[a].length === runs[b].length) tryMove(runs[a], runs[b]);
+        // eine Szene gegen mehrere aufeinanderfolgende ganze Szenen gleicher Gesamtlänge (so findet auch eine Szene,
+        // die ein Video teilt, ihren Platz – keine Szene zerfällt dabei)
+        for (let a = 0; a < runs.length; a++) {
+          if (runs[a].length < 2) continue;
+          for (let b = 0; b < runs.length; b++) {
+            if (b === a) continue;
+            const W = [];
+            for (let j = b; j < runs.length && W.length < runs[a].length; j++) {
+              if (j === a || (W.length && runs[j][0] !== W[W.length - 1] + 1)) { W.length = runs[a].length + 1; break; }
+              W.push(...runs[j]);
+            }
+            if (W.length === runs[a].length && runs[b].length !== runs[a].length) tryMove(runs[a], W);
+          }
+        }
+        // eine von einem Video geteilte Szene zieht als Ganzes um (auf gleich viele Plätze einer anderen Szene)
+        const split = new Map();
+        for (const r of runs) { const mo = momId(r[0]); if (mo) { if (!split.has(mo)) split.set(mo, []); split.get(mo).push(r); } }
+        for (const parts of split.values()) {
+          if (parts.length < 2) continue;
+          const A = parts.flat();
+          for (const r of runs) if (r.length === A.length && !A.includes(r[0])) tryMove(A, r);
+        }
         // ein Einzelbild (z. B. auf einem Einsatz zwischen zwei Videos) darf mit dem Randbild eines Moments tauschen
         // (nur echte Einzelbilder oder der Einsatz selbst – sonst zerfielen Momente Stück für Stück)
         const heroK = (k) => clips[k].sectionChange && (clips[k].label === 'drop' || clips[k].label === 'chorus');

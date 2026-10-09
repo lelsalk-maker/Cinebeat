@@ -49,6 +49,9 @@ function normalizeSettings(st, defaults) {
     match: pick1(s.match, ['auto', 'off'], 'auto'),
     morph: pick1(s.morph, ['off', 'on'], 'off'),
     quer: pick1(s.quer, ['auto', 'drehen', 'split'], 'auto'),
+    otone: pick1(s.otone, ['auto', 'off'], 'auto'),
+    reim: pick1(s.reim, ['off', 'on'], 'off'),
+    eye: pick1(s.eye, ['auto', 'off'], 'auto'),
     ramp: pick1(s.ramp, ['off', 'drop'], 'off'),
     stamp: pick1(s.stamp, ['auto', 'on', 'off'], 'auto'),
     midGrid: pick1(s.midGrid, ['off', 'on'], 'off'),
@@ -341,6 +344,36 @@ function filmMedia(ctx, list = ctx.media) {
   return list.filter((m) => !m.loading && !m.bad).map((m) => (rotates(m, st) ? rotView(m) : m));
 }
 
+/* Lernen aus deinen Korrekturen (lokal, auf diesem Gerät): Ausschließen, Favorit, Hereinholen, Tauschen und eigene
+ * Videolängen werden zu kleinen Vorlieben, die beim nächsten Schnitt mitwirken (plan/media.js tasteBonus). */
+function loadTaste() { try { return JSON.parse(localStorage.getItem('cinebeat-taste') || 'null'); } catch (e) { return null; } }
+function saveTaste(t) { try { if (t) localStorage.setItem('cinebeat-taste', JSON.stringify(t)); else localStorage.removeItem('cinebeat-taste'); } catch (e) { /* privat/voll */ } }
+function learnTaste(m, y) {
+  if (!m || m.demo || m.loading || m.bad) return;
+  S.taste = tasteLearn(S.taste || loadTaste(), m, y);
+  saveTaste(S.taste);
+}
+/** „Gelernt“: was die Regie aus deinen Korrekturen mitnimmt – mit „Vergessen“. */
+function renderTaste() {
+  const el = $('tasteLine');
+  if (!el) return;
+  const txt = tasteSummary(S.taste || (S.taste = loadTaste()));
+  el.hidden = !txt;
+  if (!txt) return;
+  el.innerHTML = `<span>Gelernt aus deinen Korrekturen: <b>${esc(txt)}</b></span> <button class="btn ghost small" type="button" id="tasteReset">Vergessen</button>`;
+  el.querySelector('#tasteReset').onclick = () => { S.taste = null; saveTaste(null); renderTaste(); toast('Vergessen: Die Regie wählt wieder ohne deine bisherigen Vorlieben.'); scheduleRebuild(0); };
+}
+/** Eigene Videolänge gegenüber der automatischen: zieht die künftige automatische Länge sanft mit. */
+function learnVideoLen(m, len) {
+  if (!m || m.demo || !(len > 0)) return;
+  const auto = videoPlay(m, 7.5);
+  if (!(auto > 0.5)) return;
+  const t = S.taste || loadTaste() || { w: TASTE_KEYS.map(() => 0), n: 0 };
+  t.vlenF = +((t.vlenF || 1) * 0.7 + Math.max(0.5, Math.min(2, len / auto)) * 0.3).toFixed(3);
+  S.taste = t;
+  saveTaste(t);
+}
+
 /** Wie viele Aufnahmen sind im Film, und warum fehlen die übrigen? */
 function filmCount() {
   const ctx = S.ctx, plan = S.plan;
@@ -418,7 +451,7 @@ function openWishSheet(mode = 'cut', menge) {
   const ctx = S.ctx;
   if (!ctx || !ctx.song) return;
   const st = ctx.rec.settings, an = ctx.song.an;
-  const w0 = { intro: st.intro === 'welcome' || st.intro === 'shutter' ? st.intro : 'auto', variant: st.variant, effekte: st.effekte, order: st.order || 'lied', bw: wishBW(st), quer: st.quer, length: st.length === 'full' ? 'full' : 'auto', allMedia: st.allMedia };
+  const w0 = { intro: st.intro === 'welcome' || st.intro === 'shutter' ? st.intro : 'auto', variant: st.variant, effekte: st.effekte, order: st.order || 'lied', bw: wishBW(st), quer: st.quer, otone: st.otone === 'off' ? 'off' : 'auto', reim: st.reim === 'on' ? 'on' : 'off', length: st.length === 'full' ? 'full' : 'auto', allMedia: st.allMedia };
   const w = { ...w0 };
   const land = ctx.media.filter(isQuer).length;
   const story = st.format === '9:16' && st.target !== 'reel';
@@ -445,6 +478,12 @@ function openWishSheet(mode = 'cut', menge) {
       kein: 'Alles in Farbe. Einzelne Bilder legst du unter „Aufnahmen“ fest (Bild antippen → Schwarzweiß).',
       moment: 'Schwarzweiß bis zum Höhepunkt, dort kommt die Farbe. Einzelne Bilder legst du unter „Aufnahmen“ fest.',
       ganz: 'Der ganze Film in Schwarzweiß. Bilder, die farbig bleiben sollen, markierst du unter „Aufnahmen“ („Nie schwarzweiß“).' }],
+    refrainCount(an) >= 2 ? ['reim', 'Refrain-Reime?', [['off', 'Aus'], ['on', 'An']], {
+      off: 'Jeder Refrain wird frei aus den passenden Bildern geschnitten.',
+      on: 'Variante: Jeder weitere Refrain beginnt mit Bildern, die dem ersten Refrain ähneln (Aufbau, Größe, Kamerabewegung) – der Film erinnert sich an sich selbst, wie im Musikvideo. Vergleichen kannst du es unter „Varianten“.' }] : null,
+    ctx.media.some((m) => m.kind === 'video') ? ['otone', 'Originalton der Videos?', [['auto', 'Wenn es passt'], ['off', 'Nur Musik']], {
+      auto: 'Ein klares Lachen, Jubel oder ein kurzer Ausruf ist kurz zu hören – nur an einer Stelle, an der der Song Platz lässt (Pause, ruhiger Teil ohne Gesang, Ausklang). Nie im Refrain oder Drop, nie über Gesang, nie erzwungen.',
+      off: 'Nur der Song. Einzelne Videos stellst du unter „Aufnahmen“ trotzdem auf Ton.' }] : null,
     st.format === '9:16' && land ? ['quer', `Querfotos (${land})`, [['auto', 'Automatisch'], ['split', 'Split-Screen'], ['drehen', 'Hochkant gedreht']], {
       auto: 'Die Regie wählt den Ausschnitt; wo es passt, zwei übereinander.',
       split: 'Querfotos paarweise übereinander als Split-Screen, ganz zu sehen.',
@@ -474,7 +513,7 @@ function openWishSheet(mode = 'cut', menge) {
     if (!e.target.closest('#wishGo')) return;
     closeSheet();
     // nur Geändertes übernehmen: eigene Feineinstellungen (z. B. eine feste Länge in Sekunden) bleiben sonst stehen
-    for (const k of ['intro', 'variant', 'effekte', 'order', 'quer', 'allMedia', 'length']) if (w[k] !== w0[k]) st[k] = w[k];
+    for (const k of ['intro', 'variant', 'effekte', 'order', 'quer', 'otone', 'reim', 'allMedia', 'length']) if (w[k] !== w0[k]) st[k] = w[k];
     if (w.bw !== w0.bw) {
       if (w.bw === 'ganz') { st.look = 'noir'; st.color = 'off'; }
       else {
@@ -999,6 +1038,7 @@ async function detectFaces(item, src, sw, sh) {
     for (const f of faces) { const b = f.boundingBox; x0 = Math.min(x0, b.x / sw); y0 = Math.min(y0, b.y / sh); x1 = Math.max(x1, (b.x + b.width) / sw); y1 = Math.max(y1, (b.y + b.height) / sh); }
     const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
     item.faces = faces.length;
+    item.faceBox = faces.slice(0, 4).map((f) => { const b = f.boundingBox; return [b.x / sw, b.y / sh, b.width / sw, b.height / sh].map((v) => +v.toFixed(3)); });
     item.people = 1;
     item.focus = [+cx.toFixed(3), +Math.min(0.8, cy + (y1 - y0) * 0.3).toFixed(3)];
     // Köpfe und Oberkörper sollen im Bild bleiben
@@ -1043,7 +1083,7 @@ function scoreInWorker(item) {
  * den Takt). Läuft nach dem Einlesen still weiter, pausiert während eines Exports; „Film schneiden“ wartet darauf. */
 const vAct = { queue: [], running: null };
 function queueVideoAction(items) {
-  for (const m of items || []) if (m.kind === 'video' && m.file && (!m.hits || !m.loud) && !m.bad && !m.loading && !vAct.queue.includes(m)) vAct.queue.push(m);
+  for (const m of items || []) if (m.kind === 'video' && m.file && (!m.hits || !m.loud || !m.snd) && !m.bad && !m.loading && !vAct.queue.includes(m)) vAct.queue.push(m);
   if (!vAct.running && vAct.queue.length) vAct.running = runVideoAction();
 }
 async function runVideoAction() {
@@ -1059,8 +1099,14 @@ async function runVideoAction() {
       if (r && r.act) m.act = r.act;
     }
     // Lautstärkespitzen (Lachen, Jubel) für die Wahl der besten Stelle; große Dateien nicht ganz in den Speicher
-    if (!m.loud) {
-      try { m.loud = m.file.size < 80e6 ? loudPeaks(await decodeAudioFile(await m.file.arrayBuffer())) : []; } catch (e) { m.loud = []; }
+    // Originalton-Momente (Lachen, Jubel, Ausruf): nur lesen; die Tonspur bleibt im Speicher, wenn es einen gibt
+    if (!m.loud || !m.snd) {
+      try {
+        const buf = m.file.size < 80e6 ? await decodeAudioFile(await m.file.arrayBuffer()) : null;
+        if (!m.loud) m.loud = buf ? loudPeaks(buf) : [];
+        m.snd = buf ? soundMoments(buf) : { music: false, list: [] };
+        if (buf && !m.audio && m.snd.list.some((e) => e[3] >= 0.5)) m.audio = buf;
+      } catch (e) { m.loud = m.loud || []; m.snd = { music: false, list: [] }; }
     }
     n++;
     saveWork(m);
@@ -1084,7 +1130,9 @@ async function runVisionUpgrade() {
     try {
       const small = m.canvas || await decodeImage(m, 480, true);
       const r = scoreImage(small, small.width, small.height);
-      for (const k of ['sig', 'calm', 'mood', 'comp', 'tilt', 'detail', 'sky', 'skyline', 'vis', 'score']) m[k] = r[k];
+      for (const k of ['sig', 'calm', 'mood', 'comp', 'tilt', 'detail', 'sky', 'skyline', 'vis', 'score', 'lv']) m[k] = r[k];
+      // Gesichter: die Erkennung des Browsers (falls vorhanden) hat Vorrang
+      if (!(m.faces > 0)) m.faceBox = r.faceBox;
       if (!m.canvas) { if (small.close) small.close(); else { small.width = 0; small.height = 0; } }
       n++;
       if (!m.demo) saveWork(m);
@@ -1282,7 +1330,7 @@ async function ingestFiles(fileList, onProgress) {
 
 function applyFlags(rec, items) {
   const fl = rec.flags || {};
-  for (const m of items) { const f = fl[m.id]; m.fav = !!(f && f.fav); m.excluded = !!(f && f.excluded); m.sound = (f && f.sound) || 0; m.trim = (f && f.trim) || null; m.vlen = (f && f.vlen) || 0; m.rot = f && f.rot != null ? !!f.rot : undefined; m.bw = f && f.bw != null ? !!f.bw : undefined; m.us = f && f.us != null ? !!f.us : undefined; }
+  for (const m of items) { const f = fl[m.id]; m.fav = !!(f && f.fav); m.excluded = !!(f && f.excluded); m.sound = (f && f.sound) || 0; m.trim = (f && f.trim) || null; m.vlen = (f && f.vlen) || 0; m.rot = f && f.rot != null ? !!f.rot : undefined; m.bw = f && f.bw != null ? !!f.bw : undefined; m.us = f && f.us != null ? !!f.us : undefined; m.ppl = f && f.ppl != null ? !!f.ppl : undefined; }
   markDuplicates(items);
 }
 
@@ -1307,7 +1355,7 @@ function saveMediaFlags(item) {
   const rec = S.ctx && S.ctx.kind === 'place' ? S.ctx.rec : S.places.find((p) => (p.fps || []).includes(item.id));
   if (!rec) return;
   rec.flags = rec.flags || {};
-  if (item.fav || item.excluded || item.sound || item.trim || item.vlen || item.us != null || item.rot != null || item.bw != null) rec.flags[item.id] = { fav: !!item.fav, excluded: !!item.excluded, sound: item.sound || 0, trim: item.trim || null, vlen: item.vlen || 0, ...(item.rot != null ? { rot: !!item.rot } : {}), ...(item.bw != null ? { bw: !!item.bw } : {}), ...(item.us != null ? { us: !!item.us } : {}) };
+  if (item.fav || item.excluded || item.sound || item.trim || item.vlen || item.us != null || item.rot != null || item.bw != null || item.ppl != null) rec.flags[item.id] = { fav: !!item.fav, excluded: !!item.excluded, sound: item.sound || 0, trim: item.trim || null, vlen: item.vlen || 0, ...(item.rot != null ? { rot: !!item.rot } : {}), ...(item.bw != null ? { bw: !!item.bw } : {}), ...(item.us != null ? { us: !!item.us } : {}), ...(item.ppl != null ? { ppl: !!item.ppl } : {}) };
   else delete rec.flags[item.id];
   if (rec === (S.ctx && S.ctx.rec)) savePlaceSoon(); else S.store.put('places', rec).catch(() => {});
 }
@@ -1322,7 +1370,8 @@ async function ensureVoice(m) {
     if (!m.audio || m.audio.duration < 0.2) { m.audio = null; m.noAudio = 'none'; }
   } catch (e) { m.noAudio = 'none'; }
 }
-const VOICE_LEVELS = [['0', 'Stumm'], ['0.5', 'Leise'], ['1', 'Normal']];
+// 0 = automatisch (nur ein Originalton-Moment, wenn er passt), −1 = immer stumm
+const VOICE_LEVELS = [['0', 'Automatisch'], ['-1', 'Stumm'], ['0.5', 'Leise'], ['1', 'Normal']];
 const noAudioText = (m) => (m.noAudio === 'big' ? 'Dieses Video ist zu groß, um den Ton auf dem Handy zu lesen (über 450 MB). Kürze es in der Fotos-App.' : m.noAudio === 'demo' ? 'Beispielvideos haben keinen Ton.' : 'Dieses Video hat keine lesbare Tonspur.');
 
 async function setVoice(m, level) {
@@ -1819,7 +1868,7 @@ function snapshot() {
   const c = S.ctx;
   return JSON.stringify({
     settings: c.rec.settings, overrides: c.rec.overrides, hookId: c.rec.hookId || null, songId: c.rec.songId,
-    flags: c.media.map((m) => [m.id, !!m.fav, !!m.excluded, m.us == null ? null : !!m.us, m.trim || null, m.vlen || 0, m.rot == null ? null : !!m.rot, m.bw == null ? null : !!m.bw]),
+    flags: c.media.map((m) => [m.id, !!m.fav, !!m.excluded, m.us == null ? null : !!m.us, m.trim || null, m.vlen || 0, m.rot == null ? null : !!m.rot, m.bw == null ? null : !!m.bw, m.ppl == null ? null : !!m.ppl]),
   });
 }
 function startHistory() { S.hist = { stack: [snapshot()], idx: 0 }; updateUndo(); }
@@ -1849,8 +1898,8 @@ async function applySnapshot(json) {
   for (const m of c.media) {
     const f = map.get(m.id);
     const us = f && f[3] != null ? f[3] : undefined;
-    const tr = f ? f[4] || null : null, vl = f ? f[5] || 0 : 0, rot = f && f[6] != null ? f[6] : undefined, bw = f && f[7] != null ? f[7] : undefined;
-    if (f && (m.fav !== f[1] || m.excluded !== f[2] || m.us !== us || JSON.stringify(m.trim || null) !== JSON.stringify(tr) || (m.vlen || 0) !== vl || m.rot !== rot || m.bw !== bw)) { m.fav = f[1]; m.excluded = f[2]; m.us = us; m.trim = tr; m.vlen = vl; m.rot = rot; m.bw = bw; saveMediaFlags(m); }
+    const tr = f ? f[4] || null : null, vl = f ? f[5] || 0 : 0, rot = f && f[6] != null ? f[6] : undefined, bw = f && f[7] != null ? f[7] : undefined, ppl = f && f[8] != null ? f[8] : undefined;
+    if (f && (m.fav !== f[1] || m.excluded !== f[2] || m.us !== us || JSON.stringify(m.trim || null) !== JSON.stringify(tr) || (m.vlen || 0) !== vl || m.rot !== rot || m.bw !== bw || m.ppl !== ppl)) { m.fav = f[1]; m.excluded = f[2]; m.us = us; m.trim = tr; m.vlen = vl; m.rot = rot; m.bw = bw; m.ppl = ppl; saveMediaFlags(m); }
   }
   if (songChanged) await attachSong(c.rec.songId);
   S.selOverlay = null;
@@ -1872,7 +1921,7 @@ async function rebuild(opts = {}) {
   if (!ctx || !engine || !ctx.song || S.exporting) return;
   const media = filmMedia(ctx);
   // eingeschalteter Originalton (z. B. nach erneutem Wählen der Fotos): Tonspur lokal nachladen
-  const pendingVoice = media.filter((m) => m.sound > 0 && !m.audio && !m.noAudio);
+  const pendingVoice = media.filter((m) => (m.sound > 0 || (ctx.rec.settings.otone !== 'off' && !(m.sound < 0) && m.snd && (m.snd.list || []).some((e) => e[3] >= 0.5))) && !m.audio && !m.noAudio);
   if (pendingVoice.length) { busy('Lese Originalton …'); await Promise.all(pendingVoice.map(ensureVoice)); busy(null); if (S.ctx !== ctx) return; }
   const s = ctx.rec.settings;
   // Song zuerst: solange der Song nicht feststeht, wird nichts geschnitten – die Bühne zeigt die Schritte
@@ -1946,7 +1995,7 @@ function otherIntros(ctx) {
 function planOpts(ctx, media) {
   const settings = { ...ctx.rec.settings, title: ctxTitle(), subtitle: ctxSub(), hookId: ctx.rec.hookId, avoidIntros: otherIntros(ctx) };
   const chapters = ctx.kind === 'bestof' ? ctx.chapters.map((c) => ({ title: c.title, media: filmMedia(ctx, c.media) })) : null;
-  return { an: ctx.song.an, media, settings, overrides: ctx.rec.overrides, chapters, trip: tripContext(), flight: ctx.kind === 'place' && isFlight(ctx.rec) ? flightData(ctx.rec) : null };
+  return { an: ctx.song.an, media, settings, overrides: ctx.rec.overrides, chapters, trip: tripContext(), taste: S.taste || (S.taste = loadTaste()), flight: ctx.kind === 'place' && isFlight(ctx.rec) ? flightData(ctx.rec) : null };
 }
 
 /* ---------- Song zuerst: Song wählen → Songprofil und Empfehlung → bester Schnitt ---------- */
@@ -2207,17 +2256,21 @@ function benchFollow(t) {
 }
 
 /* ---------- Varianten im Vollbild vergleichen: gleiche Stelle im Song, anders geschnitten ---------- */
-const CMP = { orig: null, home: null, keys: ['ruhig', 'ausgewogen', 'energisch'], stats: {} };
+// (vierte Karte „Refrain-Reim“: die aktuelle Variante, in der jeder weitere Refrain den ersten aufgreift)
+const CMP = { orig: null, origReim: 'off', home: null, keys: ['ruhig', 'ausgewogen', 'energisch', 'reim'], stats: {} };
+const cmpCur = () => (S.ctx.rec.settings.reim === 'on' ? 'reim' : S.ctx.rec.settings.variant || 'ausgewogen');
+const cmpLabel = (k) => (k === 'reim' ? 'Refrain-Reim' : VARIANTS[k].label);
+const refrainCount = (an) => (an.sections || []).filter((x) => x.label === 'drop' || x.label === 'chorus').length;
 function variantStats(plan) {
   const cl = plan.clips.filter((c) => !c.loop);
   const avg = cl.reduce((a, c) => a + (c.end - c.start), 0) / Math.max(1, cl.length);
   return { n: cl.length, avg, fx: (plan.fx || []).length };
 }
 function renderCompareCards() {
-  const cur = S.ctx.rec.settings.variant || 'ausgewogen';
-  $('cmpCards').innerHTML = CMP.keys.map((k) => {
+  const cur = cmpCur();
+  $('cmpCards').innerHTML = CMP.keys.filter((k) => k !== 'reim' || CMP.stats.reim !== undefined).map((k) => {
     const st = CMP.stats[k];
-    return `<button type="button" role="radio" aria-checked="${k === cur}" data-var="${k}"><b>${VARIANTS[k].label}</b>${st ? `<small>${st.n} Einstellungen · Ø ${st.avg.toFixed(1).replace('.', ',')} s</small>` : ''}</button>`;
+    return `<button type="button" role="radio" aria-checked="${k === cur}" data-var="${k}"><b>${cmpLabel(k)}</b>${st ? `<small>${st.n} Einstellungen · Ø ${st.avg.toFixed(1).replace('.', ',')} s</small>` : ''}</button>`;
   }).join('');
 }
 async function openCompare() {
@@ -2225,8 +2278,12 @@ async function openCompare() {
   if (!ctx || !S.plan || flowPending(ctx)) return;
   const media = filmMedia(ctx);
   CMP.orig = ctx.rec.settings.variant || 'ausgewogen';
+  CMP.origReim = ctx.rec.settings.reim === 'on' ? 'on' : 'off';
+  delete CMP.stats.reim;
   for (const k of CMP.keys) {
-    try { CMP.stats[k] = variantStats(buildPlan(planOpts({ ...ctx, rec: { ...ctx.rec, settings: { ...ctx.rec.settings, variant: k } } }, media))); } catch (e) { CMP.stats[k] = null; }
+    if (k === 'reim' && refrainCount(ctx.song.an) < 2) continue;
+    const set = k === 'reim' ? { reim: 'on' } : { variant: k, reim: 'off' };
+    try { CMP.stats[k] = variantStats(buildPlan(planOpts({ ...ctx, rec: { ...ctx.rec, settings: { ...ctx.rec.settings, ...set } } }, media))); } catch (e) { CMP.stats[k] = null; }
   }
   const mon = $('monitor');
   CMP.home = document.createComment('monitor');
@@ -2239,15 +2296,16 @@ async function openCompare() {
   if (!engine.playing) engine.play(engine.t);
 }
 async function pickVariant(k) {
-  if (!CMP.keys.includes(k) || S.ctx.rec.settings.variant === k) return;
-  S.ctx.rec.settings.variant = k;
+  if (!CMP.keys.includes(k) || cmpCur() === k || (k === 'reim' && CMP.stats.reim === undefined)) return;
+  if (k === 'reim') S.ctx.rec.settings.reim = 'on';
+  else { S.ctx.rec.settings.variant = k; S.ctx.rec.settings.reim = 'off'; }
   renderCompareCards();
   await rebuild();
 }
 async function closeCompare(take) {
   if ($('compare').hidden) return;
-  if (!take) S.ctx.rec.settings.variant = CMP.orig;
-  else if (S.ctx.rec.settings.variant !== CMP.orig) { commit(); savePlaceSoon(); toast(`Variante „${VARIANTS[S.ctx.rec.settings.variant].label}“ übernommen.`); }
+  if (!take) { S.ctx.rec.settings.variant = CMP.orig; S.ctx.rec.settings.reim = CMP.origReim; }
+  else if (S.ctx.rec.settings.variant !== CMP.orig || (S.ctx.rec.settings.reim || 'off') !== CMP.origReim) { commit(); savePlaceSoon(); toast(`Variante „${cmpLabel(cmpCur())}“ übernommen.`); }
   const mon = $('monitor');
   CMP.home.parentElement.insertBefore(mon, CMP.home);
   CMP.home.remove();
@@ -2269,7 +2327,7 @@ function setupCompare() {
     const dx = e.clientX - x0, dy = e.clientY - y0;
     x0 = null;
     if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.3) return;
-    const i = CMP.keys.indexOf(S.ctx.rec.settings.variant || 'ausgewogen');
+    const i = CMP.keys.indexOf(cmpCur());
     pickVariant(CMP.keys[Math.max(0, Math.min(CMP.keys.length - 1, i + (dx < 0 ? 1 : -1)))]);
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('compare').hidden) closeCompare(false); });
@@ -2829,7 +2887,8 @@ function renderMaterial() {
     ? 'Das sind Beispielbilder. Deine eigenen Fotos und Videos ersetzen sie.'
     : missing > 0 && !n ? `Die Aufnahmen dieses Orts sind nicht mehr im Zwischenspeicher (gelöscht oder länger als ${KEEP_DAYS} Tage unbearbeitet). Wähle die ${missing} Aufnahmen erneut aus der Galerie, am einfachsten alle Fotos der Reise: Jede Aufnahme landet automatisch am richtigen Ort.`
       : !n ? 'Füge die Fotos und Videos dieses Orts hinzu. 10 bis 60 Stück ergeben einen guten Film.'
-        : `${n - v} Fotos, ${v} Videos. Videos laufen stumm unter dem Song; den Originalton schaltest du pro Video ein (antippen).`;
+        : `${n - v} Fotos, ${v} Videos. Videos laufen unter dem Song; einen klaren Moment (Lachen, Jubel) lässt die Regie hören, wenn der Song Platz hat – pro Video änderbar (antippen).`;
+  renderTaste();
   const roles = isFlight(ctx.rec) ? flightRoles(ctx.rec) : null;
   if (isFlight(ctx.rec) && n) $('mediaHint').textContent = `${n} Aufnahmen vom Flug, nach Aufnahmezeit geordnet: die erste ist der Abflug, die letzte die Landung, dazwischen die Aufnahmen an Bord. Antippen, um das zu ändern oder den Originalton einzuschalten.`;
   const hookId = ctx.rec.hookId;
@@ -2860,7 +2919,7 @@ function renderMaterial() {
       ${m.excluded && !m.bad ? '<span class="out">von dir ausgeschlossen</span>' : !m.bad && autoOut(m, keepB) ? `<span class="out">aussortiert · ${autoOut(m, keepB)}</span>` : dropped.has(m.id) ? '<span class="out">passt nicht mehr hinein</span>' : ''}
       ${m.fav ? '<span class="flag fav">♥</span>' : ''}
       ${!m.bad && !m.loading && m.us === true ? '<span class="flag us set" title="von dir als Wir markiert">WIR</span>' : ''}
-      ${m.kind === 'video' && m.sound ? '<span class="flag snd" aria-label="Originalton an"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z" fill="currentColor"/><path d="M15.5 9a4 4 0 010 6M17.8 6.8a7 7 0 010 10.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>' : ''}
+      ${m.kind === 'video' && m.sound > 0 ? '<span class="flag snd" aria-label="Originalton an"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z" fill="currentColor"/><path d="M15.5 9a4 4 0 010 6M17.8 6.8a7 7 0 010 10.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>' : ''}
       ${isStart ? '<span class="flag start">START</span>' : ''}
       ${role ? `<span class="flag start">${role}</span>` : ''}
     </button>`;
@@ -2894,11 +2953,13 @@ function openMediaSheet(id) {
     ${selHTML}
     ${m.kind === 'video' && m.duration ? trimHTML(m) : ''}
     ${m.kind === 'video' ? `<div class="field"><span class="field-label">Originalton</span><div id="sndPick">${radioHTML('Originalton', VOICE_LEVELS, String(m.sound || 0))}</div>
-      <p class="hint small">Mit Ton läuft das Video in Echtzeit, die Musik wird dort automatisch leiser.</p></div>` : ''}
+      <p class="hint small">Automatisch: Die Regie lässt einen kurzen Moment hören (Lachen, Jubel, ein Ausruf), wenn er klar ist und der Song an dieser Stelle Platz lässt. Leise/Normal: der Ton läuft durchgehend, die Musik wird dort leiser.</p></div>` : ''}
     ${m.kind === 'image' && m.w > m.h * 1.15 && ctx.rec.settings.format === '9:16' ? `<div class="field"><span class="field-label">Querfoto in der Story</span><div id="rotPick">${radioHTML('Querfoto', [['auto', 'Wie eingestellt'], ['yes', 'Gedreht'], ['no', 'Nicht drehen']], m.rot === true ? 'yes' : m.rot === false ? 'no' : 'auto')}</div>
       <p class="hint small">Gedreht: das ganze Foto um 90° gedreht, der Himmel rechts – zum Ansehen das Handy quer halten.</p></div>` : ''}
     <div class="field"><span class="field-label">Schwarzweiß</span><div id="bwPick">${radioHTML('Schwarzweiß', [['auto', 'Wie der Film'], ['yes', 'Immer schwarzweiß'], ['no', 'Nie schwarzweiß']], m.bw === true ? 'yes' : m.bw === false ? 'no' : 'auto')}</div>
       <p class="hint small">Nie: das Foto bleibt farbig, auch in Schwarzweiß-Momenten und -Looks. Immer: es erscheint im Film schwarzweiß.</p></div>
+    ${m.kind === 'image' ? `<div class="field"><span class="field-label">Menschen im Bild</span><div id="pplPick">${radioHTML('Menschen im Bild', [['auto', peopleIn({ ...m, ppl: undefined }) >= 0.6 ? 'Erkannt: ja' : 'Erkannt: nein'], ['yes', 'Ja'], ['no', 'Nein']], m.ppl === true ? 'yes' : m.ppl === false ? 'no' : 'auto')}</div>
+      <p class="hint small">Die Regie erkennt Gesichter selbst. Liegt sie falsch, korrigiere es hier – das bestimmt die Einstellungsgröße (Totale, Halbnah, Nah) und damit die Reihenfolge in jeder Szene.</p></div>` : ''}
     <div class="field"><span class="field-label">Wir-Aufnahme</span><div id="usPick">${radioHTML('Wir-Aufnahme', [['yes', 'Ja, wir'], ['no', 'Nein']], m.us === true ? 'yes' : 'no')}</div>
       <p class="hint small">Eure Aufnahmen bekommen einen besonderen Platz: die ruhigen Passagen, mehr Zeit, einen eigenen Wir-Moment und das Schlussbild. Schneller markieren: unter „Aufnahmen“ auf „Wir markieren“ und Bilder antippen.</p></div>
     <div class="sheet-actions">
@@ -2917,13 +2978,15 @@ function openMediaSheet(id) {
     if (rt) { setRadio(rt.closest('.chips'), rt.dataset.v); m.rot = rt.dataset.v === 'yes' ? true : rt.dataset.v === 'no' ? false : undefined; saveMediaFlags(m); commit(); scheduleRebuild(0); return; }
     const bwp = e.target.closest('#bwPick [role="radio"]');
     if (bwp) { setRadio(bwp.closest('.chips'), bwp.dataset.v); m.bw = bwp.dataset.v === 'yes' ? true : bwp.dataset.v === 'no' ? false : undefined; saveMediaFlags(m); commit(); scheduleRebuild(0); renderMaterial(); return; }
+    const pp = e.target.closest('#pplPick [role="radio"]');
+    if (pp) { setRadio(pp.closest('.chips'), pp.dataset.v); m.ppl = pp.dataset.v === 'yes' ? true : pp.dataset.v === 'no' ? false : undefined; saveMediaFlags(m); commit(); scheduleRebuild(0); return; }
     const u = e.target.closest('#usPick [role="radio"]');
     if (u) { setRadio(u.closest('.chips'), u.dataset.v); m.us = u.dataset.v === 'yes' ? true : undefined; saveMediaFlags(m); commit(); scheduleRebuild(0); renderMaterial(); return; }
     const r = e.target.closest('#sndPick [role="radio"]');
     if (r) { setRadio(r.closest('.chips'), r.dataset.v); await setVoice(m, +r.dataset.v); if (!m.audio) setRadio(r.closest('.chips'), '0'); return; }
     const a = e.target.closest('[data-act]');
     if (!a) return;
-    if (a.dataset.act === 'fav') { m.fav = !m.fav; saveMediaFlags(m); }
+    if (a.dataset.act === 'fav') { m.fav = !m.fav; saveMediaFlags(m); if (m.fav) learnTaste(m, 1); }
     if (a.dataset.act === 'start') { ctx.rec.hookId = isStart ? null : m.id; if (!isStart) m.excluded = false; }
     if (a.dataset.act === 'takeoff' || a.dataset.act === 'landing') {
       const f = ctx.rec.flight = ctx.rec.flight || {};
@@ -2934,7 +2997,7 @@ function openMediaSheet(id) {
       saveMediaFlags(m);
       fillFlightPlaces(ctx.rec);
     }
-    if (a.dataset.act === 'excl') { m.excluded = !m.excluded; saveMediaFlags(m); }
+    if (a.dataset.act === 'excl') { m.excluded = !m.excluded; saveMediaFlags(m); learnTaste(m, m.excluded ? -1 : 0.5); }
     if (a.dataset.act === 'bring') { closeSheet(); await swapMedia(m, null); return; }
     if (a.dataset.act === 'bringFor') { pickMedia('Welche Aufnahme soll dafür raus?', ctx.media.filter((x) => x !== m && !isOut(x) && !x.bad && !x.loading), 'weak', (x) => swapMedia(m, x)); return; }
     if (a.dataset.act === 'swapOut') { pickMedia('Welche Aufnahme soll stattdessen in den Film?', outs, 'strong', (x) => swapMedia(x, m)); return; }
@@ -2956,7 +3019,8 @@ async function swapMedia(inn, out) {
   const ctx = S.ctx;
   const before = new Set(S.plan && S.plan.capacity ? S.plan.capacity.droppedIds : []);
   inn.excluded = false; inn.fav = true; saveMediaFlags(inn);
-  if (out) { out.excluded = true; out.fav = false; saveMediaFlags(out); }
+  learnTaste(inn, 1);
+  if (out) { out.excluded = true; out.fav = false; saveMediaFlags(out); learnTaste(out, -1); }
   commit();
   savePlaceSoon();
   await rebuild();
@@ -3087,7 +3151,7 @@ function setupTrim(body, m) {
   let seekT = 0;
   const seek = (t) => { clearTimeout(seekT); seekT = setTimeout(() => { try { vid.currentTime = Math.min(d - 0.05, t); } catch (e) { /* noch nicht geladen */ } }, 60); };
   // wer den Ausschnitt ändert, will genau diesen Teil im Film sehen: Länge im Film folgt dem Ausschnitt
-  const setExact = (on) => { m.vlen = on ? +len.toFixed(2) : 0; setRadio(body.querySelector('#vlenPick .chips'), on ? 'exact' : 'auto'); };
+  const setExact = (on) => { m.vlen = on ? +len.toFixed(2) : 0; setRadio(body.querySelector('#vlenPick .chips'), on ? 'exact' : 'auto'); if (on) { clearTimeout(setExact.t); setExact.t = setTimeout(() => learnVideoLen(m, m.vlen), 1500); } };
   const save = (fromTrim = true) => {
     m.trim = tin < 0.05 && len > d - 0.05 ? null : [+tin.toFixed(2), +(tin + len).toFixed(2)];
     if (fromTrim) setExact(true);

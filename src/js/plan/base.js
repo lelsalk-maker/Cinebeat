@@ -140,6 +140,16 @@ function sectionAt(an, absT) {
   return secs[secs.length - 1] || { start: 0, end: an.duration, label: 'verse', energy: 0.5 };
 }
 
+/** Akzentstärke (0…1) des Schlags, der bei Songzeit absT liegt (±⅓ Schlag); ohne Messung 0,5. */
+function accentAt(an, absT) {
+  const acc = an.accent, bt = an.beats;
+  if (!acc || !bt || acc.length !== bt.length || !bt.length) return 0.5;
+  let lo = 0, hi = bt.length - 1;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (bt[m] < absT) lo = m + 1; else hi = m; }
+  if (lo > 0 && Math.abs(bt[lo - 1] - absT) < Math.abs(bt[lo] - absT)) lo--;
+  return Math.abs(bt[lo] - absT) < an.beatPeriod / 3 ? acc[lo] : 0.15;
+}
+
 /** Songausschnitt nach Wunschlänge und fester Startwahl. */
 function pickWindow(an, { length, songStart }) {
   const first = Math.max(0, an.firstSound), last = Math.min(an.duration, an.lastSound + 0.2);

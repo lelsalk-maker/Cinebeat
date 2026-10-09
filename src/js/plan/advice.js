@@ -61,7 +61,7 @@ function songAdviceRaw(an, settings) {
  * Wie gut ein Schnitt wirkt (höher = besser): gleichmäßige Kamera über die Schnitte, keine Hektik in ruhigen Teilen,
  * Bildgrößen im Wechsel, keine Doppel nebeneinander, kein Hin und Her, nichts weggelassen oder wiederholt.
  */
-function planQuality(plan, media, detail) {
+function planQuality(plan, media, detail, an = null) {
   const parts = {};
   const pen = (k, v) => { parts[k] = +((parts[k] || 0) + v).toFixed(3); };
   const fmt = FORMATS[plan.resolved.format] || FORMATS['9:16'];
@@ -112,6 +112,26 @@ function planQuality(plan, media, detail) {
   if (mc) pen('match', -0.15 * Math.min(4, mc));
   // derselbe weiche Übergang zweimal hintereinander wirkt mechanisch
   for (let i = 2; i < clips.length; i++) if (clips[i].tin && clips[i - 1].tin && clips[i].tin.type && clips[i].tin.type === clips[i - 1].tin.type) pen('uebergang', 0.2);
+  // Blickführung: wie weit das Auge über die Schnitte springen muss
+  if (plan.eye && plan.eye.after != null) pen('blick', plan.eye.after * 2);
+  // Szenen-Grammatik: drei gleiche Einstellungsgrößen hintereinander
+  {
+    const sz = clips.map((c) => { const m = img(c); return m && !special(c) ? shotSize(m) : null; });
+    for (let i = 2; i < sz.length; i++) if (sz[i] != null && sz[i] === sz[i - 1] && sz[i] === sz[i - 2]) pen('grammatik', 0.3);
+  }
+  if (an && an.beats) {
+    // Schnitte auf Treffern: mittlere Akzentstärke an den Schnitten (ohne Abschnittswechsel, die sitzen ohnehin)
+    const acc = clips.filter((c, i) => i > 0 && !c.sectionChange && !special(c) && c.start > 0.05).map((c) => accentAt(an, plan.win.start + c.start));
+    if (acc.length >= 4) pen('akzent', (0.45 - acc.reduce((a, b) => a + b, 0) / acc.length) * 3);
+    // Spannungskurve: im Anstieg werden die Einstellungen kürzer
+    for (const r of an.rises || []) {
+      const a = r.start - plan.win.start, z = r.end - plan.win.start;
+      if (a < 0 || z > plan.duration) continue;
+      const mid = (a + z) / 2, len = (lo, hi) => { const g = clips.filter((c) => c.end > lo + 0.05 && c.start < hi - 0.05).map((c) => c.end - c.start); return g.length ? g.reduce((x, y) => x + y, 0) / g.length : 0; };
+      const l1 = len(a, mid), l2 = len(mid, z);
+      if (l1 && l2 && l2 > l1 * 0.9) pen('spannung', 0.6);
+    }
+  }
   const cap = plan.capacity || {};
   if (cap.all) pen('fehlt', (cap.droppedIds ? cap.droppedIds.length : 0) * 2);
   pen('wiederholt', (cap.repeats || 0) * 3);
@@ -169,7 +189,7 @@ async function bestCut(opts, n = 8, onProgress) {
     const audit = opts.an ? planAudit(plan, opts.media, opts.an).concat(planSyncAudit(plan, opts.an)) : [];
     // „Neu schneiden“: eine Variante, die fast wie der bisherige Schnitt aussieht, zählt deutlich weniger
     const same = opts.avoid ? cutSimilarity(plan, opts.avoid) : 0;
-    const score = planQuality(plan, opts.media) - audit.length * 4 - (same > 0.7 ? 30 * (same - 0.7) / 0.3 + 10 : 0);
+    const score = planQuality(plan, opts.media, false, opts.an) - audit.length * 4 - (same > 0.7 ? 30 * (same - 0.7) / 0.3 + 10 : 0);
     tried.push({ seed: seeds[k], score, audit: audit.length });
     // bei Gleichstand bleibt die bisherige Variante (die aktuelle zuerst)
     if (!best || score > best.score + 1e-6) { best = { plan, seed: seeds[k], score, audit }; stale = 0; } else stale++;
@@ -239,7 +259,7 @@ function hookScore(plan, media, an) {
   const top = Math.max(0, ...early.map(mOf).filter(Boolean).map((m) => m.score || 0));
   add('strong', 'Starkes Motiv vorn', (top - q(0.5)) / Math.max(0.02, q(0.92) - q(0.5)), 0.25, 'Vorn steht nicht euer bestes Bild: das stärkste als Startbild nehmen.');
   // Menschen: erkannt (Gesichter/Haut im Bild) oder von dir als „Wir“ markiert
-  const ppl = Math.max(0, ...clips.filter((c) => c.visStart < 2).map(mOf).filter(Boolean).map((m) => Math.max(usScore(m), m.faces ? 1 : 0, Math.min(1, (m.people || 0) * 1.5))));
+  const ppl = Math.max(0, ...clips.filter((c) => c.visStart < 2).map(mOf).filter(Boolean).map((m) => Math.max(usScore(m), peopleIn(m))));
   add('people', 'Menschen im Bild', 0.4 + ppl * 0.6, 0.15, 'Ein Bild mit Menschen in den ersten 2 s bindet noch stärker.');
   add('music', 'Musik trägt sofort', (eRel - 0.6) / 0.6, 0.15, 'Der Song ist am Anfang eher leise: „Ab Refrain“ als Songstart setzt sofort ein.');
 

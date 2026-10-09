@@ -1366,7 +1366,8 @@ class Engine {
 
   /** Originalton-Abschnitte zusammengefasst (für das Absenken der Musik). */
   _voiceSpans() {
-    const vs = (this.plan.voice || []).slice().sort((a, b) => a.t0 - b.t0);
+    // (nur Ton, der wirklich spielt: ohne gelesene Tonspur wird die Musik nicht abgesenkt)
+    const vs = (this.plan.voice || []).filter((v) => this.media[v.mediaIndex] && this.media[v.mediaIndex].audio).sort((a, b) => a.t0 - b.t0);
     const spans = [];
     for (const v of vs) {
       const last = spans[spans.length - 1];

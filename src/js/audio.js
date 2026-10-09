@@ -53,7 +53,7 @@ function percentile(arr, p) {
  * Taktphase (Downbeats), Energie je Beat und eine Hüllkurve für die Anzeige.
  */
 /** Version der Analyse: gespeicherte Songs mit älterer Version werden einmal neu analysiert. */
-const AN_VER = 11;
+const AN_VER = 12;
 
 /**
  * Mithören: findet in der Mikrofonaufnahme den genauen Einsatz des Songs – ohne Startton, egal wann Play gedrückt wurde.
@@ -148,6 +148,111 @@ function loudPeaks(buffer) {
   const out = [];
   for (const c of cand) if (out.every((o) => Math.abs(o[0] - c[0]) >= 0.8)) out.push(c);
   return out.slice(0, 6).sort((x, y) => x[0] - y[0]);
+}
+
+/**
+ * Originalton-Momente eines Videos (lokal, ohne Spracherkennung): kurze, klare Ereignisse, die es wert sind, gehört zu
+ * werden – Lachen (stimmhafte Silben im 3,5–8-Hz-Rhythmus), Jubel/Applaus (laut, breitbandig, hell) und ein kurzer
+ * Ausruf („Wow!“: ein bis drei stimmhafte Silben, davor und danach Ruhe). Verworfen wird, was nicht trägt: Wind und
+ * Rumpeln (Tiefen ohne Stimme), Dauerreden (viele Silben am Stück – ohne Verständnis des Inhalts wäre das Zufall),
+ * leises Gemurmel und Videos, in denen selbst Musik läuft (sie würde mit dem Song kollidieren).
+ * Liefert { music, list: [[t0, t1, art, q]] } – q 0…1 = wie klar und eindeutig der Moment ist.
+ */
+function soundMoments(buffer) {
+  const sr0 = buffer.sampleRate, f = Math.max(1, Math.round(sr0 / 16000)), sr = sr0 / f;
+  const chs = Math.min(2, buffer.numberOfChannels), len = Math.floor(buffer.length / f);
+  if (len < sr * 0.8) return { music: false, list: [] };
+  const x = new Float32Array(len);
+  for (let c = 0; c < chs; c++) { const d = buffer.getChannelData(c); for (let i = 0; i < len; i++) x[i] += d[i * f] / chs; }
+  const N = 512, hop = Math.round(sr * 0.01), nF = Math.floor((len - N) / hop);
+  if (nF < 40) return { music: false, list: [] };
+  const fft = makeFFT(N), re = new Float32Array(N), im = new Float32Array(N), win = new Float32Array(N);
+  for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / N);
+  const db = new Float32Array(nF), flat = new Float32Array(nF), low = new Float32Array(nF), cen = new Float32Array(nF), vo = new Float32Array(nF), f0 = new Float32Array(nF);
+  const lagMin = Math.floor(sr / 500), lagMax = Math.ceil(sr / 85), A = Math.round(sr * 0.03);
+  const binHz = sr / N, lowBin = Math.round(300 / binHz);
+  for (let k = 0; k < nF; k++) {
+    const o = k * hop;
+    let e = 0;
+    for (let i = 0; i < N; i++) { const v = x[o + i]; e += v * v; re[i] = v * win[i]; im[i] = 0; }
+    db[k] = 10 * Math.log10(e / N + 1e-10);
+    fft(re, im);
+    let lg = 0, ar = 0, tot = 0, lo = 0, cw = 0, cnt = 0;
+    for (let b = 2; b < N / 2; b++) { const p = re[b] * re[b] + im[b] * im[b] + 1e-12; lg += Math.log(p); ar += p; cnt++; tot += p; if (b < lowBin) lo += p; cw += p * b * binHz; }
+    flat[k] = Math.exp(lg / cnt) / (ar / cnt);
+    low[k] = lo / tot; cen[k] = cw / tot;
+    // Stimme: deutliche Periodizität (normierte Autokorrelation) zwischen 85 und 500 Hz
+    if (o + A + lagMax < len) {
+      let e0 = 0; for (let i = 0; i < A; i++) e0 += x[o + i] * x[o + i];
+      // (echte Periodizität hat vor dem Gipfel ein Tal – tiefes Rauschen wie Wind ist nur „glatt“, ohne Tal)
+      let best = -1, bl = 0, minR = 1, minBefore = 1;
+      for (let L = lagMin; L <= lagMax; L++) {
+        let c = 0, e1 = 0;
+        for (let i = 0; i < A; i++) { c += x[o + i] * x[o + i + L]; e1 += x[o + i + L] * x[o + i + L]; }
+        const r = c / Math.sqrt(e0 * e1 + 1e-12);
+        if (r < minR) minR = r;
+        if (r > best) { best = r; bl = L; minBefore = minR; }
+      }
+      vo[k] = best - minBefore > 0.3 ? best : 0; f0[k] = bl ? sr / bl : 0;
+    }
+  }
+  const sorted = Array.from(db).sort((a, b) => a - b);
+  const bg = sorted[Math.floor(nF * 0.2)], peak = sorted[Math.floor(nF * 0.98)];
+  if (peak < -48) return { music: false, list: [] };
+  // Musik im Video: über weite Strecken tonal und gleichmäßig laut (auch ohne Ereignis)
+  let tonal = 0, loudish = 0;
+  for (let k = 0; k < nF; k++) if (db[k] > bg + 3) { loudish++; if (vo[k] > 0.75 && flat[k] < 0.08) tonal++; }
+  const music = loudish > nF * 0.6 && tonal > loudish * 0.55 && peak - bg < 14;
+  if (music) return { music: true, list: [] };
+  // Ereignisse: zusammenhängend deutlich über dem Grundgeräusch (Lücken bis 150 ms überbrückt)
+  const thr = Math.max(bg + 10, peak - 22), ev = [];
+  let s0 = -1, lastOn = -1;
+  for (let k = 0; k <= nF; k++) {
+    const on = k < nF && db[k] > thr;
+    if (on) { if (s0 < 0) s0 = k; lastOn = k; } else if (s0 >= 0 && k - lastOn > 15) { ev.push([s0, lastOn]); s0 = -1; }
+  }
+  // Merkmale je Ereignis
+  const feats = [];
+  for (const [a, b] of ev) {
+    const dur = (b - a + 1) * 0.01;
+    if (dur < 0.25 || dur > 4) continue;
+    let vS = 0, flS = 0, loS = 0, ceS = 0, pS = 0, pN = 0, dbM = -200;
+    for (let k = a; k <= b; k++) { flS += flat[k]; loS += low[k]; ceS += cen[k]; dbM = Math.max(dbM, db[k]); if (vo[k] > 0.6 && f0[k] > 0) { vS++; pS += f0[k]; pN++; } }
+    const n = b - a + 1;
+    // Silben: Gipfel der geglätteten Hüllkurve mit 3 dB Abstand zum Tal davor
+    const peaks = [];
+    let valley = 1e9, up = false;
+    for (let k = a; k <= b; k++) {
+      const v = (db[Math.max(a, k - 2)] + db[k] + db[Math.min(b, k + 2)]) / 3;
+      if (v < valley) valley = v;
+      if (!up && v > valley + 3) { up = true; peaks.push(k); }
+      if (up && k < b && v > (db[k + 1] + db[Math.min(b, k + 3)]) / 2 + 2.5) { up = false; valley = v; }
+    }
+    // Gleichmaß der Silbenabstände (Lachen: „ha-ha-ha“ wie ein Metronom; Sprechen: unregelmäßig)
+    const iv = peaks.slice(1).map((t, i) => t - peaks[i]);
+    const ivM = iv.length ? iv.reduce((x, y) => x + y, 0) / iv.length : 0;
+    const cv = iv.length > 1 ? Math.sqrt(iv.reduce((x, y) => x + (y - ivM) ** 2, 0) / iv.length) / Math.max(1, ivM) : 1;
+    const quiet = (k0, k1) => { let q = 0, c = 0; for (let k = Math.max(0, k0); k < Math.min(nF, k1); k++) { c++; if (db[k] < thr - 4) q++; } return c ? q / c : 1; };
+    feats.push({ a, b, dur, voiced: vS / n, fl: flS / n, lw: loS / n, ce: ceS / n, pitch: pN ? pS / pN : 0, dbM, snr: dbM - bg, syl: peaks.length, rate: peaks.length / dur, cv, iso: Math.min(quiet(a - 50, a), quiet(b + 1, b + 51)) });
+  }
+  // Bezug für einen Ausruf: das übrige Sprechen im Video (lauter und höher als das Gewöhnliche)
+  const voicedEv = feats.filter((e) => e.voiced >= 0.35);
+  const medOf = (arr) => { const q = arr.slice().sort((x, y) => x - y); return q.length ? q[q.length >> 1] : 0; };
+  const talkDb = voicedEv.length >= 3 ? medOf(voicedEv.map((e) => e.dbM)) : -200, talkPitch = voicedEv.length >= 3 ? medOf(voicedEv.map((e) => e.pitch)) : 0;
+  const list = [];
+  for (const e of feats) {
+    let art = null, base = 0;
+    // Wind/Rumpeln: tief und ohne Stimme
+    if ((e.lw > 0.55 && e.voiced < 0.25) || e.lw > 0.7) continue;
+    if (e.voiced >= 0.35 && e.rate >= 3.5 && e.rate <= 8.5 && e.syl >= 3 && e.cv < 0.35 && e.dur >= 0.6 && e.dur <= 3.2 && e.pitch >= 150) { art = 'lachen'; base = 1; }
+    else if (e.snr >= 16 && e.dur >= 0.5 && e.ce > 1300 && (e.fl > 0.2 || e.voiced >= 0.3) && e.syl <= Math.max(4, e.dur * 4)) { art = 'jubel'; base = 0.85; }
+    else if (e.voiced >= 0.45 && e.syl >= 1 && e.syl <= 3 && e.dur <= 1.6 && e.snr >= 12 && e.pitch >= 160 && e.iso >= 0.7 && e.dbM >= talkDb + 4 && (!talkPitch || e.pitch >= talkPitch * 1.15)) { art = 'ruf'; base = 0.8; }
+    if (!art) continue;
+    const q = base * Math.min(1, (e.snr - 6) / 18) * (1 - Math.min(0.6, Math.max(0, e.lw - 0.3)));
+    if (q < 0.3) continue;
+    list.push([+(e.a * 0.01).toFixed(2), +((e.b + 1) * 0.01 + 0.05).toFixed(2), art, +q.toFixed(2)]);
+  }
+  return { music: false, list: list.sort((p, q) => q[3] - p[3]).slice(0, 6).sort((p, q) => p[0] - q[0]) };
 }
 
 async function analyzeAudio(buffer, onProgress) {
@@ -523,6 +628,8 @@ async function analyzeAudio(buffer, onProgress) {
     for (let k = i - 2; k <= i + 3; k++) if (k >= 0 && k < beats.length) { s += energyRaw[k]; c++; }
     energy[i] = s / c;
   }
+  // Akzente (wie stark trifft jeder Schlag) und Spannungskurve (wohin will der Song)
+  const accs = songAccents({ beats: beatsSteady, pSec, linFlux, hiE, rms, toFrame, nFrames, fps, energy });
 
 
 
@@ -580,6 +687,10 @@ async function analyzeAudio(buffer, onProgress) {
     vocal: vocal.level,
     vocalOn: vocal.onsets,
     vocalLines: vocal.lines,
+    accent: accs.accent,
+    impacts: accs.impacts,
+    tension: accs.tension,
+    rises: songRises(beatsSteady, accs.tension, st.sections),
     mood,
     snares: drums.snares,
     duration,
@@ -587,6 +698,119 @@ async function analyzeAudio(buffer, onProgress) {
     lastSound: Math.max(firstSound + 1, lastSound),
     env,
   };
+}
+
+/**
+ * Akzent-Hierarchie und Spannungskurve – wie ein Cutter den Song hört:
+ *  - accent[i] (0…1): wie hart Schlag i trifft – Anschlag (lineare Bandenergie) gegenüber seiner Umgebung (±2 Takte)
+ *    und gegenüber dem ganzen Song. Eine Bassdrum im Refrain trifft mehr als dieselbe in der Strophe.
+ *  - impacts: die wenigen Treffer, die nach einem Bildakzent verlangen (Becken mit langem Ausklang oder ein deutlicher
+ *    Pegelsprung, z. B. der Einsatz nach einer Pause) – höchstens einer je zwei Takte, nach Stärke sortiert.
+ *  - tension[i] (0…1): Spannung = Pegel, Dichte der Anschläge und Helligkeit, über einen Takt geglättet.
+ */
+function songAccents({ beats, pSec, linFlux, hiE, rms, toFrame, nFrames, fps, energy }) {
+  const n = beats.length;
+  const accent = new Float32Array(n), tension = new Float32Array(n);
+  if (n < 8) return { accent, impacts: [], tension };
+  const tr = new Float32Array(n), crash = new Float32Array(n), step = new Float32Array(n), dens = new Float32Array(n), bright = new Float32Array(n), tail = new Float32Array(n), hiJump = new Float32Array(n);
+  const t25 = Math.round(fps * 0.25), t60 = Math.round(fps * 0.6);
+  const pk = (arr, a, b) => { let m = 0; for (let f = Math.max(0, a); f <= Math.min(nFrames - 1, b); f++) m = Math.max(m, arr[f]); return m; };
+  const avg = (arr, a, b) => { let m = 0, c = 0; for (let f = Math.max(0, a); f <= Math.min(nFrames - 1, b); f++) { m += arr[f]; c++; } return c ? m / c : 0; };
+  const bf = Math.max(2, Math.round(pSec * fps));
+  // Anschlagsdichte über die Höhen (Snare-Wirbel, Hi-Hats, Klatschen): Spitzen, die deutlich über ihrem Umfeld stehen
+  const hiRef = percentile(Array.from(hiE), 0.9) || 1e-9;
+  const hiOn = new Uint8Array(nFrames);
+  for (let f = 3; f < nFrames - 1; f++) if (hiE[f] > hiRef * 0.04 && hiE[f] > hiE[f - 2] * 1.35 && hiE[f] >= hiE[f - 1] && hiE[f] >= hiE[f + 1]) hiOn[f] = 1;
+  for (let i = 0; i < n; i++) {
+    const f = toFrame(beats[i]);
+    tr[i] = pk(linFlux, f - 2, f + 3);
+    const h0 = avg(hiE, f - 6, f - 2), hp = pk(hiE, f - 1, f + 3);
+    hiJump[i] = hp / Math.max(1e-9, h0);
+    tail[i] = avg(hiE, f + t25, f + t60);
+    const rb = avg(rms, f - bf, f - 2), ra = avg(rms, f + 1, f + bf);
+    step[i] = ra / Math.max(1e-9, rb);
+    let c = 0;
+    for (let g = f - 1; g < Math.min(nFrames, f + bf - 1); g++) c += hiOn[g];
+    dens[i] = c;
+    bright[i] = avg(hiE, f, f + bf) / Math.max(1e-9, avg(rms, f, f + bf));
+  }
+  // Becken: ein Höhen-Ausklang, der viel länger steht als bei den Schlägen ringsum (Hi-Hats, Melodie klingen gleich)
+  for (let i = 0; i < n; i++) {
+    // Bezug sind die Schläge danach (dort klingt das Becken über dem neuen Teil) – fällt der Song danach ab (Ende
+    // eines Teils), die lautere Seite: ein Einsatz nach einer leisen Pause ist noch kein Becken
+    const side = (a, z) => { const v = []; for (let k = Math.max(0, a); k < Math.min(n, z); k++) v.push(tail[k]); v.sort((x, y) => x - y); return v.length ? v[v.length >> 1] : 0; };
+    const sb = side(i - 8, i), sa = side(i + 1, i + 9);
+    const med = (sa >= sb * 0.5 ? sa : Math.max(sa, sb)) || 1e-9;
+    crash[i] = Math.max(0, Math.min(1, (tail[i] / med - 1.3) / 1.2)) * (hiJump[i] > 1.3 ? 1 : 0.3);
+  }
+  const pct = (a, q) => percentile(Array.from(a), q);
+  const trRef = pct(tr, 0.97) || 1e-9;
+  for (let i = 0; i < n; i++) {
+    const loc = [];
+    for (let k = Math.max(0, i - 8); k < Math.min(n, i + 9); k++) loc.push(tr[k]);
+    loc.sort((a, b) => a - b);
+    const med = loc[loc.length >> 1] || 1e-9;
+    const rel = Math.max(0, Math.min(1, (Math.log2(Math.max(1e-9, tr[i]) / med) + 0.3) / 1.6));
+    const glob = Math.max(0, Math.min(1, tr[i] / trRef));
+    // ein Einsatz nach Leiserem (Pegelsprung) trifft mehr als derselbe Schlag mitten im Refrain
+    const stp = Math.max(0, Math.min(1, (step[i] - 1.2) / 1.5));
+    accent[i] = Math.max(0, Math.min(1, 0.4 * rel + 0.35 * glob + 0.2 * crash[i] + 0.25 * stp));
+  }
+  // Spannung: Pegel, Dichte und Helligkeit (je auf ihre Spannweite im Song), über einen Takt geglättet
+  const norm = (a) => { const lo = pct(a, 0.05), hi = pct(a, 0.95); return Array.from(a, (v) => Math.max(0, Math.min(1, (v - lo) / Math.max(1e-9, hi - lo)))); };
+  const dN = norm(dens), bN = norm(bright);
+  const raw = Array.from({ length: n }, (_, i) => 0.55 * (energy[i] || 0) + 0.27 * dN[i] + 0.18 * bN[i]);
+  for (let i = 0; i < n; i++) { let s = 0, c = 0; for (let k = i - 3; k <= i; k++) if (k >= 0) { s += raw[k]; c++; } tension[i] = s / c; }
+  // Treffer für einen Bildakzent: Becken oder Pegelsprung auf einem kräftigen Anschlag
+  const cand = [];
+  for (let i = 1; i < n; i++) {
+    const v = accent[i] * (0.5 + 0.5 * Math.max(crash[i], Math.min(1, (step[i] - 1.15) / 0.8)));
+    if (accent[i] > 0.55 && (crash[i] > 0.35 || step[i] > 1.45)) cand.push({ i, v });
+  }
+  cand.sort((a, b) => b.v - a.v);
+  const taken = [];
+  for (const c of cand) if (!taken.some((x) => Math.abs(x.i - c.i) < 8)) taken.push(c);
+  const impacts = taken.slice(0, Math.max(2, Math.round(n / 24))).sort((a, b) => a.i - b.i).map((c) => ({ t: beats[c.i], v: +c.v.toFixed(2), crash: crash[c.i] > 0.35 }));
+  return { accent, impacts, tension };
+}
+
+/**
+ * Anstiege der Spannung vor einem Einsatz (Refrain, Drop oder ein deutlich kräftigerer Teil): nur wo die Spannung über
+ * mindestens zwei Takte stetig steigt, beschleunigt der Schnitt – ein „Build“, der flach bleibt, wird nicht künstlich
+ * gehetzt. Eine kurze Stille direkt vor dem Einsatz (Atempause) bleibt außen vor und wird gemeldet (gap).
+ */
+function songRises(beats, tension, sections) {
+  const n = beats.length, out = [];
+  if (!n || !tension || tension.length !== n) return out;
+  const idx = (t) => { let lo = 0, hi = n - 1; while (lo < hi) { const m = (lo + hi) >> 1; if (beats[m] < t) lo = m + 1; else hi = m; } if (lo > 0 && Math.abs(beats[lo - 1] - t) < Math.abs(beats[lo] - t)) lo--; return lo; };
+  const mean = (a, b) => { let s = 0, c = 0; for (let k = Math.max(0, a); k < Math.min(n, b); k++) { s += tension[k]; c++; } return c ? s / c : 0; };
+  for (let si = 1; si < (sections || []).length; si++) {
+    const sec = sections[si], prev = sections[si - 1];
+    const E = idx(sec.start);
+    if (E < 9 || E > n - 2) continue;
+    const after = mean(E, E + 4);
+    const strong = sec.label === 'drop' || sec.label === 'chorus' || after > mean(E - 8, E) + 0.12;
+    if (!strong || prev.label === 'drop' || prev.label === 'chorus') continue;
+    // Atempause: die letzten ein, zwei Schläge deutlich leiser als davor
+    let g = 0;
+    while (g < 2 && tension[E - 1 - g] < tension[E - 3 - g] * 0.7) g++;
+    const e = E - 1 - g;
+    let best = null;
+    for (const L of [32, 24, 16, 8]) {
+      const a = Math.max(0, idx(prev.start), e - L);
+      if (e - a < 7) continue;
+      let sx = 0, sy = 0, sxx = 0, sxy = 0, syy = 0;
+      const m = e - a + 1;
+      for (let k = a; k <= e; k++) { const x = k - a, y = tension[k]; sx += x; sy += y; sxx += x * x; sxy += x * y; syy += y * y; }
+      const cov = sxy - (sx * sy) / m, vx = sxx - (sx * sx) / m, vy = syy - (sy * sy) / m;
+      const slope = cov / Math.max(1e-9, vx), r2 = vy > 1e-9 ? (cov * cov) / (vx * vy) : 0;
+      const gain = slope * (m - 1);
+      if (gain > 0.14 && r2 > 0.5) { best = { a, gain, r2 }; break; }
+    }
+    if (!best) continue;
+    out.push({ start: beats[best.a], end: beats[E], gain: +best.gain.toFixed(2), r2: +best.r2.toFixed(2), ...(g ? { gap: beats[E - g] } : {}) });
+  }
+  return out;
 }
 
 /**

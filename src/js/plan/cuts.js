@@ -29,6 +29,22 @@ function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0
   const beatIdx = (t) => { let lo = 0, hi = an.beats.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (an.beats[m] <= t) lo = m; else hi = m - 1; } return lo; };
   for (const kt of an.kicks || []) { const b = an.beats[beatIdx(kt + 0.02)]; if (b != null && Math.abs(b - kt) < 0.03) add(b, 1.5); }
   for (const vt of an.vocalOn || []) add(vt, 4);
+  // Akzent-Hierarchie: harte Schläge (Becken, Einsatz nach Leiserem, betonte Snare) ziehen den Schnitt an –
+  // ein Schnitt auf einem schwachen Schlag wirkt beliebig, einer auf dem Treffer wie gewollt
+  const acc = an.accent;
+  // (in ruhigen Teilen zählt ein Akzent nur halb: dort sollen die Bilder stehen dürfen)
+  const accW = (t) => (isCalmLabel(sectionAt(an, t + 0.01).label) ? 0.5 : 1);
+  if (acc && acc.length === an.beats.length) for (let i = 0; i < acc.length; i++) if (acc[i] >= 0.6) add(an.beats[i], 1 + 4 * (acc[i] - 0.5) * accW(an.beats[i]));
+  for (const im of an.impacts || []) add(im.t, 3 + 3 * im.v * accW(im.t));
+  // im Anstieg verdichtet sich das Raster wie in der Musik: erst halbe Takte, zum Schluss jeder Schlag
+  for (const r of an.rises || []) {
+    an.beats.forEach((bt, i) => {
+      if (bt <= r.start || bt >= r.end - 0.02 || (r.gap != null && bt > r.gap - 0.02)) return;
+      const prog = (bt - r.start) / Math.max(0.1, r.end - r.start), half = barSet.has(Math.round((bt - beatDur * 2) * 1000)) || barSet.has(Math.round((bt + beatDur * 2) * 1000));
+      if (prog > 0.45 && half) add(bt, 3);
+      else if (prog > 0.72) add(bt, 2.5);
+    });
+  }
   // Gesangszeilen: am Ende einer Zeile ist ein guter Schnittpunkt (auf dem Schlag danach)
   const lines = an.vocalLines || [];
   const snapB = (t) => { const b = an.beats[beatIdx(t + beatDur * 0.3)]; return b != null && Math.abs(b - t) < beatDur * 0.6 ? b : null; };
@@ -43,6 +59,7 @@ function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0
   // mitten in einer Gesangszeile (nicht an ihrem Anfang oder Ende) schneidet ein Schnitt ins Wort
   for (const p of pts) {
     const abs = win.start + p.t;
+    if (!p.forced && (an.rises || []).some((r) => r.gap != null && abs > r.gap - 0.02 && abs < r.end - 0.02)) p.gap = true;
     // (auf einer Eins darf geschnitten werden – dort atmet auch der Gesang meist; zwischen den Zählzeiten nicht)
     if (!p.forced && !barSet.has(Math.round(abs * 1000)) && lines.some(([a, e]) => abs > a + beatDur * 0.4 && abs < e - beatDur * 0.3)) p.inLine = true;
   }
@@ -69,7 +86,16 @@ function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0
       let h = (vary ^ Math.imul(ph + 1, 2654435761)) >>> 0; h = Math.imul(h ^ (h >>> 15), 2246822519) >>> 0;
       v *= 0.75 + ((h >>> 8) / 16777216) * 0.55;
     }
-    if (sec.label === 'build') {
+    // Spannungskurve: nur wo der Song wirklich steigt (gemessen), wird der Schnitt dichter – im Maß des Anstiegs.
+    // Ein „Build“, der flach bleibt, behält seine Länge; ältere Analysen ohne Messung folgen dem Abschnitt.
+    if (an.rises) {
+      const r = an.rises.find((x) => abs >= x.start - 0.01 && abs < x.end);
+      if (r) {
+        const prog = Math.max(0, Math.min(1, (abs - r.start) / Math.max(0.1, r.end - r.start)));
+        const k = Math.min(1, r.gain / 0.3);
+        v *= 1 + 0.3 * k - prog ** 1.1 * 1.05 * k;
+      }
+    } else if (sec.label === 'build') {
       const prog = Math.max(0, Math.min(1, (abs - sec.start) / Math.max(0.1, sec.end - sec.start)));
       v *= 1.4 - prog * 0.9;
     }
@@ -96,6 +122,8 @@ function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0
       let c = 4 * ((len - g) / g) ** 2 - 0.32 * pts[j].w * Math.min(1, len / g);
       // mitten in einer Gesangszeile: in ruhigen Teilen deutlich teurer (dort hört man jedes Wort), im Refrain/Drop
       // darf der Schnitt auf dem Schlag bleiben, wenn das Tempo es verlangt
+      // Atempause vor dem Einsatz: das Bild steht durch die Stille bis auf den Einsatz
+      if (pts[j].gap) c += 3;
       if (pts[j].inLine) { const lj = sectionAt(an, win.start + pts[j].t + 0.01).label; c += lj === 'drop' || lj === 'chorus' || lj === 'build' ? 0.8 : 2; }
       // Songdynamik: ruhige Teile (Intro, Strophe, Break, Outro) behalten auch bei viel Material längere Einstellungen
       const lab = sectionAt(an, win.start + pts[i].t + 0.01).label;

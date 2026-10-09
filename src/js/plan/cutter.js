@@ -147,3 +147,110 @@ function separateTwins(clips, ctx) {
   }
   return fixedN;
 }
+
+/**
+ * Blickführung über den Schnitt (eye trace): Wo das Auge am Ende einer Einstellung hinschaut (Blickpunkt des Motivs im
+ * Ausgabebild), dort soll das nächste Bild seinen Blickpunkt haben – dann merkt man den Schnitt kaum. Verschoben wird
+ * die nächste Fahrt: erst als Ganzes ein Stück (Tempo bleibt, das Motiv bleibt am Ende gut im Bild), dann nur ihr
+ * Anfang, solange ihr Tempo um höchstens ein Drittel abweicht. Gilt für harte Schnitte und kurze Blenden zwischen zwei bildfüllenden
+ * Fotos; Match-Cuts, gerahmte Bilder, gedrehte Horizonte und Stil-Mittel bleiben, wie sie sind.
+ * Liefert { moved, before, after, possible } (mittlerer Abstand der Blickpunkte vorher/nachher/bestenfalls, Anteil der
+ * Bildbreite; der Spielraum hängt davon ab, wie viel Bild über den Ausschnitt hinausreicht).
+ */
+function eyeTrace(clips, { media, outAspect }) {
+  const plain = (c) => c && c.motion && !c.contain && !c.matchCut && !(c.split || c.grid || c.burst || c.rush || c.flash || c.stack || c.strip || c.miniRew || c.pre || c.reveal || c.revealHit || c.leader || c.flightAnim || c.loop || c.recap) && media[c.mediaIndex] && media[c.mediaIndex].kind === 'image';
+  const geo = (m, e) => {
+    const srcA = m.w && m.h ? m.w / m.h : outAspect;
+    const s = Math.max(1, e.s || 1);
+    const fw = (srcA > outAspect ? outAspect / srcA : 1) / s, fh = (srcA > outAspect ? 1 : srcA / outAspect) / s;
+    return { fw, fh };
+  };
+  // Blickpunkt des Motivs im Ausgabebild (0–1) bei Fahrtzustand e
+  const eyeAt = (m, e) => {
+    const f = m.focus || [0.5, 0.45], { fw, fh } = geo(m, e);
+    const cx = 0.5 + ((e.x || 0) * (1 - fw)) / 2, cy = 0.5 + ((e.y || 0) * (1 - fh)) / 2;
+    return [(f[0] - (cx - fw / 2)) / fw, (f[1] - (cy - fh / 2)) / fh];
+  };
+  // Fahrtposition, die den Blickpunkt an die Stelle u (Ausgabebild) bringt
+  const posFor = (m, e, u, k) => {
+    const f = (m.focus || [0.5, 0.45])[k], g = geo(m, e), fs = k ? g.fh : g.fw;
+    if (1 - fs < 0.02) return e[k ? 'y' : 'x'] || 0;
+    const c = f - (u - 0.5) * fs;
+    return Math.max(-1, Math.min(1, ((c - 0.5) * 2) / (1 - fs)));
+  };
+  const dist = (a, b) => Math.hypot(a[0] - b[0], (a[1] - b[1]) / Math.max(0.5, outAspect));
+  let moved = 0, sb = 0, sa = 0, sp = 0, n = 0;
+  for (let i = 1; i < clips.length; i++) {
+    const A = clips[i - 1], B = clips[i];
+    if (!plain(A) || !plain(B)) continue;
+    const tr = B.tin;
+    if (tr && tr.type !== TR.CUT && tr.type !== TR.DISSOLVE && tr.type !== TR.LUMA) continue;
+    const mA = media[A.mediaIndex], mB = media[B.mediaIndex];
+    const eA = eyeAt(mA, A.motion.to), from = B.motion.from;
+    // (gerade gerichteter Horizont: der Spielraum ist schon verbraucht; die feine Neigung der Fahrten zählt nicht)
+    if (Math.abs(from.r || 0) > 0.02 || Math.abs(B.motion.to.r || 0) > 0.02) continue;
+    const d0 = dist(eA, eyeAt(mB, from));
+    n++; sb += d0;
+    // ein kleiner Versatz bleibt (das Auge springt gern ein Stück), Ziel ist der Blickpunkt nahe der Mitte des Bilds
+    const target = [Math.max(0.2, Math.min(0.8, eA[0])), Math.max(0.2, Math.min(0.8, eA[1]))];
+    const want = { x: posFor(mB, from, target[0], 0), y: posFor(mB, from, target[1], 1) };
+    // (bestenfalls erreichbar, ohne Rücksicht auf Tempo und Ausschnitt – Maßstab für die Prüfung)
+    sp += Math.min(d0, dist(eA, eyeAt(mB, { ...from, ...want })));
+    const dur = Math.max(0.25, B.visEnd - B.visStart);
+    const sp0 = motionSpeed(B.motion, mB, outAspect, dur);
+    const to = B.motion.to;
+    // 1. die ganze Fahrt ein Stück versetzen (Tempo bleibt gleich): knapp ein Viertel des Spielraums, und das Motiv
+    //    bleibt am Ende gut im Bild
+    const cl = (v) => Math.max(-1, Math.min(1, v));
+    let dx = Math.max(-0.45, Math.min(0.45, want.x - (from.x || 0))), dy = Math.max(-0.45, Math.min(0.45, want.y - (from.y || 0)));
+    for (let k = 0; k < 4; k++) {
+      const e = eyeAt(mB, { ...to, x: cl((to.x || 0) + dx), y: cl((to.y || 0) + dy) });
+      if (e[0] > 0.15 && e[0] < 0.85 && e[1] > 0.15 && e[1] < 0.85) break;
+      dx *= 0.6; dy *= 0.6;
+    }
+    const f1 = { ...from, x: cl((from.x || 0) + dx), y: cl((from.y || 0) + dy) }, t1 = { ...to, x: cl((to.x || 0) + dx), y: cl((to.y || 0) + dy) };
+    // 2. der Rest nur am Anfang, solange das Tempo innerhalb von ±⅓ bleibt
+    let best = null;
+    for (const k of [1, 0.75, 0.5, 0.3, 0]) {
+      const cand = { ...f1, x: f1.x + (want.x - f1.x) * k, y: f1.y + (want.y - f1.y) * k };
+      const sp = motionSpeed({ from: cand, to: t1 }, mB, outAspect, dur);
+      if (sp0 > 0.001 ? sp <= sp0 * 1.33 && sp >= sp0 * 0.67 : sp < 0.02) { best = cand; break; }
+    }
+    if (best && dist(eA, eyeAt(mB, best)) < d0 - 0.03) { B.motion.from = best; B.motion.to = t1; moved++; }
+    sa += dist(eA, eyeAt(mB, B.motion.from));
+  }
+  return { moved, before: n ? sb / n : 0, after: n ? sa / n : 0, possible: n ? sp / n : 0 };
+}
+
+/**
+ * Refrain-Reime (Variante, `settings.reim = 'on'`): Jeder weitere Refrain/Drop beginnt mit Bildern, die den ersten Bildern
+ * des ersten Refrains/Drops ähneln – gleicher Aufbau, gleiche Einstellungsgröße, verwandte Farbe, aber nie dasselbe Motiv –
+ * und die Kamera wiederholt deren Bewegung (c.rhyme = Index des Vorbilds, die Fahrt übernimmt dessen Richtung).
+ * Getauscht wird nur innerhalb desselben Songteils: jede Aufnahme bleibt an einer Stelle mit gleicher Energie.
+ * Liefert die Zahl der gereimten Einstellungen.
+ */
+function refrainRhyme(clips, { byId, ovOf = () => null, moved = new Set() }) {
+  const special = (c) => c.split || c.grid || c.burst || c.rush || c.flash || c.stack || c.strip || c.miniRew || c.pre || c.reveal || c.leader || c.loop || c.vid || c.replay || c.echo;
+  const img = (c) => { const m = byId.get(c.mediaId); return m && m.kind === 'image' ? m : null; };
+  const free = (c) => c && !special(c) && img(c) && !(ovOf(c) && ovOf(c).mediaId) && !moved.has(c.mediaId) && !c.usMoment;
+  const peaks = clips.filter((c) => c.sectionChange && (c.label === 'drop' || c.label === 'chorus')).map((c) => c.i);
+  if (peaks.length < 2) return 0;
+  const sectionOf = (k) => { const out = []; for (let i = k; i < clips.length && (i === k || !clips[i].sectionChange); i++) out.push(clips[i]); return out; };
+  const ref = sectionOf(peaks[0]).filter((c) => !special(c) && img(c)).slice(0, 3);
+  if (!ref.length) return 0;
+  const colorD = (a, b) => (a.avg && b.avg ? Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) : 90);
+  // Reim: ähnlicher Aufbau und gleiche Größe – ein Beinahe-Doppel wäre eine Wiederholung, kein Reim
+  const rhyme = (a, b) => (sameMotif(a, b) ? -1 : 0.55 * layoutSim(a.layout, b.layout) + 0.25 * (shotSize(a) === shotSize(b) ? 1 : 0) + 0.2 * (1 - Math.min(1, colorD(a, b) / 160)));
+  let n = 0;
+  for (const p of peaks.slice(1)) {
+    const sec = sectionOf(p).filter(free);
+    for (let j = 0; j < ref.length && j < sec.length; j++) {
+      const r = img(ref[j]), slot = sec[j];
+      let best = null, bv = rhyme(r, img(slot)) + 0.1;
+      for (let q = j + 1; q < sec.length; q++) { const v = rhyme(r, img(sec[q])); if (v > bv) { bv = v; best = sec[q]; } }
+      if (best) [slot.mediaId, best.mediaId] = [best.mediaId, slot.mediaId];
+      if (rhyme(r, img(slot)) > 0.45) { slot.rhyme = ref[j].i; n++; }
+    }
+  }
+  return n;
+}

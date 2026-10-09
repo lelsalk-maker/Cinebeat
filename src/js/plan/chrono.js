@@ -38,7 +38,9 @@ function layoutChrono(ctx, segs0, queue, bias) {
   const nNorm = Math.max(1, sg.slice(startI).filter(normal).length);
   const avgLen = normTime / nNorm;
   const vids = q.filter((m) => m.kind === 'video');
-  const vWant = vids.reduce((a, v) => a + videoPlay(v, fr.vmax), 0);
+  const vt = ctx.vt || 1;
+  const playT = (v) => Math.min(vt > 1 ? videoSpan(v) * 0.96 : Infinity, videoPlay(v, fr.vmax) * vt);
+  const vWant = vids.reduce((a, v) => a + playT(v), 0);
   const nImg = q.filter((m) => m.kind === 'image').length;
   const specialCap = sg.reduce((a, g) => a + (g.burst && !g.flash ? 1 : g.stackSeg ? 4 : g.gridMid ? g.gridMid.n * g.gridMid.n - 1 : 0), 0);
   // Zeitbedarf der Fotos nach fester Richtlänge (nicht nach der aktuellen Schnittlänge – sonst würden Videos
@@ -50,7 +52,8 @@ function layoutChrono(ctx, segs0, queue, bias) {
   const vBudget = Math.max(vids.reduce((a, v) => a + minW(v), 0) * (allOn ? 0.6 : 1), normTime - imgNeedT, normTime * (allOn ? 0.15 : 0.6));
   const shrink = vWant > 0 ? Math.min(1, vBudget / vWant) : 1;
   // (vf < 1: die Suche kürzt die Videos, weil sonst Fotos fehlen würden – nie unter ihre Mindestzeit)
-  const want = (v) => userVideoLen(v) || Math.max(minW(v), videoPlay(v, fr.vmax) * shrink * (ctx.vf || 1));
+  // (ctx.vt: deine Videolängen aus früheren Korrekturen – länger nur, so weit das Video reicht und die Zeit es hergibt)
+  const want = (v) => userVideoLen(v) || Math.max(minW(v), playT(v) * shrink * (ctx.vf || 1));
   // gemeinsam laufende Videos (2–3 im Split-Screen), wenn die Zeit knapp ist
   const vSplitOK = s.split !== 'off' && (shrink < 0.8 || level >= 2);
   let sinceSplit = 9;

@@ -31,6 +31,8 @@ uniform vec2 uOffA;
 uniform vec2 uOffB;
 uniform vec4 uCorrA;    // Farbangleichung je Aufnahme: Kanal-Verstärkung, Gamma
 uniform vec4 uCorrB;
+uniform vec2 uLvA;      // Tonwerte je Aufnahme: Schwarz- und Weißpunkt
+uniform vec2 uLvB;
 uniform vec2 uBand;     // Bildbereich: oben, Höhe (Ausgabe-UV)
 uniform float uHasA;
 uniform float uHasB;
@@ -203,9 +205,9 @@ vec2 srcCoordA(vec2 uv) {
   return uXfA.zw + p * uXfA.xy;
 }
 
-vec3 corrApply(vec3 c, vec4 k) { return pow(max(c, vec3(0.0)), vec3(k.w)) * k.rgb; }
-vec3 layerA(vec2 uv) { return corrApply(layer(uTexA, uXfA, uBoxA, uBlurA, uGeoA, uOffA, uv, uParA, uFocA, uHor.x), uCorrA); }
-vec3 layerB(vec2 uv) { return corrApply(layer(uTexB, uXfB, uBoxB, uBlurB, uGeoB, uOffB, uv, uParB, uFocB, uHor.y), uCorrB); }
+vec3 corrApply(vec3 c, vec4 k, vec2 lv) { c = clamp((c - lv.x) / max(0.5, lv.y - lv.x), 0.0, 1.0); return pow(c, vec3(k.w)) * k.rgb; }
+vec3 layerA(vec2 uv) { return corrApply(layer(uTexA, uXfA, uBoxA, uBlurA, uGeoA, uOffA, uv, uParA, uFocA, uHor.x), uCorrA, uLvA); }
+vec3 layerB(vec2 uv) { return corrApply(layer(uTexB, uXfB, uBoxB, uBlurB, uGeoB, uOffB, uv, uParB, uFocB, uHor.y), uCorrB, uLvB); }
 
 vec3 leakColor(vec2 uv, float t) {
   vec2 c1 = vec2(0.15 + 0.7 * fract(t * 0.07), 0.3 + 0.2 * sin(t * 0.6));
@@ -503,6 +505,8 @@ class Renderer {
     const cA = L(f.A, 'corr', [1, 1, 1, 1]), cB = L(f.B, 'corr', [1, 1, 1, 1]);
     gl.uniform4f(u.uCorrA, cA[0], cA[1], cA[2], cA[3] || 1);
     gl.uniform4f(u.uCorrB, cB[0], cB[1], cB[2], cB[3] || 1);
+    gl.uniform2f(u.uLvA, cA[4] || 0, cA[5] || 1);
+    gl.uniform2f(u.uLvB, cB[4] || 0, cB[5] || 1);
     gl.uniform2fv(u.uFocA, L(f.A, 'foc', [0.5, 0.45]));
     gl.uniform2fv(u.uFocB, L(f.B, 'foc', [0.5, 0.45]));
     gl.uniform2fv(u.uParA, L(f.A, 'par', [0, 0]));

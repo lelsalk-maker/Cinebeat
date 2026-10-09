@@ -16,7 +16,10 @@ function songEnergyAt(an, win) {
     while (lo < hi) { const m = (lo + hi + 1) >> 1; if (beats[m] <= abs) lo = m; else hi = m - 1; }
     let s = 0, n = 0;
     for (let k = Math.max(0, lo - 2); k <= Math.min(beats.length - 1, lo + 2); k++) if (en[k] != null) { s += en[k]; n++; }
-    return 0.65 * lab + 0.35 * (n ? s / n : lab);
+    const e = 0.65 * lab + 0.35 * (n ? s / n : lab);
+    // im Anstieg vor dem Einsatz steigen auch die Bilder – die stärksten bleiben für den Einsatz selbst
+    const r = (an.rises || []).find((x) => abs >= x.start && abs < x.end);
+    return r ? Math.min(e, 0.4 + 0.3 * Math.max(0, Math.min(1, (abs - r.start) / Math.max(0.1, r.end - r.start)))) : e;
   };
 }
 
@@ -51,7 +54,8 @@ function songQueue(list, { an, win, segs, startAt = 0, want, us = true, ramp = f
   const eAt = songEnergyAt(an, win);
   const slots = segs.filter((g) => g.end > startAt + 0.05 && !g.pre && !g.leader && !g.reveal && !g.rush && !g.gridSeg && !g.flash);
   if (!slots.length) return list.slice();
-  const sl = slots.map((g) => ({ start: g.start, end: g.end, e: eAt((g.start + g.end) / 2), calm: isCalmLabel(sectionAt(an, win.start + (g.start + g.end) / 2).label) }));
+  const secIdx = (t) => (an.sections || []).findIndex((x) => win.start + t >= x.start && win.start + t < x.end);
+  const sl = slots.map((g) => ({ start: g.start, end: g.end, e: eAt((g.start + g.end) / 2), calm: isCalmLabel(sectionAt(an, win.start + (g.start + g.end) / 2).label), sec: secIdx((g.start + g.end) / 2), rise: (an.rises || []).some((r) => win.start + (g.start + g.end) / 2 >= r.start && win.start + (g.start + g.end) / 2 < r.end) }));
   // Ränge: Energie der Plätze und der Fotos auf 0…1 verteilt
   const rankMap = (vals) => { const idx = vals.map((v, i) => [v, i]).sort((a, b) => a[0] - b[0]); const r = new Array(vals.length); idx.forEach(([, i], k) => { r[i] = vals.length > 1 ? k / (vals.length - 1) : 0.5; }); return r; };
   const slotQ = rankMap(sl.map((x) => x.e));
@@ -83,6 +87,8 @@ function songQueue(list, { an, win, segs, startAt = 0, want, us = true, ramp = f
     const u = us ? usScore(m) : 0;
     // eure Bilder: in die ruhigen Teile und auf die langen Plätze
     v += u * (x.calm ? 0.5 : -0.6) + u * 0.6 * Math.max(-1, Math.min(1, (x.end - x.start - avgLen) / avgLen));
+    // im Anstieg vor dem Einsatz nicht die stärksten Bilder verbrauchen – sie gehören auf den Einsatz
+    if (x.rise) v -= 0.8 * Math.max(0, imgQ.get(m.id) - 0.7);
     if (k === peakK) v += 0.8 * (strong(m) - 0.5);
     if (k >= lastK) v += 0.5 * (strong(m) - 0.5) + 0.3 * u;
     return v;
@@ -153,6 +159,8 @@ function songQueue(list, { an, win, segs, startAt = 0, want, us = true, ramp = f
         else { v += fitImg(m, Math.round(kk)); kk += step; }
       }
       v = v / mo.length + 0.15 * Math.min(1, mo.length - 1) - flowCost(prev, mo[0]);
+      // eine Szene bleibt in ihrem Songteil: über einen Abschnittswechsel hinweg zerfiele sie
+      if (mo.length > 1 && sl[Math.min(lastK, Math.round(k))].sec !== sl[Math.min(lastK, Math.round(kk - step))].sec) v -= 0.2;
       if (v > bv) { bv = v; best = r; }
     }
     const mo = rest.splice(best, 1)[0];

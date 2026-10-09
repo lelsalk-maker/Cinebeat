@@ -464,7 +464,9 @@ function planOnce(opts) {
     const hk = intro === 'split' ? null : (settings.hookId && all0.find((m) => m.id === settings.hookId)) || hkVid || (s.recut && hkCand.length ? hkCand[s.recut % hkCand.length] : earlyImg[0]) || all0[0] || null;
     // innerhalb eines Moments (wenige Minuten) darf ein Bild aus dem vorigen hervorgehen (Match-Cuts, Farbfluss);
     // „Zum Lied“: die Momente stehen dort, wo sie zur Songstelle passen
-    const vWant = (v) => userVideoLen(v) || Math.max(Math.min(videoSpan(v) * 0.96, Math.max(2.4, barDur)), videoPlay(v, fr.vmax) * (opts._vf || 1));
+    // (deine Videolängen aus früheren Korrekturen ziehen die automatische Länge sanft mit)
+    const vTaste = opts.taste && opts.taste.vlenF ? Math.max(0.75, Math.min(1.4, opts.taste.vlenF)) : 1;
+    const vWant = (v) => userVideoLen(v) || Math.max(Math.min(videoSpan(v) * 0.96, Math.max(2.4, barDur)), Math.min(vTaste > 1 ? videoSpan(v) * 0.96 : Infinity, videoPlay(v, fr.vmax) * (opts._vf || 1) * vTaste));
     const nPreSeg = segs.filter((g) => g.pre || g.leader || g.reveal || g.rush || g.gridSeg).length;
     const hookEnd = hk && segs[nPreSeg] ? segs[nPreSeg].end : 0;
     const flowed = lied
@@ -473,7 +475,7 @@ function planOnce(opts) {
     // eigene Reihenfolge aus der Zeitleiste geht vor
     let queue = applyMoves(applyOrder(hk ? [hk, ...flowed] : flowed, overrides.order), overrides.moves);
     const pinned = new Set((overrides.moves || []).flatMap((x) => [x.id, x.before]).concat(overrides.order || []).filter(Boolean));
-    const chronoCtx = { pinned, s, an, win, fr, level, allOn, intro, outro, rush, reveal, leader, gridPlan, special, splitFit, splitN, barDur, beatDur, isPeakSec, scenes: lied ? new Set() : sceneStarts(all0), vf: opts._vf || 1 };
+    const chronoCtx = { pinned, s, an, win, fr, level, allOn, intro, outro, rush, reveal, leader, gridPlan, special, splitFit, splitN, barDur, beatDur, isPeakSec, scenes: lied ? new Set() : sceneStarts(all0), vf: opts._vf || 1, vt: vTaste };
     let res = layoutChrono(chronoCtx, segs, queue, 0);
     // alle Aufnahmen: fehlen am Ende noch welche, früher etwas mehr zusammenfassen (Split-Screens)
     for (let k = 0; k < 2 && allOn && res.dropped.length; k++) {
@@ -508,7 +510,7 @@ function planOnce(opts) {
     // gebliebene übernimmt den Platz der schwächsten aus demselben Tagesabschnitt; Favoriten und das Startbild sind
     // „sicher im Film“ und bekommen notfalls einen Platz aus einem anderen Abschnitt (den zeitlich nächsten).
     if (res.dropped.length) {
-      const keepS = (m) => (m.score || 0) + (s.us !== 'off' ? 0.15 * usScore(m) : 0) + (m.fav ? 10 : 0) + recutJit(m);
+      const keepS = (m) => (m.score || 0) + (s.us !== 'off' ? 0.15 * usScore(m) : 0) + (m.fav ? 10 : 0) + recutJit(m) + tasteBonus(opts.taste, m);
       const strict = s.order === 'streng';
       const slots = [];
       for (const g of res.segs) {
@@ -544,7 +546,7 @@ function planOnce(opts) {
     // „Beste Auswahl“: passt nicht alles, fallen die schwächsten Aufnahmen weg (nie das Startbild oder Favoriten)
     for (let k = 0; k < 3 && !allOn && res.dropped.length; k++) {
       // Wir-Vorrang: Aufnahmen von euch fallen zuletzt weg
-      const keep = (m) => (m.score || 0) + (s.us !== 'off' ? 0.15 * usScore(m) : 0) + recutJit(m);
+      const keep = (m) => (m.score || 0) + (s.us !== 'off' ? 0.15 * usScore(m) : 0) + recutJit(m) + tasteBonus(opts.taste, m);
       const weak = queue.filter((m) => m !== hk && !m.fav && m.kind === 'image').sort((a, b) => keep(a) - keep(b)).slice(0, res.dropped.length);
       queue = queue.filter((m) => !weak.includes(m));
       res = layoutChrono(chronoCtx, segs, queue, 0);
@@ -777,7 +779,7 @@ function planOnce(opts) {
       stackC.stack.reserved = reserved.map((m) => m.id);
     }
     const sv = songValence(an);
-    const chosen = selectMedia(pool.filter((m) => !reserved.includes(m)), clips.filter((c) => !c.flash).length - splitClips.length + 2, mustIds, (m) => moodFit(m, sv));
+    const chosen = selectMedia(pool.filter((m) => !reserved.includes(m)), clips.filter((c) => !c.flash).length - splitClips.length + 2, mustIds, (m) => moodFit(m, sv) + tasteBonus(opts.taste, m));
     // automatisches Startbild: kein Video, das ohnehin einen eigenen Platz hat (es liefe sonst doppelt oder der Platz bliebe leer)
     const hookCand = chosen.filter((m) => !clips.some((c) => c.vid === m.id));
     hook = settings.hookId && byId.get(settings.hookId) ? byId.get(settings.hookId) : (hookCand.length ? hookCand : chosen).slice().sort((a, b) => (b.score || 0) - (a.score || 0))[0] || null;
@@ -1198,6 +1200,11 @@ function planOnce(opts) {
     }
   }
 
+  // Refrain-Reime (Variante): jeder weitere Refrain beginnt mit Bildern, die dem ersten Refrain ähneln
+  if (!flight && s.reim === 'on') {
+    const rr = refrainRhyme(clips, { byId, ovOf, moved: userMoved });
+    if (rr) dir.notes.push(`Refrain-Reim: ${rr} ${rr === 1 ? 'Einstellung greift' : 'Einstellungen greifen'} im späteren Refrain Aufbau, Größe und Kamerabewegung der ersten Refrain-Bilder auf – der Film erinnert sich an sich selbst.`);
+  }
   // Nie zwei gleiche Motive direkt hintereinander (Bildverständnis: Motiv-Fingerabdruck)
   if (!flight) {
     const tw = separateTwins(clips, { byId, ovOf, moved: userMoved, blocks: lied ? 'moment' : byTime });
@@ -1326,7 +1333,7 @@ function planOnce(opts) {
   };
 
   // Quellen, Tempo, Bewegung, Farbangleichung
-  const voice = [];
+  const voice = [], autoVoice = [];
   const videoCursor = new Map();
   let prevDir = null;
   // Kameratempo aus dem Song: Energie je Beat, über gut einen Takt geglättet und auf den Film normiert.
@@ -1402,7 +1409,14 @@ function planOnce(opts) {
       const vd = Math.max(0.1, videoSpan(m) || visDur);
       let rate = 1;
       const withSound = m.sound > 0 && m.audio;
+      // Originalton-Moment (automatisch, nur wenn es passt): ein klares Lachen, Jubel oder ein kurzer Ausruf an einer
+      // Songstelle mit Platz – das Video läuft dafür in Echtzeit, die Musik tritt kurz zurück
+      let autoV = null;
+      if (!withSound && s.otone !== 'off' && !(m.sound < 0) && !o.speed && o.srcOffset == null && !c.rush && !c.pre && !c.leader && !c.split && !c.burst && !c.flash && autoVoice.length < (s.format !== '9:16' ? 4 : 2) && !autoVoice.some((x) => Math.abs(x.t0 - c.visStart) < 8)) {
+        autoV = pickVoiceMoment(m, c, { an, win, tIn: m.trim && m.trim[1] > m.trim[0] ? Math.max(0, m.trim[0]) : 0, vd: Math.max(0.1, videoSpan(m) || visDur), visDur, D });
+      }
       if (o.speed) rate = o.speed;
+      else if (autoV) rate = 1;
       else if (withSound) rate = 1; // Originalton: kein Zeitlupen-Effekt, damit Ton und Bild zusammenpassen
       else if (c.vid) rate = vd >= visDur ? 1 : Math.max(0.8, vd / visDur); // eigener Platz: in Echtzeit, fast ganz
       else if (c.label === 'break' && vd >= visDur * 0.5) rate = 0.5;
@@ -1423,7 +1437,8 @@ function planOnce(opts) {
         if (vd >= need + 0.05) { c.rp = pts; rate = 1; needS = need; }
       }
       let off;
-      if (o.srcOffset != null) off = o.srcOffset - tIn;
+      if (autoV) { off = autoV.off; c.rp = null; }
+      else if (o.srcOffset != null) off = o.srcOffset - tIn;
       else if (c.vid) {
         // läuft (fast) ganz: Anfang so, dass der beste Moment sicher drin ist – und genau auf einem starken Schlag liegt
         const hl = (m.highlights || []).map((h) => h.t - tIn).filter((t) => t >= 0 && t <= vd);
@@ -1450,6 +1465,10 @@ function planOnce(opts) {
       c.rate = rate;
       // kürzer als der Platz (auch nach leichter Verlangsamung): das letzte Bild bleibt stehen statt schwarz zu werden
       if (c.vid && vd / rate < visDur - 0.05) c.freezeAt = c.visStart + vd / rate - 0.04;
+      if (autoV) {
+        voice.push({ mediaIndex: media.indexOf(m), mediaId: m.id, t0: Math.max(0, autoV.t0), t1: Math.min(D, autoV.t1), src: autoV.src, gain: autoV.art === 'jubel' ? 0.8 : 0.9, auto: autoV.art });
+        autoVoice.push(autoV);
+      }
       if (withSound && Math.abs(rate - 1) < 0.01 && !c.rp) {
         const t1 = Math.min(c.freezeAt != null ? c.freezeAt : c.visEnd, c.visStart + (vd - (c.srcOffset - tIn)));
         if (t1 - c.visStart > 0.15) voice.push({ mediaIndex: media.indexOf(m), mediaId: m.id, t0: Math.max(0, c.visStart), t1: Math.min(D, t1), src: c.srcOffset + Math.max(0, -c.visStart), gain: m.sound });
@@ -1470,7 +1489,9 @@ function planOnce(opts) {
       const ag = (ovOf(c) && ovOf(c).again) || 0;
       // (die gemeinsame Zufallsfolge läuft trotzdem gleich weiter, damit sich die übrigen Einstellungen nicht ändern)
       const tempo = tempoAt((c.visStart + c.visEnd) / 2);
-      const mo0 = imageMotion(rng, m, outAspect, visDur, role, prevDir, panHint(c), tempo);
+      // Refrain-Reim: dieselbe Kamerabewegung wie das Vorbild im ersten Refrain
+      const rh = c.rhyme != null && clips[c.rhyme] ? clips[c.rhyme].dir : null;
+      const mo0 = imageMotion(rng, m, outAspect, visDur, role, prevDir, rh || panHint(c), tempo);
       let mo = mo0;
       if (ag) {
         const r2 = mulberry32(((s.seed >>> 0) ^ (c.i * 977)) >>> 0);
@@ -1580,6 +1601,13 @@ function planOnce(opts) {
     const to = c.motion.to;
     c.motion = { from: { s: 1, x: 0, y: 0 }, to: { s: Math.max(1.04, to.s || 1), x: (to.x || 0) * 0.5, y: (to.y || 0) * 0.5 } };
     c.contain = false;
+  }
+  let eye = null;
+  // Blickführung: der Blickpunkt des nächsten Bilds beginnt dort, wo das Auge am Ende des vorigen war
+  if (s.eye !== 'off') {
+    const et = eyeTrace(clips, { media, outAspect });
+    eye = et;
+    if (et.moved) dir.notes.push(`Blickführung: ${et.moved} Schnitte so gesetzt, dass das Motiv des nächsten Bilds dort beginnt, wo das Auge gerade hinschaut – die Schnitte fließen.`);
   }
   // Tempo-Abgleich: eine Fahrt, die deutlich schneller ist als beide Nachbarn, wird auf deren Tempo gebracht –
   // die Kamera wirkt wie eine durchgehende Bewegung statt wie einzelne Anläufe
@@ -2001,19 +2029,40 @@ function planOnce(opts) {
 
   // Standbild-Ende: Originalton endet mit dem Standbild
   if (last && last.freezeAt != null) for (const v of voice) if (v.t0 >= last.visStart - 0.01) v.t1 = Math.min(v.t1, last.freezeAt + 0.3);
-  if (voice.length) dir.notes.push(`Originalton an in ${new Set(voice.map((v) => v.mediaId)).size} ${new Set(voice.map((v) => v.mediaId)).size === 1 ? 'Video' : 'Videos'}: Die Musik wird dort automatisch leiser, diese Einstellungen laufen in Echtzeit.`);
+  if (autoVoice.length) {
+    const ART = { lachen: 'Lachen', jubel: 'Jubel', ruf: 'ein Ausruf' };
+    dir.notes.push(`Originalton-${autoVoice.length === 1 ? 'Moment' : 'Momente'}: ${autoVoice.map((v) => `${ART[v.art] || 'Ton'} bei ${fmtMS(Math.max(0, v.t0))}`).join(', ')} – an einer Stelle, an der der Song Platz lässt; die Musik tritt dafür kurz zurück.`);
+  }
+  const ownV = new Set(voice.filter((v) => !v.auto).map((v) => v.mediaId));
+  if (ownV.size) dir.notes.push(`Originalton an in ${ownV.size} ${ownV.size === 1 ? 'Video' : 'Videos'}: Die Musik wird dort automatisch leiser, diese Einstellungen laufen in Echtzeit.`);
 
   const firstBurst = clips.find((c) => c.burst);
   if (firstBurst) {
     if (effectsOf(s) !== 'schlicht') fx.push({ type: 'flash', start: firstBurst.start, end: firstBurst.start + 0.18, amp: 0.3 });
     if (!firstBurst.flash) dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Foto-Serie: Im ${SEC_DE[firstBurst.label] || 'Drop'} ab ${fmtMS(firstBurst.start)} wechselt jeden ${beatDur / 2 >= 0.2 ? 'halben ' : ''}Beat das Bild.`);
   }
-  // Zoom-Impulse sparsam: höchstens einer je zwei Takte (der Drop-Einsatz hat Vorrang), in ruhigen Filmen sanfter
+  // Zoom-Impulse nach der Akzent-Hierarchie des Songs: nur auf Schlägen, die wirklich treffen, so stark wie der Schlag
+  // (der Drop-Einsatz hat Vorrang), höchstens einer je zwei Takte und zwei je zehn Sekunden, in ruhigen Filmen sanfter
   let lastPunch = -1e9;
   const punchAmp = s.pace === 'ruhig' ? 0.6 : 1;
+  const fxBudget = (t) => fx.filter((f) => (f.type === 'punch' || f.type === 'flash') && !f.tap && Math.abs(f.start - t) < 5).length < 2;
   for (const c of clips) {
-    if (c.punch && effectsOf(s) !== 'schlicht' && (c.start - lastPunch >= barDur * 2 || c.sectionChange)) { fx.push({ type: 'punch', start: c.start, end: c.start + 0.45, amp: punchAmp }); lastPunch = c.start; }
+    const ac = accentAt(an, win.start + c.start);
+    if (c.punch && effectsOf(s) !== 'schlicht' && (c.sectionChange || (c.start - lastPunch >= barDur * 2 && ac >= 0.5 && fxBudget(c.start)))) { fx.push({ type: 'punch', start: c.start, end: c.start + 0.45, amp: +(punchAmp * (c.sectionChange ? 1 : 0.55 + 0.45 * ac)).toFixed(2) }); lastPunch = c.start; }
     if (c.freezeAt != null && !(outro === 'freeze' && c === last)) fx.push({ type: 'flash', start: c.freezeAt, end: c.freezeAt + 0.2, amp: 0.25 });
+  }
+  // Treffer mitten in einer Einstellung (Becken, Einsatz): ein kleiner Bildakzent, wo der Song ihn verlangt –
+  // nicht in ruhigen Teilen, nicht auf Videos mit eigener Bewegung, nie gegen das Budget
+  if (effectsOf(s) !== 'schlicht') {
+    for (const im of an.impacts || []) {
+      const t = im.t - win.start;
+      if (t < 1 || t > D - 1 || im.v < 0.6) continue;
+      const c = clips.find((x) => !x.loop && t > x.start + 0.2 && t < x.end - 0.2);
+      if (!c || (byId.get(c.mediaId) || {}).kind === 'video' || c.pre || c.reveal || c.rush || c.flash || c.burst || isCalmLabel(sectionAt(an, im.t).label)) continue;
+      if (fx.some((f) => f.type === 'punch' && Math.abs(f.start - t) < barDur * 2) || !fxBudget(t)) continue;
+      fx.push({ type: 'punch', start: t, end: t + 0.4, amp: +(punchAmp * 0.45 * im.v).toFixed(2), accent: true });
+      if (im.crash && effectsOf(s) === 'kreativ') fx.push({ type: 'flash', start: t, end: t + 0.16, amp: 0.14, accent: true });
+    }
   }
 
   if (last && last.strip) {
@@ -2163,5 +2212,6 @@ function planOnce(opts) {
     accent, chroma, colorFx, parallax: s.parallax === 'on' ? 1 : 0,
     sections: (an.sections || []).filter((x) => x.end > win.start && x.start < win.end).map((x) => ({ ...x, start: Math.max(0, x.start - win.start), end: Math.min(D, x.end - win.start) })),
     usedMedia: usedSet.size,
+    eye,
   };
 }

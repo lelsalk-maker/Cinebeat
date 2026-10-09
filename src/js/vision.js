@@ -6,7 +6,7 @@
  * ============================================================ */
 
 /** Stand der Bildanalyse: Aufnahmen mit älterem Stand werden im Hintergrund nachanalysiert. */
-const VIS_VER = 3;
+const VIS_VER = 4;
 
 const vHex2 = (v) => { const x = Math.max(0, Math.min(255, Math.round(v))); return (x < 16 ? '0' : '') + x.toString(16); };
 const vUnhex = (s) => { const o = new Uint8Array(s.length >> 1); for (let i = 0; i < o.length; i++) o[i] = parseInt(s.substr(i * 2, 2), 16); return o; };
@@ -124,6 +124,107 @@ function visionMetrics(data, g, w, h, focus, scene) {
   comp = Math.max(0, Math.min(1, comp));
 
   return { sig, calm: { d: calmD, l: calmL }, mood: [+valence.toFixed(2), +arousal.toFixed(2)], comp: +comp.toFixed(3), tilt: tilt.conf > 0.7 && Math.abs(tilt.deg) >= 0.8 && Math.abs(tilt.deg) <= 5 ? +tilt.deg.toFixed(2) : 0, detail: +detail.toFixed(2) };
+}
+
+/**
+ * Gesichter ohne Modelldatei (auf dem Bewertungsbild, 160 px): zusammenhängende Hautflächen in Gesichtsform
+ * (hochkant-oval, gut gefüllt, frei stehend), darin oben zwei dunklere Stellen links und rechts (Augen, Brauen) und
+ * glatte Haut; darüber keine Haut (Haare, Hintergrund). Sand, Holz, Wände und Arme fallen über Form, Größe, Rand und
+ * die fehlenden Augen heraus. Liefert bis zu vier Kästen [x, y, b, h] (Anteile des Bilds) – nur sichere Treffer.
+ */
+function findFaces(data, g, w, h) {
+  const n = w * h, mask = new Uint8Array(n);
+  let skinN = 0;
+  for (let i = 0; i < n; i++) {
+    const r = data[i * 4], gg = data[i * 4 + 1], b = data[i * 4 + 2];
+    const cb = 128 - 0.1687 * r - 0.3313 * gg + 0.5 * b, cr = 128 + 0.5 * r - 0.4187 * gg - 0.0813 * b, yy = 0.299 * r + 0.587 * gg + 0.114 * b;
+    if (yy > 40 && cb > 77 && cb < 127 && cr > 135 && cr < 175 && r > gg && r > b && r - Math.min(gg, b) > 12) { mask[i] = 1; skinN++; }
+  }
+  // an Helligkeitskanten trennen: ein Gesicht vor einer ähnlich farbigen Wand bleibt eine eigene Fläche
+  const cut = new Uint8Array(n);
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+    const i = y * w + x;
+    if (mask[i] && Math.abs(g[i + 1] - g[i - 1]) + Math.abs(g[i + w] - g[i - w]) > 34) cut[i] = 1;
+  }
+  for (let i = 0; i < n; i++) if (cut[i]) mask[i] = 0;
+  if (skinN < 12 || skinN > n * 0.6) return [];
+  const lab = new Int32Array(n).fill(-1), stack = new Int32Array(n);
+  const faces = [];
+  let id = 0;
+  for (let s0 = 0; s0 < n; s0++) {
+    if (!mask[s0] || lab[s0] >= 0) continue;
+    let sp = 0, area = 0, x0 = w, x1 = 0, y0 = h, y1 = 0, edge = 0;
+    stack[sp++] = s0; lab[s0] = id;
+    while (sp) {
+      const i = stack[--sp], x = i % w, y = (i / w) | 0;
+      area++;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      if (x === 0 || x === w - 1 || y === h - 1) edge++;
+      if (x > 0 && mask[i - 1] && lab[i - 1] < 0) { lab[i - 1] = id; stack[sp++] = i - 1; }
+      if (x < w - 1 && mask[i + 1] && lab[i + 1] < 0) { lab[i + 1] = id; stack[sp++] = i + 1; }
+      if (y > 0 && mask[i - w] && lab[i - w] < 0) { lab[i - w] = id; stack[sp++] = i - w; }
+      if (y < h - 1 && mask[i + w] && lab[i + w] < 0) { lab[i + w] = id; stack[sp++] = i + w; }
+    }
+    const cid = id++;
+    const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+    if (area < Math.max(16, n * 0.0015) || area > n * 0.3 || bw < 5 || bh < 6) continue;
+    // Hals und Schultern hängen oft an: die Gesichtshöhe ist höchstens 1,5 Breiten, der Rest darunter zählt nicht
+    const fh = Math.min(bh, Math.round(bw * 1.5)), fill = (() => { let c = 0; for (let y = y0; y < y0 + fh; y++) for (let x = x0; x <= x1; x++) if (lab[y * w + x] === cid) c++; return c / (bw * fh); })();
+    const aspect = fh / bw;
+    if (aspect < 0.85 || fill < 0.45 || fill > 0.95) continue;
+    // frei stehend: kaum Rand des Bilds (Sand, Wände laufen hinaus); ein am Bildrand angeschnittenes Gesicht ist zu unsicher
+    if (edge > Math.max(3, bw * 0.5) || x0 === 0 || x1 === w - 1 || y0 === 0) continue;
+    // Augen/Brauen: dunklere Stellen im oberen Gesichtsteil, links und rechts der Mitte
+    let mean = 0, mc = 0;
+    for (let y = y0; y < y0 + fh; y++) for (let x = x0; x <= x1; x++) if (lab[y * w + x] === cid) { mean += g[y * w + x]; mc++; }
+    mean /= Math.max(1, mc);
+    // (nur dunkle Stellen, die von Haut umschlossen sind – Lücken am Rand, etwa zwischen Lichtkreisen, zählen nicht)
+    let dl = 0, dr = 0, mid = 0, yl = 0, yr = 0;
+    const ey0 = y0 + Math.floor(fh * 0.18), ey1 = y0 + Math.ceil(fh * 0.55), xm = (x0 + x1) / 2;
+    const inC = (x, y) => x >= 0 && x < w && y >= 0 && y < h && lab[y * w + x] === cid;
+    const enclosed = (x, y) => {
+      let l = false, r = false, u = false;
+      for (let d = 1; d <= bw && !(l && r); d++) { if (inC(x - d, y)) l = true; if (inC(x + d, y)) r = true; }
+      for (let d = 1; d <= 5 && !u; d++) if (inC(x, y - d) || inC(x, y + d)) u = true;
+      return l && r && u;
+    };
+    for (let y = ey0; y < ey1; y++) for (let x = x0 + Math.floor(bw * 0.1); x <= x1 - Math.floor(bw * 0.1); x++) {
+      const i = y * w + x;
+      if (g[i] < mean * 0.78 && enclosed(x, y)) { if (x < xm - bw * 0.06) { dl++; yl += y; } else if (x > xm + bw * 0.06) { dr++; yr += y; } else mid++; }
+    }
+    const eyeA = (ey1 - ey0) * bw;
+    if (!dl || !dr || (dl + dr) / eyeA < 0.015 || (dl + dr) / eyeA > 0.35 || Math.min(dl, dr) / Math.max(dl, dr) < 0.25 || mid > dl + dr) continue;
+    // beide Augen auf einer Höhe
+    if (Math.abs(yl / dl - yr / dr) > Math.max(1.5, fh * 0.12)) continue;
+    // gleichmäßige Hautfarbe (Lichtkreise, bunte Flächen wechseln den Farbton)
+    let sCr = 0, qCr = 0, sCb = 0, qCb = 0, nC = 0;
+    for (let y = y0; y < y0 + fh; y++) for (let x = x0; x <= x1; x++) {
+      const i = y * w + x;
+      if (lab[i] !== cid) continue;
+      const r = data[i * 4], gg = data[i * 4 + 1], b = data[i * 4 + 2];
+      const cb = -0.1687 * r - 0.3313 * gg + 0.5 * b, cr = 0.5 * r - 0.4187 * gg - 0.0813 * b;
+      sCr += cr; qCr += cr * cr; sCb += cb; qCb += cb * cb; nC++;
+    }
+    const sdCr = Math.sqrt(Math.max(0, qCr / nC - (sCr / nC) ** 2)), sdCb = Math.sqrt(Math.max(0, qCb / nC - (sCb / nC) ** 2));
+    if (sdCr > 7 || sdCb > 7) continue;
+    // glatte Haut (Laub, Holzmaserung, Stoffmuster sind unruhig)
+    // (Median: Augen, Mund und Kanten zählen nicht, nur die Fläche)
+    const laps = [];
+    for (let y = Math.max(1, y0); y < Math.min(h - 1, y0 + fh); y++) for (let x = Math.max(1, x0); x <= Math.min(w - 2, x1); x++) {
+      const i = y * w + x;
+      if (lab[i] !== cid || lab[i - 1] !== cid || lab[i + 1] !== cid || lab[i - w] !== cid || lab[i + w] !== cid) continue;
+      laps.push(Math.abs(4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w]));
+    }
+    laps.sort((a, b) => a - b);
+    const lapM = laps.length ? laps[laps.length >> 1] : 0;
+    if (lapM > 16) continue;
+    // über dem Gesicht überwiegend keine Haut (Haare, Hintergrund; eine Glatze darf sein) – sonst ist es eine größere Fläche
+    let above = 0, ac = 0;
+    for (let y = Math.max(0, y0 - Math.ceil(fh * 0.25)); y < y0; y++) for (let x = x0; x <= x1; x++) { ac++; if (mask[y * w + x]) above++; }
+    if (ac && above / ac > 0.6) continue;
+    faces.push({ box: [x0 / w, y0 / h, bw / w, fh / h], a: (bw * fh) / n });
+  }
+  return faces.sort((a, b) => b.a - a.a).slice(0, 4).map((f) => f.box.map((v) => +v.toFixed(3)));
 }
 
 /**

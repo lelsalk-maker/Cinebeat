@@ -147,7 +147,7 @@ function carouselFill(plan, slide, media) {
   }
   cuts.push(D);
   const tpl = own[0] || plan.clips[0];
-  const hadSound = new Set((plan.voice || []).map((v) => v.mediaId));
+  const hadSound = new Set((plan.voice || []).filter((v) => !v.auto).map((v) => v.mediaId));
   const voice = [];
   plan.clips = slide.ids.map((id, k) => {
     const m = byId.get(id);

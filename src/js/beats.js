@@ -736,6 +736,11 @@ async function analyzeBeat(buffer, truth, onProgress) {
   const raw = db.map((v) => Math.max(0, Math.min(1, (v - lo) / Math.max(1e-6, hi - lo))));
   const energy = new Float32Array(n);
   for (let i = 0; i < n; i++) { let s = 0, c = 0; for (let k = i - 2; k <= i + 3; k++) if (k >= 0 && k < n) { s += raw[k]; c++; } energy[i] = s / c; }
+  // Akzente und Spannung aus dem fertigen Ton auf die Schläge der Komposition übertragen
+  const ob = an.beats || [], near = (t) => { let lo = 0, hi = ob.length - 1; while (lo < hi) { const m = (lo + hi) >> 1; if (ob[m] < t) lo = m + 1; else hi = m; } if (lo > 0 && Math.abs(ob[lo - 1] - t) < Math.abs(ob[lo] - t)) lo--; return lo; };
+  if (an.accent && ob.length) an.accent = Float32Array.from(bt, (t) => an.accent[near(t)] || 0);
+  if (an.tension && ob.length) an.tension = Float32Array.from(bt, (t) => an.tension[near(t)] || 0);
+  an.impacts = (an.impacts || []).map((x) => ({ ...x, t: bt.reduce((m, b) => (Math.abs(b - x.t) < Math.abs(m - x.t) ? b : m), bt[0]) }));
   an.beats = Float64Array.from(bt);
   an.energy = energy;
   an.vocal = new Float32Array(n);
@@ -756,6 +761,7 @@ async function analyzeBeat(buffer, truth, onProgress) {
   });
   const firstDrop = an.sections.find((s) => s.label === 'drop');
   if (firstDrop) an.hook = firstDrop.start;
+  if (an.tension) an.rises = songRises(an.beats, an.tension, an.sections);
   an.stops = [];
   // der Beat beginnt exakt auf der ersten Eins (kein Anlauf, keine gemessene Stille davor)
   an.firstSound = truth.t0;

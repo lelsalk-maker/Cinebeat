@@ -189,15 +189,28 @@ function colorMatch(list) {
       const mean = (m.avg[0] + m.avg[1] + m.avg[2]) / 3;
       const sum = (3 * mean + nyb) / 1.5, tb = sum / 2 - nyb;
       const want = [(sum + nrg) / 2, (sum - nrg) / 2, tb];
-      const g = m.avg.map((c, i) => Math.max(0.93, Math.min(1.07, Math.pow(Math.max(8, want[i]) / Math.max(8, c), 0.8))));
+      // mit Gesichtern: Hauttöne schützen – der Farbstich wird nur halb so stark verschoben
+      const gl = m.faceBox && m.faceBox.length ? 0.035 : 0.07;
+      const g = m.avg.map((c, i) => Math.max(1 - gl, Math.min(1 + gl, Math.pow(Math.max(8, want[i]) / Math.max(8, c), 0.8))));
+      // Tonwerte: ein flaues Bild (Dunst, Gegenlicht, trübe Linse) bekommt seinen Kontrast zurück – Schwarz- und
+      // Weißpunkt rücken an die dunkelsten/hellsten 0,5 % (je Kanal), nie darüber hinaus: nichts brennt neu aus,
+      // nichts säuft neu ab. Höchstens 20 % Spreizung; kräftige Bilder bleiben unverändert.
+      let bp = 0, wp = 1;
+      if (m.lv && m.lv.length === 2) {
+        const [lo, hi] = m.lv;
+        if (lo > 0.035) bp = Math.min(0.08, (lo - 0.015) * 0.7);
+        if (hi < 0.93) wp = Math.max(0.82, hi + 0.015 + (1 - hi) * 0.15);
+        const k = 1 / (wp - bp);
+        if (k > 1.2) { const f = (1.2 - 1) / (k - 1); bp *= f; wp = 1 - (1 - wp) * f; }
+      }
       // Helligkeit: Gamma bringt die Mitteltöne zum Ziel (gedämpft), Verstärkung bleibt beim Farbstich
-      const l = Math.max(0.05, Math.min(0.95, m.luma));
+      const l = Math.max(0.05, Math.min(0.95, (m.luma - bp) / (wp - bp)));
       const gam = Math.max(0.8, Math.min(1.25, Math.pow(Math.log(sceneT) / Math.log(l), 0.6)));
       const n = (g[0] + g[1] + g[2]) / 3;
-      corr.set(m.id, [...g.map((v) => +(v / n).toFixed(3)), +gam.toFixed(3)]);
+      corr.set(m.id, [...g.map((v) => +(v / n).toFixed(3)), +gam.toFixed(3), +bp.toFixed(3), +wp.toFixed(3)]);
     }
   }
-  for (const m of list) if (!corr.has(m.id)) corr.set(m.id, [1, 1, 1, 1]);
+  for (const m of list) if (!corr.has(m.id)) corr.set(m.id, [1, 1, 1, 1, 0, 1]);
   return { corr, target };
 }
 

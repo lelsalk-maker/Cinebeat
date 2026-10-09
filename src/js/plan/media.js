@@ -306,16 +306,37 @@ function flowOrder(list, wantMatch) {
  */
 function shotSize(m) {
   if (!m) return 1;
-  let c = 0.5;
-  const sub = m.subject;
-  if (sub) c += (0.3 - sub[2] * sub[3]) * 0.9;
-  // Landschaft: Horizont mit Himmel darüber
-  if (m.horizon != null && (m.sky || 0) > 0.3) c -= 0.3;
-  // Gesicht füllt das Bild (sehr große Hautflächen sind eher Sand, Holz oder Wände)
-  if (m.skinFrac != null && m.skinFrac > 0.15 && m.skinFrac < 0.5) c += 0.45;
-  else if (m.faces && sub && sub[2] * sub[3] > 0.25) c += 0.3;
-  if (m.iso != null) c += Math.max(-0.1, Math.min(0.3, (m.iso - 1.4) * 0.16));
-  return c < 0.28 ? 0 : c > 0.62 ? 2 : 1;
+  const fb = m.faceBox && m.faceBox.length ? m.faceBox : null;
+  let v;
+  if (fb) {
+    // Gesichter sagen am sichersten, wie nah die Kamera ist: füllt eins das Bild, ist es nah, sonst halbnah;
+    // winzige Gesichter in einer Landschaft gehören zur Totale
+    const fh = Math.max(...fb.map((b) => b[3]));
+    v = fh >= 0.22 ? 2 : fh >= 0.09 ? 1 : m.horizon != null && (m.sky || 0) > 0.2 ? 0 : 1;
+  } else {
+    let c = 0.5;
+    const sub = m.subject;
+    if (sub) c += (0.3 - sub[2] * sub[3]) * 0.9;
+    // Landschaft: Horizont mit Himmel darüber
+    if (m.horizon != null && (m.sky || 0) > 0.3) c -= 0.3;
+    // viel Haut ohne erkanntes Gesicht: eher nah (sehr große Hautflächen sind eher Sand, Holz oder Wände)
+    if (m.skinFrac != null && m.skinFrac > 0.15 && m.skinFrac < 0.5) c += m.vis >= 4 ? 0.2 : 0.45;
+    if (m.iso != null) c += Math.max(-0.1, Math.min(0.3, (m.iso - 1.4) * 0.16));
+    // von dir markiert: Menschen im Bild – mindestens halbnah, außer in einer klaren Landschaft
+    if (m.ppl === true && !(m.horizon != null && (m.sky || 0) > 0.3)) c = Math.max(c, 0.45);
+    v = c < 0.28 ? 0 : c > 0.62 ? 2 : 1;
+  }
+  return v;
+}
+
+/** Wie sicher sind Menschen im Bild (0–1): deine Markierung, erkannte Gesichter, sonst nur ein schwaches Haut-Indiz. */
+function peopleIn(m) {
+  if (!m) return 0;
+  if (m.ppl === true || usScore(m) > 0.5) return 1;
+  if (m.ppl === false) return 0;
+  const nf = (m.faceBox && m.faceBox.length) || m.faces || 0;
+  if (nf) return Math.min(1, 0.7 + 0.1 * nf);
+  return Math.min(m.vis >= 4 ? 0.45 : 1, (m.people || 0) * (m.vis >= 4 ? 0.6 : 1.5));
 }
 const SHOT_DE = ['Totale', 'Halbnah', 'Detail'];
 
@@ -530,7 +551,7 @@ function imageMotionRaw(rng, m, outAspect, visDur, role, prevDir, hint, tempo = 
     const a = Math.max(-1, Math.min(1, px + (right ? -1 : 1) * panX));
     return { dir: right ? 'right' : 'left', m: { from: { s: 1.03, x: a, y: 0, r: tilt }, to: { s: 1.03 + z * 0.35, x: px, y: 0, r: 0 } } };
   }
-  const zin = size === 2 && !hint ? prevDir !== 'in' || keep || rng() < 0.6 : prevDir === 'in' ? keep || rng() < 0.3 : prevDir === 'out' ? !keep : rng() < 0.7;
+  const zin = hint === 'in' ? true : hint === 'out' ? false : size === 2 && !hint ? prevDir !== 'in' || keep || rng() < 0.6 : prevDir === 'in' ? keep || rng() < 0.3 : prevDir === 'out' ? !keep : rng() < 0.7;
   const tx = px * 0.8, ty = py * 0.8;
   // leichter Versatz quer zur Zoomrichtung: die Fahrt bekommt eine Kurve statt einer geraden Linie
   const sx = hint === 'right' ? -0.3 : hint === 'left' ? 0.3 : (rng() - 0.5) * 0.35;
@@ -575,8 +596,42 @@ function rotView(m) {
   if (old && old.base === m && old.w === m.h && old.h === m.w) return old;
   const p = Object.create(m);
   const rp = (pt) => (pt && pt.length >= 2 ? [+(1 - pt[1]).toFixed(3), +pt[0].toFixed(3), ...(pt.length >= 4 ? [pt[3], pt[2]] : pt.slice(2))] : pt);
-  Object.assign(p, { base: m, rot90: true, w: m.h, h: m.w, focus: rp(m.focus), subject: rp(m.subject), layout: null, horizon: null });
+  // Gesichtskästen [x, y, b, h] im Uhrzeigersinn gedreht
+  const rb = (b) => [+(1 - b[1] - b[3]).toFixed(3), b[0], b[3], b[2]];
+  Object.assign(p, { base: m, rot90: true, w: m.h, h: m.w, focus: rp(m.focus), subject: rp(m.subject), layout: null, horizon: null, faceBox: m.faceBox ? m.faceBox.map(rb) : m.faceBox });
   ROT_VIEW.set(m.id, p);
   return p;
 }
 const rotates = (m, st) => m.kind === 'image' && st.format === '9:16' && m.w > m.h * 1.15 && (m.rot === true || (m.rot !== false && st.quer === 'drehen'));
+
+/* Geschmack aus deinen Korrekturen: Ausschließen, Favorit, „In den Film holen“ und Tauschen verschieben kleine Gewichte
+ * auf Bildmerkmalen. Die Auswahl der Regie bekommt daraus einen begrenzten Bonus (nie mehr als ein kleiner Qualitäts-
+ * unterschied – ein starkes Bild bleibt stark). Alles lokal auf dem Gerät. */
+const TASTE_KEYS = ['Menschen', 'Totalen', 'Nahaufnahmen', 'helle Bilder', 'kräftige Bilder', 'Videos', 'Landschaft'];
+function tasteFeatures(m) {
+  const sz = shotSize(m);
+  return [peopleIn(m), sz === 0 ? 1 : 0, sz === 2 ? 1 : 0, Math.min(1, (m.luma || 0.45) / 0.6), mediaEnergy(m), m.kind === 'video' ? 1 : 0, (m.sky || 0) > 0.3 && m.horizon != null ? 1 : 0];
+}
+function tasteLearn(taste, m, y) {
+  const t = taste && taste.w && taste.w.length === TASTE_KEYS.length ? taste : { w: TASTE_KEYS.map(() => 0), n: 0 };
+  const f = tasteFeatures(m);
+  // (frühere Eingriffe verblassen langsam: der Geschmack darf sich ändern)
+  t.w = t.w.map((w, i) => Math.max(-1, Math.min(1, w * 0.97 + 0.25 * y * (f[i] - 0.5))));
+  t.n = (t.n || 0) + 1;
+  return t;
+}
+function tasteBonus(taste, m) {
+  if (!taste || !taste.w || (taste.n || 0) < 3) return 0;
+  const f = tasteFeatures(m);
+  let v = 0;
+  for (let i = 0; i < f.length; i++) v += (taste.w[i] || 0) * (f[i] - 0.5);
+  return Math.max(-0.1, Math.min(0.1, v * 0.15));
+}
+/** Was die Regie gelernt hat, in Worten (die zwei, drei deutlichsten Vorlieben). */
+function tasteSummary(taste) {
+  if (!taste || !taste.w || (taste.n || 0) < 3) return '';
+  const parts = taste.w.map((w, i) => [w, i]).filter(([w]) => Math.abs(w) >= 0.2).sort((a, b) => Math.abs(b[0]) - Math.abs(a[0])).slice(0, 3);
+  const out = parts.map(([w, i]) => `${w > 0 ? 'mehr' : 'weniger'} ${TASTE_KEYS[i]}`);
+  if (taste.vlenF && Math.abs(taste.vlenF - 1) > 0.12) out.push(taste.vlenF > 1 ? 'längere Videos' : 'kürzere Videos');
+  return out.join(', ');
+}

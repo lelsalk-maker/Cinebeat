@@ -36,7 +36,7 @@ export function makeSong(file, { bpm, dur = 40, sr = 44100, offset = 0.37, intro
 }
 
 // Song mit bekanntem Aufbau. Liefert Abschnittsgrenzen in Sekunden.
-export function makeStructuredSong(file, { bpm = 124, sr = 44100, lead = 0.3 } = {}) {
+export function makeStructuredSong(file, { bpm = 124, sr = 44100, lead = 0.3, flatBuild = false, crash = false } = {}) {
   const plan = [['intro', 8], ['verse', 8], ['build', 4], ['drop', 8], ['break', 4], ['drop', 8], ['outro', 4]];
   const beat = 60 / bpm, bar = beat * 4;
   const totalBars = plan.reduce((a, p) => a + p[1], 0);
@@ -63,12 +63,16 @@ export function makeStructuredSong(file, { bpm = 124, sr = 44100, lead = 0.3 } =
       const padLen = stopHere ? bar * 0.5 : bar;
       const padV = name === 'drop' ? 0.05 : name === 'outro' ? 0.05 * (1 - b / bars) : 0.07;
       for (const m of ch) tone(tb, padLen, mtof(m), padV);
+      // Becken auf der Eins eines neuen Drops (heller Rauschausklang)
+      if (crash && name === 'drop' && b === 0) { let lp = 0; add(tb, 1.4, (x) => { const r = rnd(); const h = r - lp; lp = r * 0.6 + lp * 0.4; return 0.32 * h * Math.exp(-x * 2.2); }); }
       if (name === 'verse' || name === 'drop') tone(tb, bar, mtof(ch[0] - 24), name === 'drop' ? 0.35 : 0.2, 2);
       for (let k = 0; k < 4; k++) {
         const tt = tb + k * beat;
         if (name === 'verse') { kick(tt, 0.5); hat(tt + beat / 2, 0.1); }
         if (name === 'drop') { kick(tt, 0.9); if (k % 2) snare(tt, 0.45); hat(tt, 0.15); hat(tt + beat / 2, 0.15); tone(tt, beat * 0.45, mtof(ch[2] + 12), 0.08, 4); }
-        if (name === 'build') { const sub = 1 + Math.floor((b * 4 + k) / 4); for (let q = 0; q < sub; q++) snare(tt + (q * beat) / sub, 0.1 + 0.06 * b); }
+        if (name === 'build' && !flatBuild) { const sub = 1 + Math.floor((b * 4 + k) / 4); for (let q = 0; q < sub; q++) snare(tt + (q * beat) / sub, 0.1 + 0.06 * b); }
+        // flacher Aufbau: gleichbleibende Snare ohne Steigerung (darf den Schnitt nicht hetzen)
+        if (name === 'build' && flatBuild) { snare(tt, 0.16); hat(tt + beat / 2, 0.1); }
       }
     }
     t += bars * bar;

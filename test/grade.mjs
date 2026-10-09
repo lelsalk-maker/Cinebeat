@@ -23,7 +23,7 @@ const r = await p.evaluate(() => {
   if (!(c1 > c0 + 8)) fails.push(`kühler Ausreißer rückt nicht heran ${c0}→${c1.toFixed(0)}`);
   const kd = corr.get('d');
   if (!(kd[3] < 0.95)) fails.push('dunkle Aufnahme wird nicht über Gamma aufgehellt ' + kd);
-  for (const [id, k] of corr) { if (k.length !== 4 || k.some((v) => !(v > 0.7 && v < 1.35))) fails.push('Grenzen ' + id + ' ' + k); }
+  for (const [id, k] of corr) { if (k.length !== 6 || k.slice(0, 4).some((v) => !(v > 0.7 && v < 1.35)) || !(k[4] >= 0 && k[4] <= 0.08) || !(k[5] >= 0.82 && k[5] <= 1)) fails.push('Grenzen ' + id + ' ' + k); }
   // Weiß bleibt Weiß: Gamma hält Lichter, Verstärkung ≤ 7 %
   const wmax = Math.max(...corr.get('d').slice(0, 3));
   if (wmax > 1.075) fails.push('Lichter-Verstärkung ' + wmax);

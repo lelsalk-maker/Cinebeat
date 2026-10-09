@@ -22,14 +22,18 @@ function samplePixels(src, sw, sh) {
   return { w, h, data: ctx.getImageData(0, 0, w, h).data };
 }
 
-function imageMetrics(px) {
+function imageMetrics(px, faceBox = []) {
   const { w, h, data } = px;
   const n = w * h;
   const g = new Float32Array(n);
   let sumL = 0, clip = 0, mrg = 0, myb = 0, qrg = 0, qyb = 0;
+  // Tonwerte für die Angleichung: dunkelster Kanal (Schwarzpunkt) und hellster Kanal (Weißpunkt) je Pixel – so wird
+  // beim Strecken kein gesättigter Farbton (roter Himmel, blaues Meer) abgeschnitten
+  const hMin = new Uint32Array(256), hMax = new Uint32Array(256);
   for (let i = 0; i < n; i++) {
     const r = data[i * 4], gg = data[i * 4 + 1], b = data[i * 4 + 2];
     const l = 0.2126 * r + 0.7152 * gg + 0.0722 * b;
+    hMin[Math.min(r, gg, b)]++; hMax[Math.max(r, gg, b)]++;
     g[i] = l;
     sumL += l;
     if (l < 6 || l > 250) clip++;
@@ -75,7 +79,19 @@ function imageMetrics(px) {
   let ar = 0, ag = 0, ab = 0;
   for (let i = 0; i < n; i++) { ar += data[i * 4]; ag += data[i * 4 + 1]; ab += data[i * 4 + 2]; }
   const vis = visionMetrics(data, g, w, h, focus, scene);
-  return { sharp: sharpN, expo: expoN, color: colorN, luma: meanL, focus, scene, vis, comp: vis.comp, gray: g, w, h, avg: [Math.round(ar / n), Math.round(ag / n), Math.round(ab / n)] };
+  // Gesichter gefunden: das Motiv sind die Menschen – Fahrten enden dort, Ausschnitte schneiden niemanden an
+  vis.faceBox = faceBox;
+  if (faceBox.length) {
+    let x0 = 1, y0 = 1, x1 = 0, y1 = 0;
+    for (const [fx, fy, fw, fh] of faceBox) { x0 = Math.min(x0, fx); y0 = Math.min(y0, fy); x1 = Math.max(x1, fx + fw); y1 = Math.max(y1, fy + fh); }
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    focus = [cx, Math.min(0.8, cy + (y1 - y0) * 0.3)];
+    scene.subject = [+cx.toFixed(3), +Math.min(0.9, cy + (y1 - y0) * 0.5).toFixed(3), +Math.min(0.95, (x1 - x0) * 1.8 + 0.1).toFixed(3), +Math.min(0.95, (y1 - y0) * 3 + 0.1).toFixed(3)];
+    scene.people = Math.max(scene.people, 0.8);
+  }
+  const pctH = (hh, q) => { let acc = 0; const lim = n * q; for (let k = 0; k < 256; k++) { acc += hh[k]; if (acc >= lim) return k / 255; } return 1; };
+  const lv = [+pctH(hMin, 0.005).toFixed(3), +pctH(hMax, 0.995).toFixed(3)];
+  return { lv, sharp: sharpN, expo: expoN, color: colorN, luma: meanL, focus, scene, vis, comp: vis.comp, gray: g, w, h, avg: [Math.round(ar / n), Math.round(ag / n), Math.round(ab / n)] };
 }
 
 /** 64-Bit-Differenzhash (9x8) als zwei 32-Bit-Zahlen */
@@ -188,16 +204,29 @@ function combineScore(m) {
   return m.comp != null ? 0.34 * m.sharp + 0.24 * m.expo + 0.2 * m.color + 0.22 * m.comp : 0.42 * m.sharp + 0.3 * m.expo + 0.28 * m.color;
 }
 
+/** Gesichter auf einer größeren Vorschau (320 px): Augen und Mund sind dort noch erkennbar. */
+function faceScan(src, sw, sh) {
+  const s = 320 / Math.max(sw, sh);
+  const w = Math.max(8, Math.round(sw * s)), h = Math.max(8, Math.round(sh * s));
+  const ctx = scoreCtx(w, h);
+  ctx.drawImage(src, 0, 0, w, h);
+  const data = ctx.getImageData(0, 0, w, h).data, g = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) g[i] = 0.2126 * data[i * 4] + 0.7152 * data[i * 4 + 1] + 0.0722 * data[i * 4 + 2];
+  return findFaces(data, g, w, h);
+}
+
 function scoreImage(src, sw, sh) {
-  const m = imageMetrics(samplePixels(src, sw, sh));
+  let faceBox = [];
+  try { faceBox = faceScan(src, sw, sh); } catch (e) { faceBox = []; }
+  const m = imageMetrics(samplePixels(src, sw, sh), faceBox);
   let skyline = null;
   try { skyline = skyProfile(src, sw, sh); } catch (e) { skyline = null; }
-  return { score: combineScore(m), sharp: m.sharp, expo: m.expo, color: m.color, avg: m.avg, luma: +m.luma.toFixed(3), focus: m.focus.map((v) => +v.toFixed(3)), hash: dHash(src, sw, sh), layout: layoutSig(m), ...sceneFields(m.scene), ...visFields(m.vis), skyline, vis: VIS_VER };
+  return { lv: m.lv, score: combineScore(m), sharp: m.sharp, expo: m.expo, color: m.color, avg: m.avg, luma: +m.luma.toFixed(3), focus: m.focus.map((v) => +v.toFixed(3)), hash: dHash(src, sw, sh), layout: layoutSig(m), ...sceneFields(m.scene), ...visFields(m.vis), skyline, vis: VIS_VER };
 }
 
 /** Felder des Bildverständnisses (vision.js) für die Aufnahme. */
 function visFields(v) {
-  return v ? { sig: v.sig, calm: v.calm, mood: v.mood, comp: v.comp, tilt: v.tilt, detail: v.detail } : {};
+  return v ? { sig: v.sig, calm: v.calm, mood: v.mood, comp: v.comp, tilt: v.tilt, detail: v.detail, faceBox: v.faceBox || [] } : {};
 }
 
 /** Motiv-Felder für die Aufnahme (werden mit gespeichert). */

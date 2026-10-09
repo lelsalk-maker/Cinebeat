@@ -45,7 +45,8 @@ const r = await p.evaluate(async (b64) => {
   const ids0 = off.clips.filter((c) => byId.get(c.mediaId)).map((c) => c.mediaId);
   for (const id of new Set(ids0)) if (!ids.includes(id)) fails.push('fehlt ' + id);
   const inv = (list, grp) => { const t = list.filter((id, k) => list.indexOf(id) === k && byId.get(id).us === grp).map((id) => byId.get(id).time); let n = 0; t.forEach((x, k) => { if (k && x < t[k - 1]) n++; }); return n; };
-  for (const grp of [true, false]) if (inv(ids, grp) > inv(ids0, grp) + 2) fails.push(`Reihenfolge ${grp}: ${inv(ids, grp)} vs ${inv(ids0, grp)}`);
+  // (innerhalb eines Tagesabschnitts darf die Regie frei ordnen – Szenen-Grammatik Totale → Halbnah → Nah; grob bleibt es chronologisch)
+  for (const grp of [true, false]) if (inv(ids, grp) > inv(ids0, grp) + 6) fails.push(`Reihenfolge ${grp}: ${inv(ids, grp)} vs ${inv(ids0, grp)}`);
   // Schlussbild ist eine Wir-Aufnahme (wenn eine in der Nähe ist)
   const last = on.clips.filter((c) => !c.loop && byId.get(c.mediaId)).pop();
   if (last && !byId.get(last.mediaId).us) fails.push('Schlussbild nicht wir');
