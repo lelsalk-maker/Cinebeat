@@ -1682,10 +1682,10 @@ function planOnce(opts) {
     return g.lat == null && g.km == null ? null : g;
   };
   const geo = trip && !trip.all ? geoFor(trip.idx) : null;
-  const beatsRel = [], downs = [], beatEnergy = [];
+  const beatsRel = [], downs = [], beatEnergy = [], beatAcc = [];
   for (let i = 0; i < an.beats.length; i++) {
     const t = an.beats[i] - win.start;
-    if (t >= -0.01 && t <= D + 0.01) { beatsRel.push(t); downs.push(downSet(an).has(i)); beatEnergy.push(an.energy[i]); }
+    if (t >= -0.01 && t <= D + 0.01) { beatsRel.push(t); downs.push(downSet(an).has(i)); beatEnergy.push(an.energy[i]); beatAcc.push(an.accent && an.accent.length === an.beats.length ? +an.accent[i].toFixed(2) : 0.5); }
   }
   const beatsIn = (a, b) => beatsRel.filter((t) => t >= a - 0.01 && t < b);
   // Titel lange genug zum Lesen (Ortsname, Datum, Koordinaten), aber dezent: etwa zwei Takte, mindestens 3,4 s
@@ -2208,7 +2208,7 @@ function planOnce(opts) {
     duration: D, win, clips: all, visibleClips: clips.length,
     look: s.look, format: s.format, frame: s.frame, band, pace: s.pace, split: s.split, font: s.font || 'klassisch', motion: s.motion || 'ken', motionAmt: s.motionAmt || 'medium',
     intro, outro, fx, overlays, sfx, notes: dir.notes, resolved: s, voice,
-    beats: beatsRel, downs, beatEnergy, beatDur,
+    beats: beatsRel, downs, beatEnergy, beatAcc, beatDur,
     accent, chroma, colorFx, parallax: s.parallax === 'on' ? 1 : 0,
     sections: (an.sections || []).filter((x) => x.end > win.start && x.start < win.end).map((x) => ({ ...x, start: Math.max(0, x.start - win.start), end: Math.min(D, x.end - win.start) })),
     usedMedia: usedSet.size,

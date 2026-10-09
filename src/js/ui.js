@@ -354,14 +354,14 @@ function learnTaste(m, y) {
   saveTaste(S.taste);
 }
 /** „Gelernt“: was die Regie aus deinen Korrekturen mitnimmt – mit „Vergessen“. */
-function renderTaste() {
+function renderTaste(show = true) {
   const el = $('tasteLine');
   if (!el) return;
-  const txt = tasteSummary(S.taste || (S.taste = loadTaste()));
+  const txt = show ? tasteSummary(S.taste || (S.taste = loadTaste())) : '';
   el.hidden = !txt;
   if (!txt) return;
   el.innerHTML = `<span>Gelernt aus deinen Korrekturen: <b>${esc(txt)}</b></span> <button class="btn ghost small" type="button" id="tasteReset">Vergessen</button>`;
-  el.querySelector('#tasteReset').onclick = () => { S.taste = null; saveTaste(null); renderTaste(); toast('Vergessen: Die Regie wählt wieder ohne deine bisherigen Vorlieben.'); scheduleRebuild(0); };
+  el.querySelector('#tasteReset').onclick = () => { S.taste = null; saveTaste(null); renderTaste(false); toast('Vergessen: Die Regie wählt wieder ohne deine bisherigen Vorlieben.'); scheduleRebuild(0); };
 }
 /** Eigene Videolänge gegenüber der automatischen: zieht die künftige automatische Länge sanft mit. */
 function learnVideoLen(m, len) {
@@ -2888,7 +2888,7 @@ function renderMaterial() {
     : missing > 0 && !n ? `Die Aufnahmen dieses Orts sind nicht mehr im Zwischenspeicher (gelöscht oder länger als ${KEEP_DAYS} Tage unbearbeitet). Wähle die ${missing} Aufnahmen erneut aus der Galerie, am einfachsten alle Fotos der Reise: Jede Aufnahme landet automatisch am richtigen Ort.`
       : !n ? 'Füge die Fotos und Videos dieses Orts hinzu. 10 bis 60 Stück ergeben einen guten Film.'
         : `${n - v} Fotos, ${v} Videos. Videos laufen unter dem Song; einen klaren Moment (Lachen, Jubel) lässt die Regie hören, wenn der Song Platz hat – pro Video änderbar (antippen).`;
-  renderTaste();
+  renderTaste(n > 0);
   const roles = isFlight(ctx.rec) ? flightRoles(ctx.rec) : null;
   if (isFlight(ctx.rec) && n) $('mediaHint').textContent = `${n} Aufnahmen vom Flug, nach Aufnahmezeit geordnet: die erste ist der Abflug, die letzte die Landung, dazwischen die Aufnahmen an Bord. Antippen, um das zu ändern oder den Originalton einzuschalten.`;
   const hookId = ctx.rec.hookId;

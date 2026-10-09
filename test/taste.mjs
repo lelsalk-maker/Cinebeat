@@ -2,6 +2,8 @@
 // (Beste Auswahl) mehr Menschen – begrenzt: ein deutlich stärkeres Bild bleibt im Film. Eigene Videolängen ziehen die
 // automatische Länge sanft mit. In der App: Anzeige „Gelernt …“ und „Vergessen“.
 import { chromium } from '/opt/node22/lib/node_modules/playwright/index.mjs';
+import { mkdirSync } from 'node:fs';
+mkdirSync('/tmp/cinebeat-test', { recursive: true });
 const b = await chromium.launch();
 const p = await b.newPage();
 p.on('pageerror', (e) => console.log('pageerror', e.message));
@@ -48,6 +50,14 @@ if (!(r.v1 > r.v0 + 0.3)) fails.push(`Videolänge folgt nicht (${r.v0} → ${r.v
   await pg.waitForSelector('.place');
   await pg.click('#addPlace');
   await pg.waitForFunction(() => CineBeat.S.ctx && document.getElementById('busy').hidden, null, { timeout: 60000 });
+  // (bei einem leeren Ort bleibt die Zeile verborgen – erst mit Aufnahmen hat das Gelernte Bedeutung)
+  const hidden0 = await pg.evaluate(() => document.getElementById('tasteLine').hidden);
+  if (!hidden0) fails.push('Zeile „Gelernt“ schon bei leerem Ort');
+  const files = await pg.evaluate(() => [0, 1, 2].map((k) => { const c = document.createElement('canvas'); c.width = 800; c.height = 600; const x = c.getContext('2d'); x.fillStyle = `hsl(${k * 110},50%,45%)`; x.fillRect(0, 0, 800, 600); x.fillStyle = '#fff'; x.fillRect(100 + k * 150, 200, 200, 200); return c.toDataURL('image/jpeg', 0.9); }));
+  const { writeFileSync } = await import('node:fs');
+  const paths = files.map((d, k) => { const f = `/tmp/cinebeat-test/taste_${k}.jpg`; writeFileSync(f, Buffer.from(d.split(',')[1], 'base64')); return f; });
+  await pg.setInputFiles('#fileMedia', paths);
+  await pg.waitForFunction(() => CineBeat.S.ctx.media.length === 3 && CineBeat.S.ctx.media.every((m) => !m.loading) && document.getElementById('busy').hidden, null, { timeout: 120000 });
   await pg.click('[data-tab="material"]').catch(() => {});
   await pg.waitForTimeout(400);
   const line = await pg.evaluate(() => { const el = document.getElementById('tasteLine'); return el && !el.hidden ? el.textContent : ''; });

@@ -192,7 +192,7 @@ class OverlayPainter {
    * Titel wortweise im Takt: jedes Wort gleitet aus einer Maske nach oben ins Bild,
    * beim Ausstieg (auf einem Beat) gleiten alle zusammen nach oben hinaus. Liefert die Breite.
    */
-  maskTitle(ctx, text, x, y, size, track, align, times, exitT, t, fontFn) {
+  maskTitle(ctx, text, x, y, size, track, align, times, exitT, t, fontFn, kin = null) {
     const words = String(text || '').split(/\s+/).filter(Boolean);
     if (!words.length) return 0;
     ctx.font = fontFn(size);
@@ -200,20 +200,63 @@ class OverlayPainter {
     const widths = words.map((w) => trackedWidth(ctx, w, track, size));
     const total = widths.reduce((a, w) => a + w, 0) + space * (words.length - 1);
     let wx = align === 'center' ? x - total / 2 : align === 'right' ? x - total : x;
-    const q = easeInCubic(cl01((t - exitT) / 0.32));
     const top = y - size * 1.05, h = size * 1.4;
+    // Kinetische Schrift: der Titel atmet auf den stärksten Treffern des Songs kurz mit (um seine Mitte)
+    let pulse = 0;
+    if (kin && kin.pulses) for (const tp of kin.pulses) { const u = (t - tp) / 0.3; if (u > 0 && u < 1) pulse = Math.max(pulse, Math.sin(Math.PI * u) * (1 - u * 0.4)); }
+    ctx.save();
+    ctx.textAlign = 'left';
+    if (pulse > 0) {
+      const px = wx + total / 2, py = y - size * 0.35, k = 1 + 0.022 * pulse;
+      ctx.translate(px, py); ctx.scale(k, k); ctx.translate(-px, -py);
+    }
+    const nAll = words.reduce((a, w) => a + Array.from(w).length, 0);
+    let li = 0;
     words.forEach((w, i) => {
-      const p = easeOutCubic(cl01((t - times[Math.min(i, times.length - 1)]) / 0.42));
-      if (p > 0 && q < 1) {
-        ctx.save();
-        ctx.beginPath(); ctx.rect(wx - size * 0.2, top, widths[i] + size * 0.4, h); ctx.clip();
-        ctx.globalAlpha *= Math.min(1, p * 1.4) * (1 - q);
-        drawTracked(ctx, w, wx, y + (1 - p) * size * 0.95 - q * size * 1.1, track, size, 'left');
-        ctx.restore();
+      const t0 = times[Math.min(i, times.length - 1)];
+      const t1 = times[i + 1] != null ? times[i + 1] : t0 + 0.5;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(wx - size * 0.2, top, widths[i] + size * 0.4, h); ctx.clip();
+      if (kin && kin.letters) {
+        // Buchstabe für Buchstabe: die Staffel füllt knapp die Hälfte bis zum nächsten Schlag, der Ausstieg läuft
+        // gestaffelt in derselben Richtung (auf dem Schlag beginnend)
+        const chars = Array.from(w), n = chars.length;
+        const win = Math.min(0.32, Math.max(0.12, (t1 - t0) * 0.45));
+        let cx = wx;
+        chars.forEach((ch, j) => {
+          const cw = charW(ctx, ch);
+          const p = easeOutCubic(cl01((t - (t0 + (n > 1 ? (win * j) / (n - 1) : 0))) / 0.38));
+          const q = easeInCubic(cl01((t - exitT - (nAll > 1 ? (0.12 * (li + j)) / (nAll - 1) : 0)) / 0.3));
+          if (p > 0 && q < 1) {
+            ctx.globalAlpha = Math.min(1, p * 1.5) * (1 - q);
+            ctx.fillText(ch, cx + (cw - ctx.measureText(ch).width) / 2, y + (1 - p) * size * 0.9 - q * size * 1.1);
+          }
+          cx += cw + track * size;
+        });
+        li += n;
+      } else {
+        const p = easeOutCubic(cl01((t - t0) / 0.42));
+        const q = easeInCubic(cl01((t - exitT) / 0.32));
+        if (p > 0 && q < 1) {
+          ctx.globalAlpha *= Math.min(1, p * 1.4) * (1 - q);
+          drawTracked(ctx, w, wx, y + (1 - p) * size * 0.95 - q * size * 1.1, track, size, 'left');
+        }
       }
+      ctx.restore();
       wx += widths[i] + space;
     });
+    ctx.restore();
     return total;
+  }
+  /** Treffer für das Mitatmen des Titels: die (höchstens zwei) stärksten Schläge, während der Titel ruhig steht. */
+  titlePulses(o, from, to) {
+    if (!this.pulseOK || !this.beatAcc || !this.beatAcc.length) return null;
+    const c = [];
+    this.beats.forEach((b, i) => { if (b > from && b < to && (this.beatAcc[i] || 0) >= 0.72) c.push([b, this.beatAcc[i]]); });
+    c.sort((a, b) => b[1] - a[1]);
+    const out = [];
+    for (const [b] of c) if (out.length < 2 && out.every((x) => Math.abs(x - b) >= 1)) out.push(b);
+    return out;
   }
   caseTitle(text) { return this.fontSet.upper ? String(text || '').toLocaleUpperCase('de-DE') : String(text || ''); }
   titleTrack(def) { return this.fontSet.track != null ? this.fontSet.track : def; }
@@ -238,6 +281,9 @@ class OverlayPainter {
     const res = { top: false, topDirty: false };
     this.fontKey = plan.font;
     this.beats = plan.beats || [];
+    this.beatAcc = plan.beatAcc || [];
+    // (Mitatmen der Schrift nur, wenn Effekte gewünscht sind; „Schlicht“ bleibt ruhig)
+    this.pulseOK = !!(plan.resolved && (plan.resolved.effekte === 'dezent' || plan.resolved.effekte === 'kreativ'));
     this.pal = (LOOKS[plan.look] || LOOKS.natur).pal;
     this.ink = this.pal.ink;
     const active = plan.overlays.filter((o) => t >= o.start - 0.001 && t < o.end);
@@ -476,7 +522,7 @@ class OverlayPainter {
     ctx.textBaseline = 'alphabetic';
     const y = (o.place ? g.by + g.bh * o.place.y : g.cy) + size * 0.3;
     const track = tr + 0.03 * easeOutCubic(cl01((t - o.start) / 3));
-    this.maskTitle(ctx, title, g.cx, y, size, track, 'center', times, exitT, t, (sz) => this.font('title', sz));
+    this.maskTitle(ctx, title, g.cx, y, size, track, 'center', times, exitT, t, (sz) => this.font('title', sz), { letters: true, pulses: this.titlePulses(o, times[words] + 0.4, exitT - 0.45) });
     const sp = easeOutCubic(cl01((t - times[words]) / 0.5)) * (1 - out);
     const ss = g.base * 0.024;
     // Datum und Koordinaten blenden an ihrer Stelle ein (kein Nachrutschen), Kilometer ruhig darunter.

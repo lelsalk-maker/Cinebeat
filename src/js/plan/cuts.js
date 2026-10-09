@@ -38,7 +38,7 @@ function planCuts(an, win, pace, lengthScale, shotBase, minShot = 0, calmMin = 0
   for (const im of an.impacts || []) add(im.t, 3 + 3 * im.v * accW(im.t));
   // im Anstieg verdichtet sich das Raster wie in der Musik: erst halbe Takte, zum Schluss jeder Schlag
   for (const r of an.rises || []) {
-    an.beats.forEach((bt, i) => {
+    an.beats.forEach((bt) => {
       if (bt <= r.start || bt >= r.end - 0.02 || (r.gap != null && bt > r.gap - 0.02)) return;
       const prog = (bt - r.start) / Math.max(0.1, r.end - r.start), half = barSet.has(Math.round((bt - beatDur * 2) * 1000)) || barSet.has(Math.round((bt + beatDur * 2) * 1000));
       if (prog > 0.45 && half) add(bt, 3);
