@@ -28,7 +28,10 @@ await page.click('#compareBtn');
 await page.waitForTimeout(800);
 if (!(await vis('#cmpStage #monitor'))) fails.push('Monitor nicht im Vergleich');
 const cards = await page.evaluate(() => Array.from(document.querySelectorAll('#cmpCards small')).map((e) => e.textContent));
-if (cards.length !== 3) fails.push('Karten ' + cards.length);
+// drei Varianten, dazu „Refrain-Reim“, wenn der Song mindestens zwei Refrains/Drops hat
+const reimWant = await page.evaluate(() => (CineBeat.S.ctx.song.an.sections || []).filter((x) => x.label === 'drop' || x.label === 'chorus').length >= 2);
+if (cards.length !== (reimWant ? 4 : 3)) fails.push('Karten ' + cards.length);
+if (reimWant && !(await page.$('#cmpCards [data-var="reim"]'))) fails.push('Karte Refrain-Reim fehlt');
 await page.click('#cmpCards [data-var="ruhig"]');
 await page.waitForTimeout(500);
 await page.click('#cmpClose');
