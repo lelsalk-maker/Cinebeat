@@ -177,7 +177,7 @@ class Engine {
         const k0 = this.imgCache.keys().next().value, v0 = this.imgCache.get(k0);
         if (v0 && v0.width) px -= v0.width * v0.height;
         this.imgCache.delete(k0);
-        // nur freigeben, wenn kein Raster/Filmstreifen es gerade zeichnet
+        // nur freigeben, wenn kein Raster/keine Bildkarten es gerade zeichnen
         if (v0 && v0.close && ![...this.slots.values()].some((sl) => (sl.grid || sl.strip || []).includes(v0))) { try { v0.close(); } catch (e) { /* ignore */ } }
       }
       return c;
@@ -533,7 +533,7 @@ class Engine {
     this.r.upload(s.tex, cv);
   }
 
-  /* ---------- Film-Strip-Ende ---------- */
+  /* ---------- Bildkarten-Ende (outro 'strip') ---------- */
   async _prepareStrip(s) {
     const st = s.clip.strip;
     const bp = this.bandPx;
@@ -549,86 +549,95 @@ class Engine {
       else s.strip[k] = m.poster || null;
     }));
     if (s.dead) return;
+    // unscharfe Hintergründe einmal vorbereiten (stark verkleinert = weich)
+    s.blur = s.strip.map((src) => {
+      if (!src) return null;
+      const sw = src.videoWidth || src.width, sh = src.videoHeight || src.height;
+      if (!sw || !sh) return null;
+      const b = document.createElement("canvas"), k = 16 / Math.max(sw, sh);
+      b.width = Math.max(4, Math.round(sw * k)); b.height = Math.max(4, Math.round(sh * k));
+      b.getContext('2d').drawImage(src, 0, 0, b.width, b.height);
+      return b;
+    });
     s.tex = this.r.createTexture();
     this.composeStrip(s, s.clip.visStart);
     s.ready = true;
   }
 
   composeStrip(s, t) {
+    // Bildkarten-Ende (modern): das letzte Bild löst sich aus dem Vollbild zu einer Karte mit runden Ecken und weichem
+    // Schatten; die Bilder davor gleiten von links nach, die Karte in der Mitte groß und hell, die Nachbarn kleiner und
+    // gedämpft; dahinter das mittlere Bild unscharf und abgedunkelt
     const c = s.clip, st = c.strip, cv = s.canvas;
     const ctx = cv.getContext('2d');
     const W = cv.width, H = cv.height;
     const vert = H >= W;
     const u = clamp01((t - c.start) / Math.max(0.1, c.end - c.start));
-    // 0 … 0,22: aus dem Vollbild herauszoomen; danach läuft der Streifen gebremst weiter
-    const zu = clamp01(u / 0.22), ez = zu * zu * (3 - 2 * zu);
-    const k = 0.58;
-    const fw = W * k, fh = H * k;
-    const gap = (vert ? fh : fw) * 0.06;
-    const side = (vert ? fw : fh) * 0.16;
-    const pitch = (vert ? fh : fw) + gap;
+    const zu = clamp01(u / 0.24), ez = zu * zu * zu * (zu * (6 * zu - 15) + 10);
     const n = st.items.length;
-    const su = clamp01((u - 0.12) / 0.88);
-    const scroll = (1 - Math.pow(1 - su, 2.2)) * pitch * Math.min(n - 1, 3.2);
-    const S = lerp(1 / k, 1, ez);
-    const rot = lerp(0, vert ? -0.07 : -0.05, ez);
+    const fw = vert ? W * 0.66 : H * 0.6 * 1.45, fh = vert ? fw * 1.3 : H * 0.6;
+    const pitch = fw * 1.1;
+    const su = clamp01((u - 0.14) / 0.86);
+    const f = (1 - Math.pow(1 - su, 2.2)) * Math.min(n - 1, 3.2);
+    const S = lerp(Math.max(W / fw, H / fh), 1, ez);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
-    const bg = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.hypot(W, H) / 2);
-    bg.addColorStop(0, '#1a1712'); bg.addColorStop(1, '#07090d');
-    ctx.fillStyle = bg;
+    ctx.shadowColor = 'transparent';
+    ctx.fillStyle = '#07080b';
     ctx.fillRect(0, 0, W, H);
-    ctx.translate(W / 2, H / 2);
-    ctx.rotate(rot);
-    ctx.scale(S, S);
-    // Streifen: Bild 0 in der Mitte, frühere Bilder folgen (vertikal nach oben, quer nach links)
-    const len = pitch * (n + 2);
-    const base = '#15120e';
-    ctx.fillStyle = base;
-    if (vert) ctx.fillRect(-fw / 2 - side, -len + fh / 2 + scroll + pitch, fw + side * 2, len + pitch * 2);
-    else ctx.fillRect(-len + fw / 2 + scroll + pitch, -fh / 2 - side, len + pitch * 2, fh + side * 2);
-    // Perforation
-    const hole = side * 0.42, hr = hole * 0.22;
-    ctx.fillStyle = 'rgba(236,228,212,0.9)';
-    const holes = Math.ceil(len / (hole * 1.9));
-    for (let i = -2; i < holes; i++) {
-      const p = -i * hole * 1.9 + (scroll % (hole * 1.9)) + pitch;
-      for (const sd of [-1, 1]) {
-        const a = sd * (vert ? fw / 2 + side / 2 : fh / 2 + side / 2);
-        ctx.beginPath();
-        const rr = (ctx.roundRect || ctx.rect).bind(ctx);
-        if (vert) rr(a - hole * 0.35, p - hole / 2, hole * 0.7, hole, hr);
-        else rr(p - hole / 2, a - hole * 0.35, hole, hole * 0.7, hr);
-        ctx.fill();
-      }
-    }
-    // Einzelbilder mit Randbeschriftung
+    // Hintergrund: das mittlere Bild unscharf (zwei Nachbarn weich überblendet), abgedunkelt
+    const cover = (src, a) => {
+      if (!src || a <= 0.001) return;
+      const sw = src.width, sh = src.height, sc = Math.max(W / sw, H / sh) * 1.08;
+      ctx.globalAlpha = a;
+      ctx.drawImage(src, (W - sw * sc) / 2, (H - sh * sc) / 2, sw * sc, sh * sc);
+    };
+    const k0 = Math.floor(f), fr = f - k0;
+    ctx.imageSmoothingEnabled = true;
+    cover(s.blur && s.blur[k0], 1);
+    cover(s.blur && s.blur[k0 + 1], fr);
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = 1;
+    // Karten: die fernen zuerst, die mittlere zuletzt
     ctx.imageSmoothingQuality = 'high';
-    ctx.font = `600 ${side * 0.26}px ${OV_FONTS.mono}`;
-    ctx.textBaseline = 'middle';
-    for (let i = 0; i < n; i++) {
-      const off = -i * pitch + scroll;
-      const x = vert ? -fw / 2 : -fw / 2 + off, y = vert ? -fh / 2 + off : -fh / 2;
-      if (vert ? y > H / S + fh || y + fh < -H / S - fh : x > W / S + fw || x + fw < -W / S - fw) continue;
-      const src = s.strip[i];
+    const rad = Math.min(fw, fh) * 0.045;
+    const order = [];
+    for (let i = 0; i < n; i++) order.push(i);
+    order.sort((a, b) => Math.abs(b - f) - Math.abs(a - f));
+    for (const i of order) {
+      const d = f - i, ad = Math.min(1, Math.abs(d));
+      const x0 = W / 2 + d * pitch * S;
+      if (x0 - (fw * S) / 2 > W + 2 || x0 + (fw * S) / 2 < -2) continue;
+      const sc = S * (1 - 0.12 * ad * ez);
+      const w = fw * sc, h = fh * sc, x = x0 - w / 2, y = H / 2 - h / 2, r = rad * sc * ez;
+      const path = () => { ctx.beginPath(); if (ctx.roundRect && r > 0.5) ctx.roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h); };
       ctx.save();
-      ctx.beginPath(); ctx.rect(x, y, fw, fh); ctx.clip();
+      ctx.shadowColor = `rgba(0,0,0,${(0.5 * ez).toFixed(3)})`;
+      ctx.shadowBlur = Math.max(6, Math.min(W, H) * 0.05) * ez;
+      ctx.shadowOffsetY = Math.min(W, H) * 0.012 * ez;
+      ctx.fillStyle = '#111';
+      path(); ctx.fill();
+      ctx.restore();
+      ctx.save();
+      path(); ctx.clip();
+      const src = s.strip[i];
       if (src) {
         const sw = src.videoWidth || src.width, sh = src.videoHeight || src.height;
-        const sc = Math.max(fw / sw, fh / sh);
-        const vw = fw / sc, vh = fh / sc;
+        const k = Math.max(w / sw, h / sh), vw = w / k, vh = h / k;
         const fo = st.items[i].focus || [0.5, 0.45];
         const sx = Math.max(0, Math.min(sw - vw, fo[0] * sw - vw / 2)), sy = Math.max(0, Math.min(sh - vh, fo[1] * sh - vh / 2));
-        ctx.drawImage(src, sx, sy, vw, vh, x, y, fw, fh);
-      } else { ctx.fillStyle = '#10151e'; ctx.fillRect(x, y, fw, fh); }
+        ctx.drawImage(src, sx, sy, vw, vh, x, y, w, h);
+      }
+      // Nachbarn gedämpft
+      if (ad * ez > 0.01) { ctx.fillStyle = `rgba(0,0,0,${(0.42 * ad * ez).toFixed(3)})`; ctx.fillRect(x, y, w, h); }
       ctx.restore();
-      ctx.fillStyle = 'rgba(255,150,60,0.85)';
-      const label = `${String(n - i).padStart(2, '0')}A  ▸`;
-      if (vert) { ctx.save(); ctx.translate(x - side * 0.12, y + fh * 0.12); ctx.rotate(-Math.PI / 2); ctx.textAlign = 'right'; ctx.fillText(label, 0, 0); ctx.restore(); }
-      else { ctx.textAlign = 'left'; ctx.fillText(label, x + fw * 0.04, y - side * 0.12); }
+      if (ez > 0.05) { ctx.save(); path(); ctx.strokeStyle = `rgba(255,255,255,${(0.16 * ez).toFixed(3)})`; ctx.lineWidth = Math.max(1, Math.min(W, H) * 0.002); ctx.stroke(); ctx.restore(); }
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
     this.r.upload(s.tex, cv);
   }
 

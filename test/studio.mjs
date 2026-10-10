@@ -55,7 +55,7 @@ const fails = [];
     // ältere Rezepte (v1) klingen unverändert: kein Energie-Schub, kein Teaser
     { const o = beatRecipe('sommer', st0, { seed: 2 }); o.v = 1; const a = await renderBeat(o, { preview: true }), c = await renderBeat({ ...o, energy: 'hype' }, { preview: true }); if (sum(a.buffer) !== sum(c.buffer)) f.push('v1-Rezept hängt von der Energie ab'); }
     const sh = beatRecipe('stadt', { intro: 'shutter', target: 'story' });
-    if (sh.pre !== 5 || beatForm(sh.form, sh.pre).slice(0, 2).reduce((a, x) => a + x[1], 0) !== 5) f.push('Rollladen: Drop nicht nach fünf Takten');
+    if (sh.pre !== 6 || beatForm(sh.form, sh.pre).slice(0, 2).reduce((a, x) => a + x[1], 0) !== 6) f.push('Rollladen: Drop nicht nach sechs Takten');
     return { f, info };
   });
   fails.push(...r.f);

@@ -84,26 +84,78 @@ function bandRect(format, frame) {
  * Kino-Rollladen: Ablauf in Zähleinheiten (ein Schlag, bei schnellen Songs zwei), alles auf den Schlägen des Songs
  * (er läuft von Anfang an unverändert, wie später mit der Instagram-Musik): sechs Ausschnitte erscheinen schwarzweiß
  * im halben Takt (0–2,5), werden in derselben Folge farbig (3–5,5), der Rollladen schließt in drei Zügen von oben
- * und unten (6, 7, 8), kurz Schwarz, Ortsname mit Koordinaten auf Schwarz (9), das Bild öffnet sich (15) bis zum
- * Einsatz (20 = Refrain/Drop, fünf Takte nach dem ersten Bild).
+ * und unten (6, 7, 8), kurz Schwarz, Ortsname mit Koordinaten auf Schwarz (9); dann öffnet sich der Vorhang langsam
+ * über den Aufbau bis zum Einsatz (Soll 24 = Refrain/Drop, sechs Takte nach dem ersten Bild; den echten Einsatz und den Beginn des Öffnens bestimmt das Lied,
+ * siehe `introEntry`/`introTurn`).
  */
-const SHUTTER = { tiles: [0, 0.5, 1, 1.5, 2, 2.5], colors: [3, 3.5, 4, 4.5, 5, 5.5], pulls: [6, 7, 8], black: 9, open: 15, end: 20 };
+const SHUTTER = { tiles: [0, 0.5, 1, 1.5, 2, 2.5], colors: [3, 3.5, 4, 4.5, 5, 5.5], pulls: [6, 7, 8], black: 9, open: 15, end: 24 };
 /**
- * Einstieg „Welcome to…“ (Zählzeiten wie beim Kino-Rollladen, alles auf den Schlägen des Songs, der unverändert läuft):
- * „Welcome to…“ steht von Anfang an in Schreibschrift; dahinter zehn ähnliche Ausschnitte mit leichter Bewegung, erst
- * zügig, dann allmählich langsamer (0 … 13); das letzte Video bleibt und läuft weiter (13), darunter erscheint der
- * Ortsname in Gelb (14); dann wechselt er durch zehn ganz verschiedene Schriften – schnell, langsamer, wieder schnell –,
- * und mit jedem Schriftwechsel wechselt im selben Augenblick das Bild dahinter (16 … 23,5); ab 21 fahren schwarze Balken
- * von oben und unten in Zügen auf den Schlägen zu, bis es ganz schwarz ist; auf dem Einsatz (24 = Refrain/Drop,
- * sechs Takte nach dem ersten Bild) geht es mit einem Video in den Film.
+ * Einstieg „Welcome to…“: Soll-Einsatz (Zählzeit 24 = sechs Takte nach dem ersten Bild) – die Regie legt den
+ * Songausschnitt danach; den Ablauf selbst bestimmt `welcomeTimes` aus dem Lied.
  */
-const WELCOME = {
-  clips: [0, 1, 2, 3, 4, 5, 6, 7.5, 9, 11], last: 13, name: 14,
-  fonts: [16, 16.5, 17, 17.5, 18.5, 20, 21, 21.5, 22, 22.5, 23, 23.5], pulls: [21, 22, 23, 23.5], end: 24,
-};
+const WELCOME = { end: 24 };
 
 function shutterStep(an) {
   return an.beatPeriod < 0.36 ? 2 : 1;
+}
+
+/**
+ * „Welcome to…“ nach dem Lied (at: Zählzeit → Zeit auf den Schlägen, u: Länge einer Zählzeit):
+ * Einsatz E = echter Refrain-/Drop-Anfang nahe Zählzeit 24; Schwarz P = Wendepunkt davor (Anfang des Aufbaus);
+ * davor passende Ausschnitte, immer langsamer, und der Vorhang schließt in einer weichen Bewegung bis P;
+ * auf Schwarz erscheint „Welcome to <Ort>“, der Vorhang öffnet sich wieder, und mit jedem Bildwechsel wechselt
+ * die Schrift des Ortsnamens – im Takt, auf den letzten Zählzeiten im halben Takt bis in den Einsatz.
+ */
+function welcomeTimes(an, win, at, u) {
+  const cnt = (t) => { let b = 0, d = Infinity; for (let x = 0; x < 120; x += 0.5) { const e = Math.abs(at(x) - t); if (e < d) { d = e; b = x; } else if (at(x) > t + u) break; } return b; };
+  const E = introEntry(an, win, at(WELCOME.end), at(WELCOME.end - 4), at(WELCOME.end + 6));
+  const xE = cnt(E);
+  const P = introTurn(an, win, E, at(10), Math.max(at(10), E - Math.max(6 * u, 3.2)), at(xE - 9));
+  const xP = Math.round(cnt(P));
+  // Vorhang zu: knapp ein Takt (bei langsamen Zählzeiten drei), aber nie in die ersten Ausschnitte hinein
+  const cd = Math.max(2, Math.min(u >= 0.55 ? 3 : 4, xP - 6));
+  // auf: eine Zählzeit Schwarz mit dem Namen, dann öffnet er sich (bis zu einem Takt); die Wechsel beginnen offen
+  const xO = xP + 1, od = Math.max(2, Math.min(4, Math.round((xE - xO) * 0.4)));
+  const fonts = [];
+  for (let x = Math.min(xO + od, xE - 2); x < xE - 1e-6; x += x >= xE - 2 ? 0.5 : 1) fonts.push(at(x));
+  // Ausschnitte: rückwärts vom letzten (das durch das Schließen läuft) immer kürzer, in halben Zählzeiten
+  const xC = xP - cd - 2;
+  const pat = [2, 2, 1.5, 1.5, 1, 1, 1, 1, 1];
+  let n = 0, sum = 0;
+  while (n < pat.length && sum + pat[n] <= xC + 1e-6) sum += pat[n++];
+  const f = n ? xC / sum : 1, starts = [];
+  let x = xC;
+  for (let k = 0; k < n; k++) { x -= pat[k] * f; starts.unshift(Math.max(0, Math.round(x * 2) / 2)); }
+  starts[0] = 0;
+  const clips = [...new Set([...starts, xC])].map((y) => (y ? at(y) : 0));
+  return { E, P, clips, name: P, close: [at(xP - cd), P], open: [at(xO), at(xO + od)], fonts, end: E };
+}
+
+// Einstiege nach dem Lied (Kino-Rollladen, Welcome to…): Zeiten relativ zum Songausschnitt, auf echten Schlägen
+function snapBeat(an, win, t) {
+  let m = t, d = Infinity;
+  for (const b of an.beats) { const x = Math.abs(b - win.start - t); if (x < d) { d = x; m = b - win.start; } }
+  return m;
+}
+/** Einsatz eines Einstiegs: der echte Refrain-/Drop-Anfang nahe der Soll-Zeit (lo … hi), sonst die Soll-Zeit. */
+function introEntry(an, win, nominal, lo, hi) {
+  const c = (an.sections || []).filter((x) => (x.label === 'drop' || x.label === 'chorus') && x.start - win.start >= lo - 0.02 && x.start - win.start <= hi + 0.02)
+    .map((x) => snapBeat(an, win, x.start - win.start)).sort((a, b) => Math.abs(a - nominal) - Math.abs(b - nominal));
+  return c.length ? c[0] : nominal;
+}
+/**
+ * Wendepunkt vor dem Einsatz E (lo … hi): wo der Anstieg in den Einsatz beginnt, sonst der Abschnittswechsel davor
+ * (Strophe → Aufbau), sonst die Takt-Eins nahe pref – dort ändert sich auch die Musik.
+ */
+function introTurn(an, win, E, lo, hi, pref) {
+  const rel = (x) => x - win.start, inR = (t) => t >= lo - 0.02 && t <= hi + 0.02;
+  const r = (an.rises || []).find((x) => Math.abs(rel(x.end) - E) < 0.35 && inR(rel(x.start)));
+  if (r) return snapBeat(an, win, rel(r.start));
+  const near = (a, b) => Math.abs(a - pref) - Math.abs(b - pref);
+  const sb = (an.sections || []).map((x) => rel(x.start)).filter((t) => inR(t) && t < E - 0.1).sort(near);
+  if (sb.length) return snapBeat(an, win, sb[0]);
+  const bars = Array.from(an.barStart || [], rel).filter(inR).sort(near);
+  return bars.length ? bars[0] : snapBeat(an, win, Math.max(lo, Math.min(hi, pref)));
 }
 
 /**

@@ -45,8 +45,16 @@ function buildPlan(opts) {
 }
 
 function searchPlan(opts) {
+  if (opts.flight) return planOnce(opts);
+  // Probeläufe (nur die Kennzahlen zählen: Wiederholungen, ausgelassene Aufnahmen, Länge) mit grober Feinordnung;
+  // der gewählte Schnitt wird am Ende einmal vollständig gebaut
+  const probe = (o) => { const p = planOnce({ ...o, _probe: true }); Object.defineProperty(p, '_o', { value: o, enumerable: false }); return p; };
+  const best0 = searchProbe(opts, probe);
+  return planOnce(best0._o);
+}
+
+function searchProbe(opts, planOnce) {
   let best = planOnce(opts);
-  if (opts.flight) return best;
   // „Beste Auswahl“: Weglassen ist gewollt – es zählt nur, dass sich nichts wiederholt (das Tempo bleibt beim Song)
   const pick = !allMediaOn(best.resolved) && !(opts.chapters && opts.chapters.length);
   const chap = !!(opts.chapters && opts.chapters.length);

@@ -212,12 +212,12 @@ function eyeTrace(clips, { media, outAspect }) {
       dx *= 0.6; dy *= 0.6;
     }
     const f1 = { ...from, x: cl((from.x || 0) + dx), y: cl((from.y || 0) + dy) }, t1 = { ...to, x: cl((to.x || 0) + dx), y: cl((to.y || 0) + dy) };
-    // 2. der Rest nur am Anfang, solange das Tempo innerhalb von ±⅓ bleibt
+    // 2. der Rest nur am Anfang, solange das Tempo höchstens um ein Drittel schneller oder langsamer wird (in feinen Stufen)
     let best = null;
-    for (const k of [1, 0.75, 0.5, 0.3, 0]) {
+    for (const k of [1, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.15, 0]) {
       const cand = { ...f1, x: f1.x + (want.x - f1.x) * k, y: f1.y + (want.y - f1.y) * k };
       const sp = motionSpeed({ from: cand, to: t1 }, mB, outAspect, dur);
-      if (sp0 > 0.001 ? sp <= sp0 * 1.33 && sp >= sp0 * 0.67 : sp < 0.02) { best = cand; break; }
+      if (sp0 > 0.001 ? sp <= sp0 * 1.33 && sp >= sp0 / 1.33 : sp < 0.02) { best = cand; break; }
     }
     if (best && dist(eA, eyeAt(mB, best)) < d0 - 0.03) { B.motion.from = best; B.motion.to = t1; moved++; }
     sa += dist(eA, eyeAt(mB, B.motion.from));

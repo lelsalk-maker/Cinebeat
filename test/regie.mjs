@@ -61,7 +61,7 @@ const res = await p.evaluate(async (STYLES) => {
       opts.settings = { ...settings, seed: bc.seed };
       let hookId = null;
       const intro0 = buildPlan(opts).intro;
-      const hr = await improveHook(opts, null, { wide: true });
+      const hlog = []; const hr = await improveHook(opts, null, { wide: true, log: hlog });
       if (hr && hr.settings && (hr.errorsTo < hr.errorsFrom || hr.to >= hr.from + 8)) { Object.assign(opts.settings, hr.settings); hookId = hr.hookId; }
       if (hookId) opts.settings.hookId = hookId;
       const plan = buildPlan(opts);
@@ -103,7 +103,7 @@ const res = await p.evaluate(async (STYLES) => {
       const fxTypes = [...new Set(plan.fx.map((f) => f.type))].sort();
       const tools = ['echo', 'stack', 'mini', 'midGrid', 'burst', 'color', 'accent', 'drift', 'parallax', 'mv'].filter((k) => r[k] && r[k] !== 'off').map((k) => k + (k === 'color' ? ':' + r[k] : ''));
       const f = {
-        name: `${style}/${fmt.target || 'film'}`, ms: Math.round(ms), D: +D.toFixed(1), clips: plain.length, intro: plan.intro, intro0, usSeq, outro: plan.outro, look: plan.look, pace: plan.pace, motion: plan.motion,
+        name: `${style}/${fmt.target || 'film'}`, ms: Math.round(ms), D: +D.toFixed(1), clips: plain.length, intro: plan.intro, intro0, usSeq, hlog, hk: hr ? `${hr.from}→${hr.to}${hr.settings ? ' ' + hr.settings.intro : ''}` : null, outro: plan.outro, look: plan.look, pace: plan.pace, motion: plan.motion,
         tools, fxTypes, secMiss, secCut: +secCut.toFixed(2), eFit: +eFit.toFixed(2), dropRank: dropRank == null ? null : +dropRank.toFixed(2),
         us: usC.length, usBad: usBad.map((c) => `${c.i}@${c.start.toFixed(1)} ${((c.end - c.start) / bd).toFixed(1)}b ${c.flash ? 'flash' : c.rush ? 'rush' : c.burst ? 'burst' : c.miniRew ? 'mini' : c.pre || 'kurz'}`), usLenRatio: usLenRatio == null ? null : +usLenRatio.toFixed(2), usGood: +usGood.toFixed(2),
         transMaxRun: maxRun(softT.length ? trans.map((t) => (t === 'CUT' ? 'CUT' : t)).filter((t, i, a) => t !== 'CUT' || a[i - 1] !== 'CUT') : []), softKinds: [...new Set(softT)].length, soft: softT.length,
@@ -126,10 +126,11 @@ const res = await p.evaluate(async (STYLES) => {
 writeFileSync(`${OUT}/regie.json`, JSON.stringify(res, null, 1));
 const fails = [];
 for (const f of res.films) {
-  if (V) console.log(`${f.name.padEnd(16)} ${f.D}s ${String(f.clips).padStart(2)}E ${f.intro}${f.intro0 !== f.intro ? '←' + f.intro0 : ''}/${f.outro} ${f.look} ${f.pace} | Sec ${f.secCut}${f.secMiss.length ? '[' + f.secMiss.join(' ') + ']' : ''} E ${f.eFit} Drop ${f.dropRank} | Wir ${f.us} gut ${f.usGood} L×${f.usLenRatio} ${f.usBad.join(',')} | Ü-Kette ${f.transMaxRun} (${f.softKinds}/${f.soft}) Fahrt-Kette ${f.moveMaxRun} (${f.moveKinds}) gleicheL ${f.sameLenShare} (${f.lenKinds}) | Hook ${f.hook} Audit ${f.audit} Check ${f.check.join(',') || 'ok'} | ${f.tools.join(' ')} ${f.ms}ms`);
+  if (V) console.log(`${f.name.padEnd(16)} ${f.D}s ${String(f.clips).padStart(2)}E ${f.intro}${f.intro0 !== f.intro ? '←' + f.intro0 : ''}${f.hk ? '[' + f.hk + ']' : ''}/${f.outro} ${f.look} ${f.pace} | Sec ${f.secCut}${f.secMiss.length ? '[' + f.secMiss.join(' ') + ']' : ''} E ${f.eFit} Drop ${f.dropRank} | Wir ${f.us} gut ${f.usGood} L×${f.usLenRatio} ${f.usBad.join(',')} | Ü-Kette ${f.transMaxRun} (${f.softKinds}/${f.soft}) Fahrt-Kette ${f.moveMaxRun} (${f.moveKinds}) gleicheL ${f.sameLenShare} (${f.lenKinds}) | Hook ${f.hook} Audit ${f.audit} Check ${f.check.join(',') || 'ok'} | ${f.tools.join(' ')} ${f.ms}ms`);
   if (f.secCut < 1) fails.push(`${f.name}: Abschnittswechsel ohne Schnitt (${f.secCut})`);
   if (f.eFit < 0.1) fails.push(`${f.name}: Einstellungslänge folgt der Energie kaum (${f.eFit})`);
   if (f.usBad.length) fails.push(`${f.name}: Wir-Bild im Blitzgewitter/zu kurz: ${f.usBad.join(', ')}`);
+  if (f.hook < 70 && V) console.log('  Hook-Kandidaten:', f.hlog.join(' '));
   if (f.usLenRatio != null && f.usLenRatio < 0.9 && V) console.log('  Wir:', f.usSeq.join(' | '));
   if (f.usLenRatio != null && f.usLenRatio < 0.9) fails.push(`${f.name}: Wir-Bilder kürzer als der Schnitt (${f.usLenRatio})`);
   if (f.transMaxRun > 3) fails.push(`${f.name}: ${f.transMaxRun}× derselbe Übergang hintereinander`);

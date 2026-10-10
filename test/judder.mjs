@@ -27,7 +27,9 @@ const res = await p.evaluate(async ({ b64, CONF }) => {
     eng.setProject({ plan, media, audioBuffer: buf, size: { w: W, h: H } });
     const g = document.createElement('canvas'); g.width = 48; g.height = Math.round(48 * H / W);
     const x = g.getContext('2d', { willReadFrequently: true });
-    const fps = 30, N = Math.floor(plan.duration * fps);
+    // (Einstiege: nur bis zum Ende der ersten Einstellung nach dem Einstieg – der Rest ist in den anderen Teilen geprüft)
+    const introEnd = st._until === 'intro' ? Math.max(...plan.clips.filter((c) => c.pre || c.rush || c.reveal || c.revealHit || c.leader || c.role === 'hook').map((c) => c.end)) + 1 : plan.duration;
+    const fps = 30, N = Math.floor(Math.min(plan.duration, introEnd) * fps);
     const diffs = []; let prev = null;
     for (let n = 0; n < N; n++) {
       const t = (n + 0.5) / fps;
@@ -71,7 +73,8 @@ const res = await p.evaluate(async ({ b64, CONF }) => {
       const a = Math.ceil((c.start + 0.15) * fps), z = Math.floor((c.end - 0.15) * fps);
       let run = 0;
       // Schwarz des Kino-Rollladens (Ortsname steht ruhig auf Schwarz bis zum Öffnen) ist gewollter Stillstand
-      const still = (t) => plan.overlays.some((o) => o.type === 'shutter' && t >= o.start - 0.05 && t <= o.open + 0.1);
+      // (ebenso das Schwarz mit „Welcome to <Ort>“ zwischen Schließen und Öffnen)
+      const still = (t) => plan.overlays.some((o) => (o.type === 'shutter' && t >= o.start - 0.05 && t <= o.open + 0.1) || (o.type === 'welcome' && o.close && t >= o.close[1] - 0.05 && t <= o.open[0] + 0.1));
       for (let n = a; n <= z && n < diffs.length; n++) { if (diffs[n] < 0.02 && !still((n + 0.5) / fps)) run++; else run = 0; if (run === 6) stalls.push({ clip: c.i, t: +((n + 0.5) / fps).toFixed(2) }); }
     }
     const inShot = diffs.filter((_, n) => !expected((n + 0.5) / fps));

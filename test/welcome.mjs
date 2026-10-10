@@ -34,12 +34,12 @@ const r = await p.evaluate(async () => {
   const ov = plan.overlays.find((o) => o.type === 'welcome');
   const rc = plan.clips.filter((c) => c.rush && c.welcome);
   const A = rc.filter((c) => c.welcome === 'a'), last = rc.find((c) => c.welcome === 'last'), cyc = rc.filter((c) => c.welcome === 'cycle');
-  if (!ov) f.push('Einblendung fehlt');
-  if (A.length !== 10 || !last || cyc.length !== WELCOME.fonts.length) f.push(`Stücke: ${A.length} Ausschnitte, letztes ${!!last}, ${cyc.length} Wechsel`);
+  if (!ov || !ov.close || !ov.open) f.push('Einblendung fehlt (oder ohne Vorhang)');
+  if (A.length < 4 || !last || !ov || cyc.length !== ov.fonts.length) f.push(`Stücke: ${A.length} Ausschnitte, letztes ${!!last}, ${cyc.length} Wechsel`);
   if (A.length && A[0].start > 0.01) f.push('beginnt nicht sofort');
-  // erst zügig, dann allmählich langsamer
-  const dA = A.map((c) => c.end - c.start);
-  if (dA.some((d, k) => k && d < dA[k - 1] - 0.02) || !(dA[dA.length - 1] > dA[0] * 1.6)) f.push('Ausschnitte werden nicht allmählich langsamer: ' + dA.map((d) => d.toFixed(2)).join(','));
+  // erst zügig, dann allmählich langsamer (das letzte läuft durch das Schließen)
+  const dA = A.slice(0, -1).map((c) => c.end - c.start);
+  if (dA.some((d, k) => k && d < dA[k - 1] - 0.02) || !(dA[dA.length - 1] > dA[0] * 1.4)) f.push('Ausschnitte werden nicht allmählich langsamer: ' + dA.map((d) => d.toFixed(2)).join(','));
   if (rc.some((c) => !on(c.start))) f.push('Bildwechsel neben dem Schlag');
   // ähnliche Ausschnitte: Farbabstand innerhalb kleiner als im ganzen Material
   const cd = (a, c) => Math.hypot(a.avg[0] - c.avg[0], a.avg[1] - c.avg[1], a.avg[2] - c.avg[2]);
@@ -47,25 +47,32 @@ const r = await p.evaluate(async () => {
   const aM = A.map((c) => byId.get(c.mediaId)), dIn = mean(aM), dAll = mean(media);
   out.similar = [+dIn.toFixed(1), +dAll.toFixed(1)];
   if (!(dIn < dAll * 0.75)) f.push(`Ausschnitte nicht ähnlich genug (${dIn.toFixed(0)} gegenüber ${dAll.toFixed(0)})`);
-  if (new Set(A.map((c) => c.mediaId)).size < 9) f.push('Ausschnitte wiederholen sich');
-  // das letzte Video läuft weiter, darunter erscheint der Ortsname
-  const lm = last && byId.get(last.mediaId);
-  if (!lm || lm.kind !== 'video' || last.freezeAt != null) f.push('letztes Stück ist kein laufendes Video');
-  if (ov && last && !(ov.nameAt > last.start + 0.05 && ov.nameAt < last.end && on(ov.nameAt))) f.push('Ortsname nicht im letzten Video auf dem Schlag');
-  // 1:1: jeder Schriftwechsel ist genau ein Bildwechsel
+  if (new Set(A.map((c) => c.mediaId)).size < A.length - 1) f.push('Ausschnitte wiederholen sich');
+  if (ov && ov.close) {
+    const [c0, c1] = ov.close, [o0, o1] = ov.open, u = an.beatPeriod * shutterStep(an);
+    // Ablauf: „Welcome to…“ → Vorhang zu (weich, ≥ 1,2 s) → Schwarz mit „Welcome to <Ort>“ → Vorhang auf → Wechsel
+    if (!(c1 - c0 >= Math.min(1.2, u * 2) - 0.01)) f.push(`Vorhang schließt zu schnell (${(c1 - c0).toFixed(2)} s)`);
+    if (Math.abs(ov.nameAt - c1) > 0.01 || !on(c1) || !on(c0)) f.push('Ortsname nicht genau auf dem Schwarz / Vorhang nicht auf den Schlägen');
+    if (!(o0 > c1 + 0.1 && o1 > o0 + 0.8 && o1 <= ov.fonts[0] + 0.01)) f.push('Vorhang öffnet nicht nach dem Schwarz, vor den Schriftwechseln');
+    if (!last || Math.abs(last.start - c1) > 0.01) f.push('hinter dem Schwarz beginnt kein neues Bild');
+    const lm = last && byId.get(last.mediaId);
+    if (!lm || lm.kind !== 'video') f.push('beim Öffnen kein laufendes Video');
+    // nach dem Lied: das Schwarz liegt auf einem Wendepunkt (Abschnitt, Anstieg) oder einer Takt-Eins
+    const rel = (x) => x - plan.win.start;
+    const turn = (an.sections || []).some((x) => Math.abs(rel(x.start) - c1) < 0.05) || (an.rises || []).some((x) => Math.abs(rel(x.start) - c1) < 0.05) || Array.from(an.barStart).some((x) => Math.abs(rel(x) - c1) < 0.03);
+    if (!turn) f.push('Schwarz nicht auf einem Wendepunkt des Lieds');
+  }
+  // 1:1: jeder Schriftwechsel ist genau ein Bildwechsel; zum Einsatz hin schneller
   if (ov && cyc.length && (ov.fonts.length !== cyc.length || ov.fonts.some((t, k) => Math.abs(t - cyc[k].start) > 1e-6))) f.push('Schrift- und Bildwechsel nicht 1:1');
-  // schnell – langsamer – wieder schnell
   if (ov) {
-    const iv = ov.fonts.slice(1).map((t, k) => t - ov.fonts[k]);
-    const mx = Math.max(...iv), im = iv.indexOf(mx);
-    if (!(im > 1 && im < iv.length - 2 && iv[0] < mx * 0.6 && iv[iv.length - 1] < mx * 0.6)) f.push('Schriftwechsel nicht schnell–langsam–schnell: ' + iv.map((x) => x.toFixed(2)).join(','));
-    if (ov.pulls.some((t) => !on(t)) || ov.pulls.length < 3) f.push('Balken nicht in Zügen auf den Schlägen');
+    const iv = ov.fonts.slice(1).map((t, k) => t - ov.fonts[k]).concat([ov.end - ov.fonts[ov.fonts.length - 1]]);
+    if (!(iv[iv.length - 1] < iv[0] * 0.7)) f.push('Schriftwechsel werden zum Einsatz nicht schneller: ' + iv.map((x) => x.toFixed(2)).join(','));
   }
   // Einsatz: ein Video, auf der Eins von Refrain/Drop, direkt nach dem Schwarz
   const hook = plan.clips.find((c) => c.role === 'hook');
   const hm = hook && byId.get(hook.mediaId);
   if (!hook || !hm || hm.kind !== 'video') f.push('auf dem Einsatz kein Video');
-  if (hook && ov && Math.abs(hook.start - ov.end) > 0.03) f.push('Einsatz nicht direkt nach dem Schwarz');
+  if (hook && ov && Math.abs(hook.start - ov.end) > 0.03) f.push('Einsatz nicht direkt nach dem Einstieg');
   const sec = hook ? sectionAt(an, plan.win.start + hook.start + 0.05) : null;
   out.entry = sec && sec.label;
   if (!sec || !['drop', 'chorus'].includes(sec.label)) f.push('Einsatz nicht auf Refrain/Drop: ' + (sec && sec.label));
@@ -75,7 +82,7 @@ const r = await p.evaluate(async () => {
   if (plan.overlays.some((o) => (o.type === 'chapter' || o.type === 'lower' || o.type === 'city') && o.start < (ov ? ov.end : 0) + 6)) f.push('Ortsname danach noch einmal');
   const iss = planAudit(plan, media, an);
   if (iss.length) f.push('Stimmigkeit: ' + iss.slice(0, 3).map((i) => `@${i.t} ${i.code} ${i.msg}`).join(' | '));
-  out.times = { a: A.map((c) => +c.start.toFixed(2)), last: last && +last.start.toFixed(2), name: ov && +ov.nameAt.toFixed(2), fonts: ov && ov.fonts.map((x) => +x.toFixed(2)), pulls: ov && ov.pulls.map((x) => +x.toFixed(2)), end: ov && +ov.end.toFixed(2), D: +plan.duration.toFixed(1) };
+  out.times = { a: A.map((c) => +c.start.toFixed(2)), last: last && +last.start.toFixed(2), name: ov && +ov.nameAt.toFixed(2), close: ov && ov.close, open: ov && ov.open, fonts: ov && ov.fonts.map((x) => +x.toFixed(2)), end: ov && +ov.end.toFixed(2), D: +plan.duration.toFixed(1) };
 
   // Bild (nur Fotos, damit die Engine ohne Videodateien rendert)
   const pi = buildPlan({ an, media: imgs, settings: S, overrides: { texts: [], stickers: [] } });
@@ -91,9 +98,23 @@ const r = await p.evaluate(async () => {
     const count = (d, y0, y1, test) => { let n = 0; for (let y = Math.floor(y0 * H); y < Math.floor(y1 * H); y++) for (let x = 0; x < W; x++) { const i = (y * W + x) * 4; if (test(d[i], d[i + 1], d[i + 2])) n++; } return n; };
     const meanL = (d) => { let s = 0, n = 0; for (let i = 0; i < d.length; i += 16) { s += (d[i] + d[i + 1] + d[i + 2]) / 3; n++; } return s / n; };
     const white = (r, g, b2) => r > 235 && g > 235 && b2 > 235, yellow = (r, g, b2) => r > 200 && g > 165 && b2 < 90 && r - b2 > 140;
-    const s0 = await shot(0.08), sN = await shot(ovi.nameAt + 0.45);
+    const s0 = await shot(0.08), sN = await shot(ovi.nameAt + 0.45), sO = await shot(ovi.open[1] + 0.05);
     const tEnd = ovi.end - 0.03, sE = await shot(tEnd), sA = await shot(ovi.end + 0.12);
-    out.px = { white0: count(s0, 0.35, 0.65, white), yellowName: count(sN, 0.45, 0.65, yellow), endL: +meanL(sE).toFixed(1), afterL: +meanL(sA).toFixed(1) };
+    // auf dem Schwarz: Hintergrund dunkel, Schrift hell; nach dem Öffnen ist das Bild ganz frei (oben und unten)
+    const rowL = (d, y) => { let s2 = 0; for (let x = 0; x < W; x++) { const i = (Math.floor(y * H) * W + x) * 4; s2 += (d[i] + d[i + 1] + d[i + 2]) / 3; } return s2 / W; };
+    out.px = { white0: count(s0, 0.35, 0.65, white), yellowName: count(sN, 0.45, 0.65, yellow), blackTop: +rowL(sN, 0.1).toFixed(1), openTop: +rowL(sO, 0.04).toFixed(1), endL: +meanL(sE).toFixed(1), afterL: +meanL(sA).toFixed(1) };
+    if (out.px.blackTop > 4) f.push('auf dem Namen nicht schwarz');
+    if (out.px.openTop < 15) f.push('Vorhang nach dem Öffnen nicht ganz offen');
+    // weich: die Kante des Vorhangs bewegt sich Bild für Bild ohne Sprung (höchstens 2,2× so schnell wie im Mittel)
+    const edge = (d) => { for (let y = 0; y < H / 2; y++) { let s2 = 0; for (let x = 0; x < W; x += 3) { const i = (y * W + x) * 4; s2 += d[i] + d[i + 1] + d[i + 2]; } if (s2 / (W / 3) / 3 > 6) return y; } return H / 2; };
+    for (const [a0, a1, nm] of [[ovi.close[0], ovi.close[1], 'schließt'], [ovi.open[0], ovi.open[1], 'öffnet']]) {
+      const ys = [];
+      for (let t = a0; t <= a1 + 1e-6; t += 1 / 30) ys.push(edge(await shot(t)));
+      const st = ys.slice(1).map((y, k) => Math.abs(y - ys[k]));
+      const avg = (H / 2) / Math.max(1, st.length);
+      const mono = ys.every((y, k) => !k || (nm === 'schließt' ? y >= ys[k - 1] - 1 : y <= ys[k - 1] + 1));
+      if (!mono || Math.max(...st) > avg * 2.2 + 2) f.push(`Vorhang ${nm} ruckelig (Schritte ${st.join(',')})`);
+    }
     // Lage: Ausdehnung und Schwerpunkt der weißen bzw. gelben Schrift
     const box = (d, test) => { let x0 = W, x1 = -1, ys = 0, n = 0; for (let y = Math.floor(0.3 * H); y < Math.floor(0.7 * H); y++) for (let x = 0; x < W; x++) { const i = (y * W + x) * 4; if (test(d[i], d[i + 1], d[i + 2])) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); ys += y; n++; } } return { x0, x1, cx: (x0 + x1) / 2, cy: n ? ys / n : 0, w: x1 - x0 }; };
     const w0 = box(s0, white), w1 = box(sN, white), y1 = box(sN, yellow);
@@ -104,7 +125,7 @@ const r = await p.evaluate(async () => {
     if (!(w1.w < w0.w - 3)) f.push('die Punkte nach „Welcome to“ verschwinden nicht');
     if (out.px.white0 < 20) f.push('„Welcome to…“ nicht von Anfang an zu sehen');
     if (out.px.yellowName < 20) f.push('Ortsname nicht gelb zu sehen');
-    if (out.px.endL > 6) f.push('vor dem Einsatz nicht schwarz');
+    if (out.px.endL < 25) f.push('vor dem Einsatz kein Bild');
     if (out.px.afterL < 25) f.push('nach dem Schwarz kein Bild');
     // Schriftwechsel sichtbar: kurz vor und kurz nach einem Wechsel unterscheidet sich der gelbe Schriftzug
     const k = 4, ta = ovi.fonts[k] - 0.04, tb = ovi.fonts[k] + 0.04;
@@ -119,11 +140,16 @@ const r = await p.evaluate(async () => {
   const sh = ps.overlays.find((o) => o.type === 'shutter');
   if (!sh || sh.steps || !sh.glide) f.push('Vorhang öffnet nicht gleichmäßig');
   else {
-    const rs = ps.clips.filter((c) => c.rush && c.start >= sh.open - 0.01);
+    // langsam: über den Aufbau (≥ 6 Zählzeiten bzw. 2,8 s) bis genau auf den Einsatz; dahinter schnell, ein Bild je
+    // Zählzeit, auf den letzten beiden im halben Takt
     const u = an.beatPeriod * shutterStep(an);
-    out.shutter = rs.map((c) => +(c.end - c.start).toFixed(2));
-    if (rs.length < 4 || rs.some((c) => Math.abs(c.end - c.start - u) > 0.05)) f.push('Vorhang: nicht ein Bild je Zählzeit ' + out.shutter.join(','));
-    if (new Set(rs.map((c) => c.mediaId)).size !== rs.length) f.push('Vorhang: Bild doppelt hintereinander');
+    const rs = ps.clips.filter((c) => c.rush && c.start > sh.open + 0.01);
+    out.shutter = { open: +(sh.end - sh.open).toFixed(2), pieces: rs.map((c) => +(c.end - c.start).toFixed(2)) };
+    if (sh.end - 0.02 - sh.open < Math.min(6 * u, 2.8) - 0.05) f.push(`Vorhang öffnet zu schnell (${(sh.end - sh.open).toFixed(2)} s)`);
+    const hk = ps.clips.find((c) => c.role === 'hook'), se = hk && sectionAt(an, ps.win.start + hk.start + 0.05);
+    if (!hk || Math.abs(hk.start - (sh.end - 0.02)) > 0.03 || !se || !['drop', 'chorus'].includes(se.label)) f.push('Vorhang nicht genau auf dem Einsatz offen');
+    if (rs.length < 4 || rs.some((c) => c.end - c.start > u + 0.05)) f.push('Vorhang: dahinter nicht schnell ' + out.shutter.pieces.join(','));
+    for (let k = 1; k < rs.length; k++) if (rs[k].mediaId === rs[k - 1].mediaId) { f.push('Vorhang: Bild doppelt hintereinander'); break; }
   }
   return { f, out };
 });

@@ -319,13 +319,16 @@ async function improveHook(opts, onProgress, only = {}) {
     let plan;
     try { plan = buildPlan({ ...opts, settings: { ...s0, ...cand } }); } catch (e) { return; }
     const hs = hookScore(plan, opts.media, opts.an), h = hs.score;
+    if (only.log) only.log.push(`${cand.intro}/${cand.songStart}/${cand.hookId || '-'}:${h}${hs.errors ? 'e' + hs.errors : ''} q${planQuality(plan, opts.media).toFixed(2)}`);
     // ein anderer Einstieg muss deutlich stärker sein (sonst bleibt der, den die Regie zum Song gewählt hat – und nicht jeder
     // Film beginnt gleich); Startbild und Songstelle dürfen schon bei kleinem Gewinn wechseln
     // (stoppt der bisherige Einstieg schon beim Scrollen – ab 70 –, braucht ein anderer einen klaren Vorsprung)
     const need = cand.intro !== (best.settings ? best.settings.intro : cur0.intro) ? (best.h >= 70 && !best.e ? 18 : 10) : 2;
     if (hs.errors > best.e || (hs.errors === best.e && h <= best.h + need)) return;
     // der Rest des Films darf nicht leiden
-    if (planQuality(plan, opts.media) < q0 - Math.max(0.5, Math.abs(q0) * 0.08)) return;
+    // (ist der Einstieg noch schwach – unter 70, der Film-Check meldet ihn –, darf der Rest etwas mehr nachgeben: ein
+    // Film, der beim Scrollen nicht stoppt, wird gar nicht erst gesehen)
+    if (planQuality(plan, opts.media) < q0 - (best.h < 70 ? Math.max(1.2, Math.abs(q0) * 0.2) : Math.max(0.5, Math.abs(q0) * 0.08))) return;
     best = { h, e: hs.errors, settings: { intro: cand.intro, songStart: cand.songStart }, hookId: cand.hookId };
   };
   for (let round = 0; round < 2; round++) {

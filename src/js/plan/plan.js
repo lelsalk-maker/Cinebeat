@@ -107,19 +107,22 @@ function planOnce(opts) {
     const st = shutterStep(an), u = beatDur * st;
     // Zeit einer (auch halben) Zählzeit auf dem Beat-Raster
     const at = (x) => { const k = x * st, k0 = Math.floor(k + 1e-6), f = k - k0; return f > 1e-6 ? atB(k0) + (atB(k0 + 1) - atB(k0)) * f : atB(k0); };
-    // Öffnen wie das Schließen in Zügen auf den Schlägen (15–19), auf dem Einsatz (20) ist das Bild ganz frei
     shutter = { u, at, reveal: SHUTTER.tiles.map((x, k) => (k === 0 ? 0 : at(x))), colorAt: SHUTTER.colors.map(at), pulls: SHUTTER.pulls.map(at), black: at(SHUTTER.black), open: at(SHUTTER.open), end: at(SHUTTER.end), opens: [0, 1, 2, 3, 4].map((k) => at(SHUTTER.open + k)) };
+    // nach dem Lied: der Einsatz ist der echte Refrain-/Drop-Anfang nahe Zählzeit 24; das Öffnen beginnt, wo der Aufbau
+    // in den Einsatz beginnt (sonst zwei Takte davor), und läuft langsam und gleichmäßig bis genau auf den Einsatz
+    shutter.end = introEntry(an, win, shutter.end, at(SHUTTER.end - 3), at(SHUTTER.end + 4));
+    { const lo = shutter.black + Math.max(4 * u, 2.4); shutter.open = introTurn(an, win, shutter.end, lo, Math.max(lo, shutter.end - Math.max(6 * u, 2.8)), shutter.end - 8 * u); }
     if (shutter.end > D - Math.max(3, barDur * 2)) shutter = null;
     else pre = { kind: 'shutter', beats: SHUTTER.black * st, end: shutter.black, pieces: [{ start: 0, end: shutter.black, f: { pre: 'wall' } }] };
   }
-  // „Welcome to…“: zehn ähnliche Ausschnitte (immer langsamer), das letzte Video läuft weiter, Ortsname in Gelb,
-  // zehn Schriften im Wechsel mit den Bildern, Balken schließen auf den Schlägen, auf dem Einsatz ein Video
+  // „Welcome to…“: ähnliche Ausschnitte (immer langsamer), der Vorhang schließt weich, auf Schwarz „Welcome to <Ort>“,
+  // er öffnet sich wieder, der Ortsname wechselt mit jedem Bild die Schrift, auf dem Einsatz ein Video – alles nach dem Lied
   let welcome = null;
   if (intro === 'welcome' && !flight && !pre) {
     const st = shutterStep(an), u = beatDur * st;
     const at = (x) => { const k = x * st, k0 = Math.floor(k + 1e-6), f = k - k0; return f > 1e-6 ? atB(k0) + (atB(k0 + 1) - atB(k0)) * f : atB(k0); };
-    welcome = { u, at, clips: WELCOME.clips.map((x) => (x ? at(x) : 0)), last: at(WELCOME.last), name: at(WELCOME.name), fonts: WELCOME.fonts.map(at), pulls: WELCOME.pulls.map(at), end: at(WELCOME.end) };
-    if (welcome.end > D - Math.max(3, barDur * 2) || s.showTitle === false || !(settings.title || '').trim()) welcome = null;
+    welcome = { u, at, ...welcomeTimes(an, win, at, u) };
+    if (welcome.end > D - Math.max(3, barDur * 2) || welcome.clips.length < 3 || welcome.fonts.length < 2 || s.showTitle === false || !(settings.title || '').trim()) welcome = null;
   }
   if (pre && pre.kind !== 'shutter' && pre.end > D * 0.35) pre = null;
   const pb = pre ? pre.beats : 0;
@@ -188,19 +191,24 @@ function planOnce(opts) {
   // auf den letzten beiden Zählzeiten doppelt so schnell – auf dem Einsatz steht das stärkste Bild
   if (shutter) {
     // (jeder Wechsel auf einem echten Schlag des Songs – nicht mit fester Schlaglänge weitergezählt)
-    const pieces = [], at = shutter.at;
+    const pieces = [], at = shutter.at, u = shutter.u;
     // (ruhig: ein Bild je Zählzeit, eines nach dem anderen, während sich der Vorhang gleichmäßig öffnet)
-    const cuts = [shutter.black, at(SHUTTER.open + 1)];
-    for (let x = SHUTTER.open + 2; x < SHUTTER.end - 1e-6; x += 1) cuts.push(at(x));
+    // (hinter dem Vorhang bleibt es schnell: ein Bild je Zählzeit, auf den letzten beiden im halben Takt in den Einsatz)
+    const cuts = [shutter.black];
+    for (let x = 0; at(x) < shutter.end - 0.05 && x < 200; x += 0.5) {
+      const t = at(x), half = x % 1 !== 0;
+      if (t > shutter.open + u * 0.5 && (!half || t > shutter.end - 2 * u - 0.02)) cuts.push(t);
+    }
     cuts.push(shutter.end);
     for (let k = 0; k + 1 < cuts.length; k++) pieces.push({ start: cuts[k], end: cuts[k + 1], f: { rush: true } });
     rush = { pieces, end: shutter.end, shutter: true };
   }
   if (welcome) {
-    // Ausschnitte (0 … 9), das weiterlaufende letzte Video (10), dann je Schriftwechsel ein Bild (11 …)
-    const cuts = [...welcome.clips, welcome.last, ...welcome.fonts, welcome.end];
+    // Ausschnitte (das letzte läuft durch das Schließen), hinter dem Schwarz ein Video, das sich beim Öffnen zeigt,
+    // dann je Schriftwechsel ein Bild
+    const cuts = [...welcome.clips, welcome.P, ...welcome.fonts, welcome.end], nA = welcome.clips.length;
     const pieces = [];
-    for (let k = 0; k + 1 < cuts.length; k++) pieces.push({ start: cuts[k], end: cuts[k + 1], f: { rush: true, welcome: k < 10 ? 'a' : k === 10 ? 'last' : 'cycle' } });
+    for (let k = 0; k + 1 < cuts.length; k++) pieces.push({ start: cuts[k], end: cuts[k + 1], f: { rush: true, welcome: k < nA ? 'a' : k === nA ? 'last' : 'cycle' } });
     rush = { pieces, end: welcome.end, welcome: true };
   }
 
@@ -1105,7 +1113,7 @@ function planOnce(opts) {
   if (gridPlan && clips.length > 1) fillGrid(P, gridPlan, true);
   for (const c of clips) if (c.gridMid) fillGrid(c.i, c.gridMid, false);
 
-  // Film-Strip-Ende: das letzte Bild wird zum Negativ auf einem Filmstreifen, der rückwärts durch den Film läuft
+  // Bildkarten-Ende: das letzte Bild löst sich zur Karte, die Bilder davor gleiten nach (Engine `composeStrip`)
   if (outro === 'strip' && !flight && clips.length > 3) {
     const lastC = clips[clips.length - 1];
     const ids = [];
@@ -1126,7 +1134,7 @@ function planOnce(opts) {
   const userMoved = new Set((overrides.moves || []).flatMap((x) => [x.id, x.before]).concat(overrides.order || []).filter(Boolean));
   const nUs = usOn ? clips.filter((c) => isUs(byId.get(c.mediaId))).length : 0;
   if (byTime) {
-    const ar = arrangeBlocks(clips, { byId, ovOf, moved: userMoved, us: usOn, aspect: outAspect, vary: s.recut ? ((s.seed >>> 0) ^ (s.recut * 2654435761)) >>> 0 : 0, lied, energyAt: lied ? songEnergyAt(an, win) : null });
+    const ar = arrangeBlocks(clips, { byId, ovOf, moved: userMoved, us: usOn, aspect: outAspect, vary: s.recut ? ((s.seed >>> 0) ^ (s.recut * 2654435761)) >>> 0 : 0, lied, energyAt: lied ? songEnergyAt(an, win) : null, rounds: opts._probe ? 2 : 0 });
     // weiche Szenenübergänge bleiben auf ihren Taktanfängen (musikalische Stelle, nicht die Aufnahme)
     if (ar.moved && lied) dir.notes.push(`Reihenfolge zum Lied: ${ar.moved} Aufnahmen so gesetzt, dass die Bildenergie der Songstelle folgt${usOn && nUs ? ', ihr die ruhigen Passagen tragt' : ''}, starke Bilder auf Einsätze und lange Plätze kommen, Momente beieinander bleiben und Nachbarn weich ineinander übergehen – unabhängig vom Aufnahmetag.`);
     else if (ar.moved) {
@@ -1201,11 +1209,11 @@ function planOnce(opts) {
       if (nx && !fixedX(nx) && b - c.start >= minL(c) - 0.06 && grows(nx, c.end - b, true) && peakHold(nx, c.end - b)) opts2.push(['end', c.end - b]);
       // ein Video bleibt in dem Teil, der zu ihm passt (bewegt → Drop/Refrain, ruhig → ruhiger Teil): sonst nicht dorthin
       // verschieben, wo es nicht hingehört – lieber endet es am Wechsel und ein Foto übernimmt den Rest
-      const mvC = byId.get(c.mediaId);
+      const mvC = byId.get(c.mediaId), held = [];
       if (mvC && mvC.kind === 'video') {
         const lively = (mvC.motion || 0) > 0.05, fits = (lab) => (lively ? !isCalmLabel(lab) : isCalmLabel(lab));
         const lb0 = sectionAt(an, win.start + b - 0.05).label, la0 = sectionAt(an, win.start + b + 0.05).label;
-        if (fits(lb0) && !fits(la0)) for (let k = opts2.length - 1; k >= 0; k--) if (opts2[k][0] === 'start') opts2.splice(k, 1);
+        if (fits(lb0) && !fits(la0)) for (let k = opts2.length - 1; k >= 0; k--) if (opts2[k][0] === 'start') held.push(...opts2.splice(k, 1));
       }
       // die ganze Einstellung rückt auf den Wechsel (gleiche Länge): der Vorgänger wird länger, der Nachfolger kürzer
       const len0 = c.end - c.start;
@@ -1227,9 +1235,12 @@ function planOnce(opts) {
             clips.splice(c.i + 1, 0, nc);
             clips.forEach((x, k) => { x.i = k; });
             moved++;
+            continue;
           }
         }
-        continue;
+        // geht beides nicht, schneidet der Cutter trotzdem auf dem Wechsel (das Video läuft dann im neuen Teil weiter)
+        if (!held.length) continue;
+        opts2.push(...held);
       }
       opts2.sort((x, y) => x[1] - y[1]);
       if (opts2[0][0] === 'start') { pv.end = b; c.start = b; } else if (opts2[0][0] === 'shift') { pv.end = b; c.start = b; c.end = b + len0; nx.start = c.end; } else { c.end = b; nx.start = b; }
@@ -2135,17 +2146,18 @@ function planOnce(opts) {
     overlays.push({ type: 'shutter', start: shutter.black - 0.03, open: shutter.open, end: shutter.end + 0.02, glide: true });
     // nach dem dritten Zug kurz Schwarz, dann auf dem Schlag Ortsname und Koordinaten; sie stehen auf Schwarz und
     // gehen mit dem Öffnen (danach kein zweites Mal als Kapitel)
-    if (title) overlays.push({ type: 'city', text: title, sub: subtitle, geo, start: shutter.black, end: shutter.open + 0.5 * u, cap: shutter.open + 0.5 * u });
+    // (der Ortsname steht auf Schwarz und geht, während sich der Vorhang zu öffnen beginnt)
+    if (title) overlays.push({ type: 'city', text: title, sub: subtitle, geo, start: shutter.black, end: Math.max(shutter.open + 1.5 * u, shutter.open + 0.35 * (shutter.end - shutter.open)), cap: Math.max(shutter.open + 1.5 * u, shutter.open + 0.35 * (shutter.end - shutter.open)) });
     // Geräusch: nur der Projektor läuft ganz leise, der Rollladen schließt still
     sfx.push({ kind: 'projector', t: 0, dur: Math.max(0.6, shutter.pulls[0] + 0.25), gain: 0.35 });
     // Musik: läuft von Anfang an unverändert (auf Instagram kommt der Song ohnehin so); der Einstieg lebt davon,
     // dass jedes Bild, jeder Farbwechsel, jeder Zug und der Ortsname auf den Schlägen sitzen
-    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Kino-Rollladen: ${clips[0].split ? clips[0].split.ids.length : 6} Ausschnitte eurer stärksten Aufnahmen erscheinen nebeneinander im Kinoband, schwarzweiß im halben Takt, das stärkste vorn, und werden in derselben Folge farbig; der Rollladen schließt in drei Zügen auf den Schlägen, kurz Schwarz, dann erscheint ${title ? `„${title}“` : 'der Ort'}${geo ? ' mit Koordinaten' : ''} auf Schwarz und geht mit dem Öffnen. Alles sitzt auf den Schlägen des Songs, der von Anfang an voll läuft; der Einsatz kommt fünf Takte nach dem ersten Bild (${fmtMS(shutter.end)}).`);
+    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Kino-Rollladen: ${clips[0].split ? clips[0].split.ids.length : 6} Ausschnitte eurer stärksten Aufnahmen erscheinen nebeneinander im Kinoband, schwarzweiß im halben Takt, das stärkste vorn, und werden in derselben Folge farbig; der Rollladen schließt in drei Zügen auf den Schlägen, kurz Schwarz, dann erscheint ${title ? `„${title}“` : 'der Ort'}${geo ? ' mit Koordinaten' : ''} auf Schwarz; der Vorhang öffnet sich langsam und gleichmäßig über den Aufbau (${fmtMS(shutter.open)}) bis genau auf den Einsatz (${fmtMS(shutter.end)}), dahinter wechseln die Bilder schnell im Takt. Alles sitzt auf den Schlägen des Songs, der von Anfang an voll läuft.`);
   }
   if (rush && rush.welcome && welcome) {
     // „Welcome to…“ von Anfang an; Ortsname auf dem Schlag; Schriftwechsel genau mit den Bildwechseln; Balken in Zügen
-    overlays.push({ type: 'welcome', start: 0, end: welcome.end + 0.02, text: title, nameAt: welcome.name, fonts: welcome.fonts.slice(), pulls: welcome.pulls.slice(), pullDur: Math.min(0.28, welcome.u * 0.5) });
-    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Welcome to ${title}: zehn passende Ausschnitte, immer ruhiger, das letzte Video läuft weiter; der Ortsname erscheint in Gelb und wechselt zwölfmal die Schrift – jedes Mal im selben Augenblick wie das Bild dahinter; die Balken schließen auf den Schlägen, auf dem Einsatz geht es mit einem Video in den Film.`);
+    overlays.push({ type: 'welcome', start: 0, end: welcome.end + 0.02, text: title, nameAt: welcome.name, fonts: welcome.fonts.slice(), close: welcome.close.slice(), open: welcome.open.slice() });
+    dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, `Welcome to ${title}: ${welcome.clips.length} passende Ausschnitte unter „Welcome to…“, immer ruhiger; der Vorhang schließt weich bis ${fmtMS(welcome.P)}, wo der Aufbau beginnt, auf Schwarz erscheint „Welcome to ${title}“, der Vorhang öffnet sich wieder, und der Ortsname wechselt ${welcome.fonts.length}× die Schrift – jedes Mal mit dem Bild dahinter, zum Einsatz hin im halben Takt; auf dem Einsatz (${fmtMS(welcome.end)}) geht es mit einem Video in den Film.`);
   }
   if (pre && pre.kind === 'countdown') dir.notes.splice(Math.max(0, dir.notes.length - 1), 0, 'Vorspann Countdown: 3 · 2 · 1 wie im alten Kino, danach beginnt dein Einstieg.');
 
@@ -2306,7 +2318,7 @@ function planOnce(opts) {
   if (last && last.strip) {
     const dur = last.end - last.start;
     if (endTitle) overlays.push({ type: 'lower', text: title, sub: subtitle, geo: null, start: last.start + dur * 0.4, end: D + 0.5, center: true });
-    dir.notes.push('Ende als Filmstreifen: das letzte Bild wird zum Einzelbild auf dem Streifen, der rückwärts durch deinen Film läuft.');
+    dir.notes.push('Ende mit Bildkarten: das letzte Bild löst sich aus dem Vollbild zu einer Karte, die Bilder davor gleiten ruhig nach – ein Rückblick auf deinen Film.');
   }
 
   // Digicam: kleiner Blitz auf Fotoschnitten, Datumsstempel wie früher

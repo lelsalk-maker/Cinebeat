@@ -21,12 +21,32 @@ function dayBlock(m) {
 // Energie des Songteils (0 ruhig … 1 Höhepunkt)
 const SLOT_ENERGY = { drop: 1, chorus: 0.9, build: 0.65, verse: 0.4, intro: 0.3, outro: 0.3, break: 0.2 };
 
+// Bildvergleich zweier Aufnahmen (Aufbau, Farbabstand, Beinahe-Doppel) hängt nur von den Bildern ab: über alle
+// Planer-Durchgänge zwischenspeichern (die Suche baut einen Film viele Male, die Aufnahmen bleiben dieselben)
+const PAIR_BASE = new WeakMap();
+function pairBase(a, b) {
+  let m = PAIR_BASE.get(a);
+  if (!m) { m = new Map(); PAIR_BASE.set(a, m); }
+  let v = m.get(b);
+  // (ändern sich die Merkmale eines Bilds – Nachanalyse –, wird neu gerechnet)
+  if (!v || v[3] !== a.layout || v[4] !== b.layout || v[5] !== a.sig || v[6] !== b.sig || v[7] !== a.avg || v[8] !== b.avg || v[9] !== a.hash || v[10] !== b.hash) {
+    const sim = layoutSim(a.layout, b.layout);
+    // Beinahe-Doppel: gleicher Aufbau UND gleiche Farbe (gleicher Aufbau in anderer Farbe ist ein Match-Cut)
+    const colorD = a.avg && b.avg ? Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) : 99;
+    const dup = !!(sameMotif(a, b) || (a.hash && b.hash && hamming(a.hash, b.hash) < 12 && colorD < 30));
+    v = [sim, colorD, dup, a.layout, b.layout, a.sig, b.sig, a.avg, b.avg, a.hash, b.hash];
+    m.set(b, v);
+  }
+  return v;
+}
+
 /**
  * Ordnet die schlichten Foto-Einstellungen jedes Tagesblocks neu (lokale Suche über Tausche).
  * Fest bleiben: Videos, eigene Entscheidungen, verschobene Aufnahmen, Startbild, Stil-Mittel und Bilder, auf die sich
  * Rückspulen, Wiederholung oder Echo beziehen. Liefert { moved, blocks } für die Erklärung.
  */
-function arrangeBlocks(clips, { byId, ovOf = () => null, moved: userMoved = new Set(), us = true, aspect = 0, vary = 0, lied = false, energyAt = null }) {
+function arrangeBlocks(clips, { byId, ovOf = () => null, moved: userMoved = new Set(), us = true, aspect = 0, vary = 0, lied = false, energyAt = null, rounds = 0 }) {
+  // (rounds: Probeläufe der Längensuche ordnen nur grob – der gewählte Schnitt wird danach vollständig geordnet)
   const special = (c) => c.split || c.grid || c.burst || c.rush || c.stack || c.strip || c.miniRew || c.pre || c.reveal || c.leader || c.flightAnim || c.loop || c.vid || c.gridMid || c.afterGrid || c.replay || c.replaySeg || c.repeatSeg || c.echo;
   // eigenes Motiv bleibt; „Gefällt mir nicht“ ändert nur die Bewegung und wird mitgeordnet
   // (auch ein bei „Gefällt mir nicht“ getauschtes Foto bleibt, wo es ist: nur diese Stelle ändert sich)
@@ -77,7 +97,14 @@ function arrangeBlocks(clips, { byId, ovOf = () => null, moved: userMoved = new 
     return v;
   };
   // Zwischenspeicher: die Suche prüft viele Tausche, Bildvergleiche nur einmal rechnen
-  const sizeC = new Map(), energyC = new Map(), pairC = new Map();
+  const sizeC = new Map(), energyC = new Map();
+  // (Aufnahmen als Zahlen: Nachbar-Bewertung in einer Tabelle statt über Text-Schlüssel – die Suche prüft sehr viele Tausche)
+  const mList = [...new Set(clips.map((c) => c.mediaId).filter((id) => id != null && byId.has(id)))].map((id) => byId.get(id));
+  const mIdx = new Map(mList.map((m, i) => [m.id, i]));
+  const NM = mList.length;
+  const pairT = new Float64Array(NM * NM).fill(NaN);
+  const slotM = Int32Array.from(clips, (c) => (c.mediaId != null && mIdx.has(c.mediaId) ? mIdx.get(c.mediaId) : -1));
+  const swapK = (ka, kb) => { [clips[ka].mediaId, clips[kb].mediaId] = [clips[kb].mediaId, clips[ka].mediaId]; const x = slotM[ka]; slotM[ka] = slotM[kb]; slotM[kb] = x; };
   const sizeOf = (m) => { let v = sizeC.get(m.id); if (v == null) { v = shotSize(m); sizeC.set(m.id, v); } return v; };
   const energyOf = (m) => { let v = energyC.get(m.id); if (v == null) { v = mediaEnergy(m); energyC.set(m.id, v); } return v; };
   // zwei Nachbarn: nie Beinahe-Doppel hintereinander; ähnlicher Bildaufbau ist eine Match-Cut-Chance (wie in flowOrder),
@@ -85,14 +112,8 @@ function arrangeBlocks(clips, { byId, ovOf = () => null, moved: userMoved = new 
   const framed = (m) => { if (!aspect || !m.w || !m.h) return false; const r = m.w / m.h; return (r > aspect ? aspect / r : r / aspect) < 0.5; };
   const pair = (a, b) => {
     if (!a || !b) return 0;
-    const key = a.id + '|' + b.id;
-    let p = pairC.get(key);
-    if (p != null) return p;
-    p = 0;
-    const sim = layoutSim(a.layout, b.layout);
-    // Beinahe-Doppel: gleicher Aufbau UND gleiche Farbe (gleicher Aufbau in anderer Farbe ist ein Match-Cut)
-    const colorD = a.avg && b.avg ? Math.hypot(a.avg[0] - b.avg[0], a.avg[1] - b.avg[1], a.avg[2] - b.avg[2]) : 99;
-    const dup = sameMotif(a, b) || (a.hash && b.hash && hamming(a.hash, b.hash) < 12 && colorD < 30);
+    let p = 0;
+    const [sim, colorD, dup] = pairBase(a, b);
     if (dup) p -= 0.6;
     // Match-Cut (Übergangswahl ab 0,78): unsichtbarer Schnitt, Kamerafahrt läuft weiter – nur bildfüllend möglich
     // (ein gerahmtes Querfoto im Hochformat hat keinen Ausschnitt, an den die Bewegung anschließen könnte)
@@ -119,9 +140,19 @@ function arrangeBlocks(clips, { byId, ovOf = () => null, moved: userMoved = new 
       if (momentOf.has(a.id) && momentOf.get(a.id) === momentOf.get(b.id)) p += 0.5;
       else if (a.time && b.time && Math.abs(a.time - b.time) <= 10 * 60000) p += 0.2;
     }
-    pairC.set(key, p);
     return p;
   };
+  const pairI = (i, j) => {
+    if (i < 0 || j < 0) return 0;
+    const q = i * NM + j;
+    let p = pairT[q];
+    if (p !== p) { p = pair(mList[i], mList[j]); pairT[q] = p; }
+    return p;
+  };
+  // Einstellungsgröße je Aufnahme (−1: kein Foto) für „drei gleiche hintereinander“
+  const sizeI = Int8Array.from(mList, (m) => (m.kind === 'image' ? sizeOf(m) : -1));
+  const stamp = new Int32Array(clips.length + 3), stamp2 = new Int32Array(clips.length + 3), blockT = new Int32Array(clips.length + 3);
+  let tick = 0, bTick = 0;
 
   // Blöcke: zusammenhängende freie Plätze, deren Aufnahmen im selben Tagesblock liegen
   // (im Gesamtfilm nie über ein Ortskapitel hinweg)
@@ -138,49 +169,85 @@ function arrangeBlocks(clips, { byId, ovOf = () => null, moved: userMoved = new 
     groups.get(b).push(k);
   }
   let moved = 0, blocks = 0;
-  const mediaAt = (k) => (clips[k] ? byId.get(clips[k].mediaId) : null);
   for (const ks of groups.values()) {
     const n = ks.length;
     if (n < 2) continue;
     // Rang nach Aufnahmezeit (für den sanften Zug zur Chronologie)
     const rankOf = new Map(ks.map((k) => clips[k].mediaId).sort((a, b) => (byId.get(a).time || 0) - (byId.get(b).time || 0)).map((id, r) => [id, r]));
     const before = ks.map((k) => clips[k].mediaId);
-    const pos = new Map(ks.map((k, p) => [k, p]));
+    const posA = new Int32Array(clips.length).fill(-1);
+    ks.forEach((k, p) => { posA[k] = p; });
+    // Platz × Aufnahme ohne Nachbarn: hängt nur von beiden ab – einmal rechnen
+    const unT = new Float64Array(clips.length * NM).fill(NaN);
+    const sm = (k) => (k >= 0 && k < clips.length ? slotM[k] : -1);
     const local = (set) => {
       let v = 0;
-      const edges = new Set();
-      for (const k of set) {
-        if (pos.has(k)) v += unary(clips[k], byId.get(clips[k].mediaId), rankOf.get(clips[k].mediaId), pos.get(k), n);
-        edges.add(k - 1); edges.add(k);
+      const t1 = ++tick;
+      for (let a = 0; a < set.length; a++) {
+        const k = set[a], p = posA[k], mi = slotM[k];
+        if (p >= 0) {
+          const q = k * NM + mi;
+          let u = unT[q];
+          if (u !== u) { const m = mList[mi]; u = unary(clips[k], m, rankOf.get(m.id), p, n); unT[q] = u; }
+          v += u;
+        }
       }
-      for (const e of edges) if (e >= 0) v += pair(mediaAt(e), mediaAt(e + 1));
+      // (gleiche Reihenfolge der Summe wie bisher: erst alle Plätze, dann die Nachbarn)
+      for (let a = 0; a < set.length; a++) {
+        const k = set[a];
+        if (k - 1 >= 0 && stamp[k - 1] !== t1) { stamp[k - 1] = t1; v += pairI(sm(k - 1), sm(k)); }
+        if (stamp[k] !== t1) { stamp[k] = t1; v += pairI(sm(k), sm(k + 1)); }
+      }
       // drei gleiche Einstellungsgrößen hintereinander wirken eintönig
-      const tri = new Set();
-      for (const k of set) for (let q = k - 2; q <= k; q++) if (q >= 0) tri.add(q);
-      for (const q of tri) {
-        const ms = [mediaAt(q), mediaAt(q + 1), mediaAt(q + 2)];
-        if (ms.every((m) => m && m.kind === 'image') && sizeOf(ms[0]) === sizeOf(ms[1]) && sizeOf(ms[1]) === sizeOf(ms[2])) v -= 0.25;
+      for (let a = 0; a < set.length; a++) {
+        for (let q = set[a] - 2; q <= set[a]; q++) {
+          if (q < 0 || stamp2[q] === t1) continue;
+          stamp2[q] = t1;
+          const i0 = sm(q), i1 = sm(q + 1), i2 = sm(q + 2);
+          if (i0 >= 0 && i1 >= 0 && i2 >= 0) { const z = sizeI[i0]; if (z >= 0 && z === sizeI[i1] && z === sizeI[i2]) v -= 0.25; }
+        }
       }
       return v;
+    };
+    // je Runde alle verbessernden Tausche, der beste zuerst; jeder weitere nur, wenn er die schon getauschten Stellen
+    // (± 2 Plätze, so weit reicht die Bewertung) nicht berührt und nach dem Nachrechnen immer noch verbessert – so
+    // kommt die Suche in wenigen Runden ans Ziel statt in vielen mit je einem Tausch
+    const applyBatch = (cands, swap) => {
+      if (!cands.length) return 0;
+      cands.sort((x, y) => y.g - x.g);
+      const t = ++bTick;
+      let done = 0;
+      for (const c of cands) {
+        const set = c.A.concat(c.B);
+        if (set.some((k) => blockT[k] === t)) continue;
+        if (done) {
+          const v0 = local(set);
+          swap(c.A, c.B);
+          if (local(set) - v0 <= 1e-3) { swap(c.A, c.B); continue; }
+        } else swap(c.A, c.B);
+        for (const k of set) for (let q = Math.max(0, k - 2); q <= k + 2; q++) blockT[q] = t;
+        done++;
+      }
+      return done;
     };
     // „Zum Lied“: Momente bleiben am Stück – getauscht werden ganze Läufe gleicher Länge (eine Szene an eine besser
     // passende Songstelle) und Bilder innerhalb eines Moments (welches zuerst, welches auf den Einsatz)
     if (lied) {
       const momId = (k) => { const mo = momentOf.get(clips[k].mediaId); return mo ? mo.mo : null; };
-      const swapSets = (A, B) => { for (let i = 0; i < A.length; i++) [clips[A[i]].mediaId, clips[B[i]].mediaId] = [clips[B[i]].mediaId, clips[A[i]].mediaId]; };
-      for (let round = 0; round < 60; round++) {
+      const swapSets = (A, B) => { for (let i = 0; i < A.length; i++) swapK(A[i], B[i]); };
+      for (let round = 0; round < (rounds || 60); round++) {
         const runs = [];
         for (let q = 0; q < n; q++) {
           const k = ks[q], last = runs[runs.length - 1];
           if (last && ks[q - 1] === k - 1 && momId(k) && momId(k) === momId(last[last.length - 1])) last.push(k); else runs.push([k]);
         }
-        let best = null, gain = 1e-3;
+        const cands = [];
         const tryMove = (A, B) => {
           const set = A.concat(B), v0 = local(set);
           swapSets(A, B);
           const v1 = local(set);
           swapSets(A, B);
-          if (v1 - v0 > gain) { gain = v1 - v0; best = [A, B]; }
+          if (v1 - v0 > 1e-3) cands.push({ A, B, g: v1 - v0 });
         };
         for (const r of runs) for (let a = 0; a < r.length; a++) for (let b = a + 1; b < r.length; b++) tryMove([r[a]], [r[b]]);
         for (let a = 0; a < runs.length; a++) for (let b = a + 1; b < runs.length; b++) if (runs[a].length === runs[b].length) tryMove(runs[a], runs[b]);
@@ -210,27 +277,25 @@ function arrangeBlocks(clips, { byId, ovOf = () => null, moved: userMoved = new 
         // (nur echte Einzelbilder oder der Einsatz selbst – sonst zerfielen Momente Stück für Stück)
         const heroK = (k) => clips[k].sectionChange && (clips[k].label === 'drop' || clips[k].label === 'chorus');
         for (const r of runs) if (r.length === 1 && (heroK(r[0]) || (momentOf.get(clips[r[0]].mediaId) || { mo: [] }).mo.length === 1)) for (const o of runs) if (o !== r && o.length > 1) { tryMove(r, [o[0]]); tryMove(r, [o[o.length - 1]]); }
-        if (!best) break;
-        swapSets(best[0], best[1]);
+        if (!applyBatch(cands, swapSets)) break;
       }
     }
-    // lokale Suche: bester Tausch je Runde, bis nichts mehr besser wird
-    for (let round = 0; !lied && round < Math.min(n * 2, 90); round++) {
-      let best = null, gain = 1e-3;
+    // lokale Suche: die besten Tausche je Runde, bis nichts mehr besser wird
+    const swap1 = (A, B) => swapK(A[0], B[0]);
+    for (let round = 0; !lied && round < (rounds || Math.min(n * 2, 90)); round++) {
+      const cands = [];
       for (let a = 0; a < n; a++) {
         for (let b = a + 1; b < n; b++) {
           const ka = ks[a], kb = ks[b];
           const set = [ka, kb];
           const v0 = local(set);
-          [clips[ka].mediaId, clips[kb].mediaId] = [clips[kb].mediaId, clips[ka].mediaId];
+          swapK(ka, kb);
           const v1 = local(set);
-          [clips[ka].mediaId, clips[kb].mediaId] = [clips[kb].mediaId, clips[ka].mediaId];
-          if (v1 - v0 > gain) { gain = v1 - v0; best = [ka, kb]; }
+          swapK(ka, kb);
+          if (v1 - v0 > 1e-3) cands.push({ A: [ka], B: [kb], g: v1 - v0 });
         }
       }
-      if (!best) break;
-      const [ka, kb] = best;
-      [clips[ka].mediaId, clips[kb].mediaId] = [clips[kb].mediaId, clips[ka].mediaId];
+      if (!applyBatch(cands, swap1)) break;
     }
     const ch = ks.filter((k, p) => clips[k].mediaId !== before[p]).length;
     if (ch) { moved += ch; blocks++; }

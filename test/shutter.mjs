@@ -58,8 +58,8 @@ const r = await p.evaluate(async (b64) => {
   if (mv.length !== 3 || !mv.every((m) => onBeat(m.t)) || Math.abs(mv[2].to - 1) > 1e-6) fails.push('Rollladen: nicht drei Züge auf den Schlägen');
   const sh = plan.overlays.find((o) => o.type === 'shutter'), city = plan.overlays.find((o) => o.type === 'city');
   if (!sh || !city) fails.push('Rollladen/Titel fehlt');
-  // nach dem dritten Zug kurz Schwarz, dann auf dem Schlag Ortsname; er steht auf Schwarz und geht mit dem Öffnen
-  if (city && !(city.start > sp.shutter.closedAt + 0.1 && onBeat(city.start) && city.end > sh.open && city.end <= sh.open + an.beatPeriod * shutterStep(an) + 0.02)) fails.push('Titel nicht auf Schwarz bis zum Öffnen');
+  // nach dem dritten Zug kurz Schwarz, dann auf dem Schlag Ortsname; er steht auf Schwarz und geht im ersten Drittel des Öffnens
+  if (city && !(city.start > sp.shutter.closedAt + 0.1 && onBeat(city.start) && city.end > sh.open && city.end <= sh.open + Math.max(1.5 * an.beatPeriod * shutterStep(an), 0.35 * (sh.end - sh.open)) + 0.02)) fails.push('Titel nicht auf Schwarz bis zum Öffnen');
   // kein zweites Mal der Ort unten links (Kapitel/Unterzeile)
   if (plan.overlays.some((o) => (o.type === 'chapter' || o.type === 'lower') && o.start < sh.end + 6)) fails.push('Ortsname nach dem Öffnen noch einmal');
   const pulls = plan.sfx.filter((x) => x.kind === 'pull');
@@ -136,7 +136,7 @@ const r = await p.evaluate(async (b64) => {
     const x2 = c2.getContext('2d', { willReadFrequently: true });
     e2.setProject({ plan: pg, media, audioBuffer: buf, size: { w: W2, h: H2 } });
     const tops = [];
-    for (let t = cg.start + 1.2; t < Math.min(sg.open, cg.end) - 0.9; t += 1 / 30) {
+    for (let t = cg.start + 1.2; t < Math.min(sg.open, cg.end) - 0.1; t += 1 / 30) {
       await e2.renderStill(t); e2.drawAt(t, 'still'); x2.drawImage(e2.canvas, 0, 0, W2, H2);
       const d = x2.getImageData(0, 0, W2, H2).data;
       // Schwerpunkt der Helligkeit je Textzeile (unabhängig vom Ein-/Ausblenden)

@@ -337,18 +337,28 @@ class OverlayPainter {
    */
   drawShutter(ctx, o, t, g) {
     const W = g.W, H = g.H;
-    // ruhig und gleichmäßig vom Öffnen bis zum Einsatz (ältere Pläne mit Zügen auf den Schlägen bleiben, wie sie waren)
+    // ruhig und gleichmäßig vom Öffnen bis zum Einsatz – sanft an und aus, ohne Spitze in der Mitte (ältere Pläne mit
+    // Zügen auf den Schlägen bleiben, wie sie waren)
     let e;
     if (o.steps && o.steps.length) e = o.steps.reduce((a, ts) => { const x = cl01((t - ts) / Math.max(0.05, o.stepDur || 0.25)); return a + 1 - Math.pow(1 - x, 3); }, 0) / o.steps.length;
-    else { const u = cl01((t - o.open) / Math.max(0.1, o.end - o.open)); e = u * u * u * (u * (6 * u - 15) + 10); }
-    const half = (H / 2) * (1 - e);
+    else { const u = cl01((t - o.open) / Math.max(0.1, o.end - o.open)); e = 0.5 - 0.5 * Math.cos(Math.PI * u); }
+    if (e >= 1) return;
+    this.curtain(ctx, W, H, 1 - e);
+  }
+
+  /**
+   * Vorhang von oben und unten (closed 0 = offen, 1 = ganz zu): geschlossene Flächen ohne Fugen, feine Endleiste und
+   * ein weicher Schatten aufs freie Bild, solange er in Bewegung ist.
+   */
+  curtain(ctx, W, H, closed) {
+    const half = (H / 2) * closed;
     if (half <= 0.5) return;
     ctx.fillStyle = '#000';
+    if (closed >= 1) { ctx.fillRect(0, 0, W, H); return; }
     ctx.fillRect(0, 0, W, Math.ceil(half));
     ctx.fillRect(0, Math.floor(H - half), W, Math.ceil(half));
-    if (e <= 0) return;
-    // geschlossene Flächen (keine Fugen): feine Endleiste und ein weicher Schatten aufs freigegebene Bild
-    const a = Math.min(1, e * 8) * Math.pow(1 - e, 0.6);
+    const a = Math.min(1, (1 - closed) * 8) * Math.pow(closed, 0.6);
+    if (a <= 0.01) return;
     const sh = Math.max(6, H * 0.02);
     for (const [edge, dir] of [[half, 1], [H - half, -1]]) {
       const g2 = ctx.createLinearGradient(0, edge, 0, edge + dir * sh);
@@ -372,6 +382,13 @@ class OverlayPainter {
    */
   drawWelcome(ctx, o, t, g) {
     const W = g.W, H = g.H, cy = H * 0.5;
+    // Vorhang: schließt in einer weichen Bewegung bis zum Schwarz und öffnet sich ebenso wieder (die Schrift steht
+    // darüber und bleibt auf dem Schwarz zu sehen); ältere Pläne mit Zügen auf den Schlägen zeichnen sie am Schluss
+    if (o.close) {
+      const sm = (x) => x * x * x * (x * (6 * x - 15) + 10);
+      const c = sm(cl01((t - o.close[0]) / Math.max(0.1, o.close[1] - o.close[0]))) * (1 - sm(cl01((t - o.open[0]) / Math.max(0.1, o.open[1] - o.open[0]))));
+      this.curtain(ctx, W, H, c);
+    }
     const base = Math.min(W * 0.13, H * 0.074);
     const sW = base * 0.82, sN = base * 1.1;
     // Ortsname da: die drei Punkte blenden aus, „Welcome to“ gleitet in die Mitte und nach oben – beide Zeilen stehen
@@ -419,8 +436,8 @@ class OverlayPainter {
     ctx.globalAlpha = 1;
     ctx.shadowBlur = 0;
     ctx.shadowColor = 'transparent';
-    // Balken: jeder Zug kurz und weich gebremst, zusammen schließen sie das Bild ganz
-    const P = o.pulls || [];
+    // (ältere Pläne) Balken: jeder Zug kurz und weich gebremst, zusammen schließen sie das Bild ganz
+    const P = o.close ? [] : o.pulls || [];
     if (P.length) {
       const e = P.reduce((acc, ts) => { const x = cl01((t - ts) / Math.max(0.05, o.pullDur || 0.25)); return acc + 1 - Math.pow(1 - x, 3); }, 0) / P.length;
       if (e > 0) {
@@ -532,8 +549,12 @@ class OverlayPainter {
       this.drawLabel(ctx, o.sub, g.cx, top - ss * 1.2, ss, 'center', sp, 0.4);
       this.drawGeoLine(ctx, o, t, g.cx, top - ss * (o.sub ? 3.4 : 1.2), g.base * 0.022, 'center', sp, false);
     } else {
-      this.drawLabel(ctx, o.sub, g.cx, y + ss * 2.8, ss, 'center', sp, 0.4);
-      this.drawGeoLine(ctx, o, t, g.cx, y + ss * (o.sub ? 5 : 2.8), g.base * 0.022, 'center', sp, true);
+      // (unter den Unterlängen des Namens – g, j, p, y –, nie darüber)
+      ctx.font = this.font('title', size);
+      const desc = ctx.measureText(title).actualBoundingBoxDescent || size * 0.22;
+      const y1 = y + Math.max(ss * 2.8, desc + ss * 2);
+      this.drawLabel(ctx, o.sub, g.cx, y1, ss, 'center', sp, 0.4);
+      this.drawGeoLine(ctx, o, t, g.cx, y1 + (o.sub ? ss * 2.2 : 0), g.base * 0.022, 'center', sp, true);
     }
   }
 

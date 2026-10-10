@@ -4,7 +4,18 @@
  * Raster der Stellen, auf denen eine Bewegung „sitzen“ soll, mit Gewicht: Eins eines Takts, Snare, Bassdrum, Halbtakt, übrige Beats.
  * Zeiten relativ zum Songausschnitt.
  */
+const HIT_GRID = new WeakMap();
 function hitGrid(an, win) {
+  // (je Song und Ausschnitt einmal – die Längensuche baut denselben Film viele Male)
+  let byStart = HIT_GRID.get(an);
+  if (!byStart) { byStart = new Map(); HIT_GRID.set(an, byStart); }
+  const hit = byStart.get(win.start);
+  if (hit) return hit;
+  const g = hitGridRaw(an, win);
+  byStart.set(win.start, g);
+  return g;
+}
+function hitGridRaw(an, win) {
   const rel = (a) => Array.from(a || []).map((t) => t - win.start);
   const bars = rel(an.barStart), beats = rel(an.beats);
   const out = [];
